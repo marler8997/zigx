@@ -1,3 +1,4 @@
+// Protocol Specification: https://www.x.org/docs/XProtocol/proto.pdf
 //
 // Request format
 // -------------------------
@@ -356,9 +357,10 @@ pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@Ty
 
 // returns the number of padding bytes to add to `value` to get to a multiple of 4
 // TODO: profile this? is % operator expensive?
-fn pad4(comptime T: type, value: T) T {
-    return (4 - (value % 4)) % 4;
-}
+// NOTE: using std.mem.alignForward instead
+//fn pad4(comptime T: type, value: T) T {
+//    return (4 - (value % 4)) % 4;
+//}
 
 pub fn getConnectSetupMessageLen(auth_proto_name_len: u16, auth_proto_data_len: u16) u16 {
     return
@@ -369,10 +371,12 @@ pub fn getConnectSetupMessageLen(auth_proto_name_len: u16, auth_proto_data_len: 
         + 2 // auth_proto_name_len
         + 2 // auth_proto_data_len
         + 2 // unused
-        + auth_proto_name_len
-        + pad4(u16, auth_proto_name_len)
-        + auth_proto_data_len
-        + pad4(u16, auth_proto_data_len)
+        //+ auth_proto_name_len
+        //+ pad4(u16, auth_proto_name_len)
+        + std.mem.alignForward(auth_proto_name_len, 4)
+        //+ auth_proto_data_len
+        //+ pad4(u16, auth_proto_data_len)
+        + std.mem.alignForward(auth_proto_data_len, 4)
         ;
 }
 
@@ -385,9 +389,11 @@ pub fn makeConnectSetupMessage(buf: []u8, proto_major_ver: u16, proto_minor_ver:
     writeIntNative(u16, buf.ptr + 8, auth_proto_data.len);
     writeIntNative(u16, buf.ptr + 10, 0); // unused
     @memcpy(buf.ptr + 12, auth_proto_name.ptr, auth_proto_name.len);
-    const off = 12 + pad4(u16, auth_proto_name.len);
+    //const off = 12 + pad4(u16, auth_proto_name.len);
+    const off : u16 = 12 + @intCast(u16, std.mem.alignForward(auth_proto_name.len, 4));
     @memcpy(buf.ptr + off, auth_proto_data.ptr, auth_proto_data.len);
-    return off + auth_proto_data.len + pad4(u16, auth_proto_data.len);
+    //return off + auth_proto_data.len + pad4(u16, auth_proto_data.len);
+    return off + @intCast(u16, std.mem.alignForward(auth_proto_data.len, 4));
 }
 
 test "a" {
@@ -398,6 +404,259 @@ test "a" {
 pub fn writeIntNative(comptime T: type, buf: [*]u8, value: T) void {
     @ptrCast(*align(1) T, buf).* = value;
 }
-pub fn readIntNative(comptime T: type, buf: [*]u8) T {
-    return @ptrCast(*align(1) T, buf).*;
+pub fn readIntNative(comptime T: type, buf: [*]const u8) T {
+    return @ptrCast(*const align(1) T, buf).*;
+}
+
+
+pub const RecvMsgResult = struct {
+    msg_len: usize,
+    total_received: usize,
+};
+
+const MsgKind = enum { initial_setup, normal };
+
+pub fn getMsgLen(buf: []const u8, kind: MsgKind) usize {
+    if (buf.len < 8) return 32;
+    return getMsgLenHaveAtLeast8(buf.ptr, kind);
+}
+
+pub fn recvFull(sock: std.os.socket_t, buf: []u8) !void {
+    std.debug.assert(buf.len > 0);
+    var total_received : usize = 0;
+    while (true) {
+        const last_received = try std.os.recv(sock, buf[total_received..], 0);
+        if (last_received == 0)
+            return error.ConnectionResetByPeer;
+        total_received += last_received;
+        if (total_received == buf.len)
+            break;
+    }
+}
+
+// Returns the minimum amount needed to complete this message.  It is assumed that buf
+// has been completely filled with a partial message.
+// buf_ptr must have at least 8 bytes
+fn getMsgLenHaveAtLeast8(buf_ptr: [*]const u8, kind: MsgKind) usize {
+    if (kind == .initial_setup)
+        return 8 + (4 * readIntNative(u16, buf_ptr + 6));
+    return 32 + readIntNative(u32, buf_ptr + 4);
+}
+
+// on error.ParitalXMsg, buf will be completely filled with a partial message
+pub fn recvMsg(sock: std.os.socket_t, buf: []u8, total_received: usize, kind: MsgKind) !RecvMsgResult {
+    std.debug.assert(buf.len >= 32);
+
+    var total_received : usize = 0;
+    while (true) {
+        if (total_received == buf.len)
+            return error.PartialXMsg;
+
+        const last_received = try std.os.recv(sock, buf[total_received..], 0);
+        if (last_received == 0)
+            return error.ConnectionResetByPeer;
+
+        total_received += last_received;
+        if (buf[0] == 1) {
+            if (total_received < 8)
+                continue;
+
+            const msg_len = getMsgLenHaveAtLeast8(buf.ptr, kind);
+            if (total_received < msg_len)
+                continue;
+            return RecvMsgResult{ .msg_len = msg_len, .total_received = total_received };
+        } else {
+            std.debug.warn("Error: received non-success reply '{}' (not implemented)\n", .{buf[0]});
+            return error.NotImplemented;
+        }
+    }
+}
+
+pub const Format = packed struct {
+    depth: u8,
+    bits_per_pixel: u8,
+    scanline_pad: u8,
+    // can't do [5]u8 because of https://github.com/ziglang/zig/issues/2627
+    _: u8,
+    __: [4]u8,
+};
+comptime { if (@sizeOf(Format) != 8) @compileError("Format size is wrong"); }
+
+pub const Screen = packed struct {
+    window: u32,
+    colormap: u32,
+    white_pixel: u32,
+    black_pixel: u32,
+    input_masks: u32,
+    pixel_width: u16,
+    pixel_height: u16,
+    mm_width: u16,
+    mm_height: u16,
+    min_installed_maps: u16,
+    max_installed_maps: u16,
+    root_visual: u32,
+    backing_stores: u8,
+    save_unders: u8,
+    root_depth: u8,
+    allowed_depth_count: u8,
+};
+
+pub const ScreenDepth = packed struct {
+    depth: u8,
+    unused0: u8,
+    visual_type_count: u16,
+    unused1: u32,
+};
+
+pub const VisualType = packed struct {
+    pub const Class = enum(u8) {
+        static_gray = 0,
+        gray_scale = 1,
+        static_color = 2,
+        psuedo_color = 3,
+        true_color = 4,
+        direct_color = 5,
+    };
+
+    id: u32,
+    class: Class,
+    bits_per_rgb_value: u8,
+    colormap_entries: u16,
+    red_mask: u32,
+    green_mask: u32,
+    blue_mask: u32,
+    unused: u32,
+};
+
+pub const ConnectSetup = struct {
+    buf: []align(HeaderAlign) u8,
+
+    pub const Header = packed struct {
+        pub const Status = enum(u8) {
+            failed = 0,
+            success = 1,
+            authenticate = 2,
+            _
+        };
+
+        status: Status,
+        status_opt: u8, // length of 'reason' in Failed case
+        proto_major_ver: u16,
+        proto_minor_ver: u16,
+        reply_u32_len: u16,
+
+        pub fn asBuf(self: *@This()) []u8 {
+            return @ptrCast([*]u8, self)[0..@sizeOf(@This())];
+        }
+    };
+    // because X makes an effort to align things to 4-byte bounaries, we
+    // make sure the header is aligned to at least 4-bytes so the rest
+    // of the sub-structures can also leverage this 4-byte alignment
+    pub const HeaderAlign = std.math.max(4, @alignOf(Header));
+    pub fn header(self: @This()) *align(HeaderAlign) Header {
+        return @ptrCast(*align(HeaderAlign) Header, self.buf.ptr);
+    }
+    pub fn failReason(self: @This()) ![]u8 {
+        const reason_offset = 8;
+        const reason_limit = reason_offset + self.buf[1];
+        if (reason_limit > self.buf.len)
+            return error.XMalformedReply;
+        return self.buf[reason_offset..reason_limit];
+    }
+
+    /// All the connect setup fields that are at fixed offsets
+    pub const Fixed = packed struct {
+        release_number: u32,
+        resource_id_base: u32,
+        resource_id_mask: u32,
+        motion_buffer_size: u32,
+        vendor_len: u16,
+        max_request_len: u16,
+        root_screen_count: u8,
+        format_count: u8,
+        image_byte_order: u8,
+        bitmap_format_bit_order: u8,
+        bitmap_format_scanline_unit: u8,
+        bitmap_format_scanline_pad: u8,
+        min_keycode: u8,
+        max_keycode: u8,
+        unused: u32,
+    };
+    pub const FixedAlign = std.math.min(8, HeaderAlign);
+    pub fn fixed(self: @This()) *align(FixedAlign) Fixed {
+        return @ptrCast(*align(FixedAlign) Fixed, self.buf.ptr + 8);
+    }
+
+
+    pub const VendorOffset = 40;
+    pub fn getVendorSlice(self: @This(), vendor_len: u16) ![]align(4) u8 {
+        const vendor_limit = VendorOffset + vendor_len;
+        if (vendor_limit > self.buf.len)
+            return error.XMalformedReply_VendorLenTooBig;
+        return self.buf[VendorOffset..vendor_limit];
+    }
+
+    pub fn getFormatListOffset(vendor_len: u16) u32 {
+        //return VendorOffset + vendor_len + pad4(u16, vendor_len);
+        return VendorOffset + @intCast(u32, std.mem.alignForward(vendor_len, 4));
+    }
+    pub fn getFormatListLimit(format_list_offset: u32, format_count: u32) u32 {
+        return format_list_offset + (@sizeOf(Format) * format_count);
+    }
+    pub fn getFormatListPtr(self: @This(), format_list_offset: u32) [*]align(4) Format {
+        return @ptrCast([*]align(4) Format, @alignCast(4, self.buf.ptr + format_list_offset));
+    }
+    pub fn getFormatList(self: @This(), format_list_offset: u32, format_list_limit: u32) ![]align(4) Format {
+        if (format_list_limit > self.buf.len)
+            return error.XMalformedReply_FormatCountTooBig;
+        return self.getFormatListPtr(format_list_offset)[0..@divExact(format_list_limit - format_list_offset, @sizeOf(Format))];
+    }
+
+    pub fn getFirstScreenPtr(self: @This(), format_list_limit: u32) *align(4) Screen {
+        return @ptrCast(*align(4) Screen, @alignCast(4, self.buf.ptr + format_list_limit));
+    }
+};
+
+pub const ReadConnectSetupOpt = struct {
+    read_timeout_ms: i32 = -1,
+    max_reply: i32 = -1,
+};
+
+// TODO: replace sock with a generic reader kind of type (one that supports timeouts?)
+pub fn readConnectSetup(allocator: *std.mem.Allocator, reader: anytype, options: ReadConnectSetupOpt) !ConnectSetup {
+    var header : ConnectSetup.Header = undefined;
+
+    if (options.read_timeout_ms == -1) {
+        try readFull(reader, header.asBuf());
+    } else {
+        @panic("read timeout not implemented");
+    }
+
+    const reply_len = 8 + 4 * header.reply_u32_len;
+    if (options.max_reply != -1 and reply_len > options.max_reply)
+        return error.ReplyTooLarge; // TODO: would be nice to have some way to report the length
+
+    const reply_buf = try allocator.allocWithOptions(u8, reply_len, ConnectSetup.HeaderAlign, null);
+    errdefer allocator.free(reply_buf);
+    @ptrCast(*ConnectSetup.Header, reply_buf.ptr).* = header;
+
+    if (options.read_timeout_ms == -1) {
+        try readFull(reader, reply_buf[8..]);
+    } else {
+        @panic("read timeout not implemented");
+    }
+    return ConnectSetup { .buf = reply_buf };
+}
+
+fn readFull(reader: anytype, buf: []u8) !void {
+    std.debug.assert(buf.len > 0);
+    var total_received : usize = 0;
+    while (true) {
+        const last_received = try reader.read(buf[total_received..]);
+        if (last_received == 0)
+            return error.ReaderClosed;
+        total_received += last_received;
+        if (total_received == buf.len)
+            break;
+    }
 }
