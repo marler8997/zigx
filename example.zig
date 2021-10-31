@@ -1,13 +1,12 @@
 const std = @import("std");
 const xproto = @import("./xproto.zig");
 
+var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+const allocator = &arena.allocator;
+
 //var msg_buffer : [5000]u8 = undefined;
 
 pub fn main() !void {
-    //var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    //var allocator = arena.allocator;
-    const allocator = std.heap.page_allocator;
-
     //const display = "localhost:10.0";
     //const display = "127.0.0.1:10.0";
     //const display = "192.168.0.2:10.0";
@@ -17,9 +16,10 @@ pub fn main() !void {
     const sock = try xproto.connect(allocator, parsed_display.hostSlice(display), null, parsed_display.display_num);
     try sendConnect(sock);
 
-    const reader = SocketReader { .sock = sock };
+    const reader = std.io.Reader(std.os.socket_t, std.os.RecvFromError, readSocket) { .context = sock };
 
     const connect_setup = try xproto.readConnectSetup(allocator, reader, .{});
+    defer connect_setup.deinit(allocator);
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
     //for (connect_setup.buf) |c, i| {
     //    std.log.debug("[{}] 0x{}", .{i, c});
@@ -29,9 +29,8 @@ pub fn main() !void {
         const header = connect_setup.header();
         switch (header.status) {
             .failed => {
-                const reason_len = header.status_opt;
-                std.debug.warn("Error: connect setup failed, version={}.{}, reason={}\n", .{
-                    header.proto_major_ver, header.proto_minor_ver, connect_setup.failReason()
+                std.debug.warn("Error: connect setup failed, version={}.{}, reason={s}\n", .{
+                    header.proto_major_ver, header.proto_minor_ver, try connect_setup.failReason()
                 });
                 return error.XConnectSetupFailed;
             },
@@ -53,9 +52,9 @@ pub fn main() !void {
     {
         const fixed = connect_setup.fixed();
         inline for (@typeInfo(@TypeOf(fixed.*)).Struct.fields) |field| {
-            std.log.debug("{}: {}", .{field.name, @field(fixed, field.name)});
+            std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
         }
-        std.log.debug("vendor: {}", .{try connect_setup.getVendorSlice(fixed.vendor_len)});
+        std.log.debug("vendor: {s}", .{try connect_setup.getVendorSlice(fixed.vendor_len)});
         const format_list_offset = xproto.ConnectSetup.getFormatListOffset(fixed.vendor_len);
         const format_list_limit = xproto.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
         std.log.debug("fmt list off={} limit={}", .{format_list_offset, format_list_limit});
@@ -65,9 +64,8 @@ pub fn main() !void {
         }
         var screen = connect_setup.getFirstScreenPtr(format_list_limit);
         inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
-            std.log.debug("SCREEN 0| {}: {}", .{field.name, @field(screen, field.name)});
+            std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
         }
-
     }
 
 
@@ -85,15 +83,9 @@ pub fn main() !void {
 //
 }
 
-
-const SocketReader = struct {
-    sock: std.os.socket_t,
-    pub fn read(self: @This(), buf: []u8) !usize {
-        return try std.os.recv(self.sock, buf, 0);
-    }
-};
-
-
+fn readSocket(sock: std.os.socket_t, buffer: []u8) !usize {
+    return std.os.recv(sock, buffer, 0);
+}
 
 fn sendConnect(sock: std.os.socket_t) !void {
      var msg: [100]u8 = undefined;

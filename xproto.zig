@@ -28,7 +28,7 @@
 //
 
 const std = @import("std");
-const builtin = std.builtin;
+const builtin = @import("builtin");
 const os = std.os;
 
 const zog = @import("zog");
@@ -45,7 +45,7 @@ pub fn optEql(optLeft: anytype, optRight: anytype) bool {
             return left == right;
         } else return false;
     } else {
-        if (optRight) |right| {
+        if (optRight) |_| {
             return false;
         } else return true;
     }
@@ -143,13 +143,13 @@ pub fn parseDisplay(display: []const u8) !ParsedDisplay {
      }
 
      //std.debug.warn("num '{}'\n", .{display[parsed.hostLimit + 1..index]});
-     parsed.display_num = std.fmt.parseInt(u32, display[parsed.hostLimit + 1..index], 10) catch |err|
+     parsed.display_num = std.fmt.parseInt(u32, display[parsed.hostLimit + 1..index], 10) catch
          return ParseDisplayError.BadDisplayNumber;
      if (index == display.len) {
          parsed.preferredScreen = null;
      } else {
          index += 1;
-         parsed.preferredScreen = std.fmt.parseInt(u32, display[index..], 10) catch |err|
+         parsed.preferredScreen = std.fmt.parseInt(u32, display[index..], 10) catch
              return ParseDisplayError.BadScreenNumber;
      }
      return parsed;
@@ -259,10 +259,10 @@ pub fn tcpConnectToHost(allocator: *std.mem.Allocator, name: []const u8, port: u
 }
 
 pub fn tcpConnectToAddress(address: std.net.Address) !std.os.socket_t {
-    const nonblock = if (std.io.is_async) os.SOCK_NONBLOCK else 0;
-    const sock_flags = os.SOCK_STREAM | nonblock |
-        (if (builtin.os.tag == .windows) 0 else os.SOCK_CLOEXEC);
-    const sockfd = try os.socket(address.any.family, sock_flags, os.IPPROTO_TCP);
+    const nonblock = if (std.io.is_async) os.SOCK.NONBLOCK else 0;
+    const sock_flags = os.SOCK.STREAM | nonblock |
+        (if (builtin.os.tag == .windows) 0 else os.SOCK.CLOEXEC);
+    const sockfd = try os.socket(address.any.family, sock_flags, os.IPPROTO.TCP);
     errdefer os.closeSocket(sockfd);
 
     if (std.io.is_async) {
@@ -332,6 +332,7 @@ pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@Ty
                 .One => {
                     switch (@typeInfo(info.child)) {
                         .Array => |array_info| {
+                            _ = array_info;
                             @compileError("here");
 //                            return @Type(std.builtin.TypeInfo { .Pointer = .{
 //                                .size = .Many,
@@ -347,10 +348,10 @@ pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@Ty
                     }
                 },
                 .Slice => return .{ .ptr = s.ptr, .len = @intCast(LenType, s.len) },
-                else => @compileError(err),
+                else => @compileError("cannot slice"),
             }
         },
-        else => @compileError(err),
+        else => @compileError("cannot slice"),
     }
 }
 
@@ -381,7 +382,7 @@ pub fn getConnectSetupMessageLen(auth_proto_name_len: u16, auth_proto_data_len: 
 }
 
 pub fn makeConnectSetupMessage(buf: []u8, proto_major_ver: u16, proto_minor_ver: u16, auth_proto_name: Slice(u16, [*]const u8), auth_proto_data: Slice(u16, [*]const u8)) u16 {
-    buf[0] = @as(u8, if (builtin.endian == .Big) BigEndian else LittleEndian);
+    buf[0] = @as(u8, if (builtin.target.cpu.arch.endian() == .Big) BigEndian else LittleEndian);
     buf[1] = 0; // unused
     writeIntNative(u16, buf.ptr + 2, proto_major_ver);
     writeIntNative(u16, buf.ptr + 4, proto_minor_ver);
@@ -399,6 +400,7 @@ pub fn makeConnectSetupMessage(buf: []u8, proto_major_ver: u16, proto_minor_ver:
 test "a" {
     var buf : [100]u8 = undefined;
     const len = makeConnectSetupMessage(&buf, 1, 1, slice(u16, @as([]const u8, "hello")), slice(u16, @as([]const u8, "there")));
+    _ = len;
 }
 
 pub fn writeIntNative(comptime T: type, buf: [*]u8, value: T) void {
@@ -444,7 +446,7 @@ fn getMsgLenHaveAtLeast8(buf_ptr: [*]const u8, kind: MsgKind) usize {
 }
 
 // on error.ParitalXMsg, buf will be completely filled with a partial message
-pub fn recvMsg(sock: std.os.socket_t, buf: []u8, total_received: usize, kind: MsgKind) !RecvMsgResult {
+pub fn recvMsg(sock: std.os.socket_t, buf: []u8, kind: MsgKind) !RecvMsgResult {
     std.debug.assert(buf.len >= 32);
 
     var total_received : usize = 0;
@@ -530,6 +532,10 @@ pub const VisualType = packed struct {
 
 pub const ConnectSetup = struct {
     buf: []align(HeaderAlign) u8,
+
+    pub fn deinit(self: ConnectSetup, allocator: *std.mem.Allocator) void {
+        allocator.free(self.buf);
+    }
 
     pub const Header = packed struct {
         pub const Status = enum(u8) {
@@ -622,7 +628,6 @@ pub const ReadConnectSetupOpt = struct {
     max_reply: i32 = -1,
 };
 
-// TODO: replace sock with a generic reader kind of type (one that supports timeouts?)
 pub fn readConnectSetup(allocator: *std.mem.Allocator, reader: anytype, options: ReadConnectSetupOpt) !ConnectSetup {
     var header : ConnectSetup.Header = undefined;
 
@@ -654,7 +659,7 @@ fn readFull(reader: anytype, buf: []u8) !void {
     while (true) {
         const last_received = try reader.read(buf[total_received..]);
         if (last_received == 0)
-            return error.ReaderClosed;
+            return error.EndOfStream;
         total_received += last_received;
         if (total_received == buf.len)
             break;
