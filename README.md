@@ -43,3 +43,13 @@ export DISPLAY=:0
 # start this program and connect it to the XServer on host "mymachine" running on port 6010 screen 1
 DISPLAY=mymachine:10.1 ./yet-another-x-program
 ```
+
+# How to debug an X connection
+
+```
+# -n means do not copy credentials
+xtrace -n -- command
+
+# i.e.
+xtrace -n -- zig run example.zig
+```
