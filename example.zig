@@ -1,27 +1,27 @@
 const std = @import("std");
-const xproto = @import("./xproto.zig");
+const x = @import("./x.zig");
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = &arena.allocator;
 
 pub fn main() !void {
-    const display = xproto.getDisplay();
+    const display = x.getDisplay();
 
-    const sock = xproto.connect(display) catch |err| {
+    const sock = x.connect(display) catch |err| {
         std.log.err("failed to connect to display '{s}': {s}", .{display, @errorName(err)});
         std.os.exit(0xff);
     };
-    defer xproto.disconnect(sock);
+    defer x.disconnect(sock);
 
     {
-        const len = comptime xproto.connect_setup.getLen(0, 0);
+        const len = comptime x.connect_setup.getLen(0, 0);
         var msg: [len]u8 = undefined;
-        xproto.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
+        x.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
         try send(sock, &msg);
     }
 
     const reader = std.io.Reader(std.os.socket_t, std.os.RecvFromError, readSocket) { .context = sock };
-    const connect_setup_header = try xproto.readConnectSetupHeader(reader, .{});
+    const connect_setup_header = try x.readConnectSetupHeader(reader, .{});
     switch (connect_setup_header.status) {
         .failed => {
             std.log.err("connect setup failed, version={}.{}, reason='{s}'", .{
@@ -45,12 +45,12 @@ pub fn main() !void {
         }
     }
 
-    const connect_setup = xproto.ConnectSetup {
+    const connect_setup = x.ConnectSetup {
         .buf = try allocator.allocWithOptions(u8, connect_setup_header.getReplyLen(), 4, null),
     };
     defer allocator.free(connect_setup.buf);
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
-    try xproto.readFull(reader, connect_setup.buf);
+    try x.readFull(reader, connect_setup.buf);
 
     const screen = blk: {
         const fixed = connect_setup.fixed();
@@ -58,8 +58,8 @@ pub fn main() !void {
             std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
         }
         std.log.debug("vendor: {s}", .{try connect_setup.getVendorSlice(fixed.vendor_len)});
-        const format_list_offset = xproto.ConnectSetup.getFormatListOffset(fixed.vendor_len);
-        const format_list_limit = xproto.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
+        const format_list_offset = x.ConnectSetup.getFormatListOffset(fixed.vendor_len);
+        const format_list_limit = x.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
         std.log.debug("fmt list off={} limit={}", .{format_list_offset, format_list_limit});
         const formats = try connect_setup.getFormatList(format_list_offset, format_list_limit);
         for (formats) |format, i| {
@@ -76,8 +76,8 @@ pub fn main() !void {
 
     const window_id = connect_setup.fixed().resource_id_base;
     {
-        var msg_buf: [xproto.create_window.max_len]u8 = undefined;
-        const len = xproto.create_window.serialize(&msg_buf, .{
+        var msg_buf: [x.create_window.max_len]u8 = undefined;
+        const len = x.create_window.serialize(&msg_buf, .{
             .window_id = window_id,
             .parent_window_id = screen.root,
             .x = 0, .y = 0,
@@ -98,21 +98,21 @@ pub fn main() !void {
 //            .override_redirect = true,
 //            .save_under = true,
             .event_mask =
-                  xproto.create_window.event_mask.key_press
-                | xproto.create_window.event_mask.key_release
-                | xproto.create_window.event_mask.button_press
-                | xproto.create_window.event_mask.button_release
-                | xproto.create_window.event_mask.enter_window
-                | xproto.create_window.event_mask.leave_window
-                | xproto.create_window.event_mask.pointer_motion
-//                | xproto.create_window.event_mask.pointer_motion_hint WHAT THIS DO?
-//                | xproto.create_window.event_mask.button1_motion  WHAT THIS DO?
-//                | xproto.create_window.event_mask.button2_motion  WHAT THIS DO?
-//                | xproto.create_window.event_mask.button3_motion  WHAT THIS DO?
-//                | xproto.create_window.event_mask.button4_motion  WHAT THIS DO?
-//                | xproto.create_window.event_mask.button5_motion  WHAT THIS DO?
-//                | xproto.create_window.event_mask.button_motion  WHAT THIS DO?
-                | xproto.create_window.event_mask.keymap_state
+                  x.create_window.event_mask.key_press
+                | x.create_window.event_mask.key_release
+                | x.create_window.event_mask.button_press
+                | x.create_window.event_mask.button_release
+                | x.create_window.event_mask.enter_window
+                | x.create_window.event_mask.leave_window
+                | x.create_window.event_mask.pointer_motion
+//                | x.create_window.event_mask.pointer_motion_hint WHAT THIS DO?
+//                | x.create_window.event_mask.button1_motion  WHAT THIS DO?
+//                | x.create_window.event_mask.button2_motion  WHAT THIS DO?
+//                | x.create_window.event_mask.button3_motion  WHAT THIS DO?
+//                | x.create_window.event_mask.button4_motion  WHAT THIS DO?
+//                | x.create_window.event_mask.button5_motion  WHAT THIS DO?
+//                | x.create_window.event_mask.button_motion  WHAT THIS DO?
+                | x.create_window.event_mask.keymap_state
 
                 ,
 //            .dont_propagate = 1,
@@ -120,25 +120,25 @@ pub fn main() !void {
         try send(sock, msg_buf[0..len]);
     }
     {
-        var msg: [xproto.map_window.len]u8 = undefined;
-        xproto.map_window.serialize(&msg, window_id);
+        var msg: [x.map_window.len]u8 = undefined;
+        x.map_window.serialize(&msg, window_id);
         try send(sock, &msg);
     }
 
     //var buf align(4): [500]u8 = undefined;
     var buf align(4) = [_]u8 {undefined} ** 500;
-    var reply_reader = xproto.ReplyReader { .buf = &buf, .offset = 0, .limit = 0 };
+    var reply_reader = x.ReplyReader { .buf = &buf, .offset = 0, .limit = 0 };
     while (true) {
         const reply = try reply_reader.read(sock);
         _ = reply;
     //    for (buf[0 .. result.total_received]) |c, i| {
     //        std.log.debug("[{}] 0x{x} ({1})", .{i, c});
     //    }
-        switch (@intToEnum(xproto.ReplyType, buf[0])) {
+        switch (@intToEnum(x.ReplyType, buf[0])) {
             .err => {
-                const generic_error = @ptrCast(*xproto.ErrorReply, &buf);
+                const generic_error = @ptrCast(*x.ErrorReply, &buf);
                 switch (generic_error.code) {
-                    .length => std.log.debug("{}", .{@ptrCast(*xproto.ErrorReplyLength, generic_error)}),
+                    .length => std.log.debug("{}", .{@ptrCast(*x.ErrorReplyLength, generic_error)}),
                     else => std.log.debug("{}", .{generic_error}),
                 }
             },
@@ -147,40 +147,40 @@ pub fn main() !void {
                 std.os.exit(0xff);
             },
             .key_press => {
-                const event = @ptrCast(*xproto.Event.KeyOrButton, &buf);
+                const event = @ptrCast(*x.Event.KeyOrButton, &buf);
                 std.log.info("key_press: {}", .{event.detail});
             },
             .key_release => {
-                const event = @ptrCast(*xproto.Event.KeyOrButton, &buf);
+                const event = @ptrCast(*x.Event.KeyOrButton, &buf);
                 std.log.info("key_release: {}", .{event.detail});
             },
             .button_press => {
-                const event = @ptrCast(*xproto.Event.KeyOrButton, &buf);
+                const event = @ptrCast(*x.Event.KeyOrButton, &buf);
                 std.log.info("button_press: {}", .{event});
             },
             .button_release => {
-                const event = @ptrCast(*xproto.Event.KeyOrButton, &buf);
+                const event = @ptrCast(*x.Event.KeyOrButton, &buf);
                 std.log.info("button_release: {}", .{event});
             },
             .enter_notify => {
-                const event = @ptrCast(*xproto.Event.Generic, &buf);
+                const event = @ptrCast(*x.Event.Generic, &buf);
                 std.log.info("enter_window: {}", .{event});
             },
             .leave_notify => {
-                const event = @ptrCast(*xproto.Event.Generic, &buf);
+                const event = @ptrCast(*x.Event.Generic, &buf);
                 std.log.info("leave_window: {}", .{event});
             },
             .motion_notify => {
                 // too much logging
-                //const event = @ptrCast(*xproto.Event.Generic, &buf);
+                //const event = @ptrCast(*x.Event.Generic, &buf);
                 //std.log.info("pointer_motion: {}", .{event});
             },
             .keymap_notify => {
-                const event = @ptrCast(*xproto.Event, &buf);
+                const event = @ptrCast(*x.Event, &buf);
                 std.log.info("keymap_state: {}", .{event});
             },
             else => {
-                const event = @ptrCast(*xproto.Event, &buf);
+                const event = @ptrCast(*x.Event, &buf);
                 std.log.info("todo: handle event {}", .{event});
                 std.os.exit(0xff);
             },
