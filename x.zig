@@ -428,11 +428,11 @@ pub const connect_setup = struct {
 };
 
 test "ConnectSetupMessage" {
-    const auth_proto_name = slice(u16, @as([]const u8, "hello"));
-    const auth_proto_data = slice(u16, @as([]const u8, "there"));
+    const auth_proto_name = comptime slice(u16, @as([]const u8, "hello"));
+    const auth_proto_data = comptime slice(u16, @as([]const u8, "there"));
     const len = comptime connect_setup.getLen(auth_proto_name.len, auth_proto_data.len);
     var buf: [len]u8 = undefined;
-    connect_setup.serialize(buf.ptr, 1, 1, auth_proto_name, auth_proto_data);
+    connect_setup.serialize(&buf, 1, 1, auth_proto_name, auth_proto_data);
 }
 
 const opcode = struct {
