@@ -676,6 +676,7 @@ pub const Event = extern union {
     key_release: KeyOrButton,
     button_press: KeyOrButton,
     button_release: KeyOrButton,
+    exposure: Expose,
 
     // NOTE: can't used packed because of compiler bugs
     pub const Generic = extern struct {
@@ -704,6 +705,21 @@ pub const Event = extern union {
         unused: u8,
     };
     comptime { std.debug.assert(@sizeOf(KeyOrButton) == 32); }
+
+    // NOTE: can't used packed because of compiler bugs
+    pub const Expose = extern struct {
+        code: u8,
+        unused: u8,
+        sequence: u16,
+        window: u32,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        count: u16,
+        unused_pad: [14]u8,
+    };
+    comptime { std.debug.assert(@sizeOf(Expose) == 32); }
 };
 comptime { std.debug.assert(@sizeOf(Event) == 32); }
 

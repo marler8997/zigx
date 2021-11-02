@@ -113,7 +113,7 @@ pub fn main() !void {
 //                | x.create_window.event_mask.button5_motion  WHAT THIS DO?
 //                | x.create_window.event_mask.button_motion  WHAT THIS DO?
                 | x.create_window.event_mask.keymap_state
-
+                | x.create_window.event_mask.exposure
                 ,
 //            .dont_propagate = 1,
         });
@@ -178,6 +178,10 @@ pub fn main() !void {
             .keymap_notify => {
                 const event = @ptrCast(*x.Event, &buf);
                 std.log.info("keymap_state: {}", .{event});
+            },
+            .expose => {
+                const event = @ptrCast(*x.Event.Expose, &buf);
+                std.log.info("expose: {}", .{event});
             },
             else => {
                 const event = @ptrCast(*x.Event, &buf);
