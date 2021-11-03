@@ -438,6 +438,8 @@ test "ConnectSetupMessage" {
 const opcode = struct {
     pub const create_window = 1;
     pub const map_window = 8;
+    pub const create_gc = 55;
+    pub const poly_fill_rectangle = 70;
 };
 
 pub const BitGravity = enum(u4) {
@@ -480,6 +482,18 @@ fn isDefaultValue(s: anytype, comptime field: std.builtin.TypeInfo.StructField) 
             return @field(s, field.name) == default_value;
         },
     }
+}
+
+fn optionToU32(value: anytype) u32 {
+    const T = @TypeOf(value);
+    switch (@typeInfo(T)) {
+        .Bool => return @boolToInt(value),
+        .Enum => return @enumToInt(value),
+        else => {},
+    }
+    if (T == u32) return value;
+    if (T == ?u32) return value.?;
+    @compileError("TODO: implement optionToU32 for type: " ++ @typeName(T));
 }
 
 pub const create_window = struct {
@@ -581,25 +595,6 @@ pub const create_window = struct {
         cursor: Cursor = .none,
     };
 
-    fn optionToU32(value: anytype) u32 {
-        const T = @TypeOf(value);
-        if (
-               T == BgPixmap
-            or T == BorderPixmap
-            or T == BitGravity
-            or T == WinGravity
-            or T == BackingStore
-            or T == Colormap
-            or T == Cursor
-        ) return @enumToInt(value);
-
-        if (T == bool) return @boolToInt(value);
-        if (T == u32) return value;
-        if (T == ?u32) return value.?;
-
-        @compileError("TODO: implement optionToU32 for type: " ++ @typeName(T));
-    }
-
     pub fn serialize(buf: [*]u8, args: Args, options: Options) u16 {
         buf[0] = opcode.create_window;
         buf[1] = 0; // depth? what is this?
@@ -641,6 +636,138 @@ pub const map_window = struct {
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, window_id);
+    }
+};
+
+pub const create_gc = struct {
+    pub const option_flag = struct {
+        pub const function           : u32 = (1 <<  0);
+        pub const plane_mask         : u32 = (1 <<  1);
+        pub const foreground         : u32 = (1 <<  2);
+        pub const background         : u32 = (1 <<  3);
+        pub const line_width         : u32 = (1 <<  4);
+        pub const line_style         : u32 = (1 <<  5);
+        pub const cap_style          : u32 = (1 <<  6);
+        pub const join_style         : u32 = (1 <<  7);
+        pub const fill_style         : u32 = (1 <<  8);
+        pub const fill_rule          : u32 = (1 <<  9);
+        pub const title              : u32 = (1 << 10);
+        pub const stipple            : u32 = (1 << 11);
+        pub const tile_stipple_x_origin : u32 = (1 << 12);
+        pub const tile_stipple_y_origin : u32 = (1 << 13);
+        pub const font               : u32 = (1 << 14);
+        pub const subwindow_mode     : u32 = (1 << 15);
+        pub const graphics_exposures : u32 = (1 << 16);
+        pub const clip_x_origin      : u32 = (1 << 17);
+        pub const clip_y_origin      : u32 = (1 << 18);
+        pub const clip_mask          : u32 = (1 << 19);
+        pub const dash_offset        : u32 = (1 << 20);
+        pub const dashes             : u32 = (1 << 21);
+        pub const arc_mode           : u32 = (1 << 22);
+    };
+
+    pub const non_option_len =
+              2 // opcode and unused
+            + 2 // request length
+            + 4 // gc id
+            + 4 // drawable id
+            + 4 // option mask
+            ;
+    pub const max_len = non_option_len + (23 * 4);  // 23 possible 4-byte options
+
+    pub const Args = struct {
+        gc_id: u32,
+        drawable_id: u32,
+    };
+    pub const Options = struct {
+        // TODO: add all the options
+        // Here are the defaults:
+        // function copy
+        // plane_mask all ones
+        foreground: u32 = 0,
+        background: u32 = 1,
+        // line_width 0
+        // line_style solid
+        // cap_style butt
+        // join_style miter
+        // fill_style solid
+        // fill_rule even_odd
+        // arc_mode pie_slice
+        // tile ?
+        // stipple ?
+        // tile_stipple_x_origin 0
+        // tile_stipple_y_origin 0
+        // font <server dependent>
+        // subwindow_mode clip_by_children
+        // graphics_exposures true
+        // clip_x_origin 0
+        // clip_y_origin 0
+        // clip_mask none
+        // dash_offset 0
+        // dashes the list 4, 4
+    };
+
+    pub fn serialize(buf: [*]u8, args: Args, options: Options) u16 {
+        buf[0] = opcode.create_gc;
+        buf[1] = 0; // unused
+        // buf[2-3] is the len, set at the end of the function
+
+        writeIntNative(u32, buf + 4, args.gc_id);
+        writeIntNative(u32, buf + 8, args.drawable_id);
+
+        var request_len: u16 = non_option_len;
+        var option_mask: u32 = 0;
+
+        inline for (std.meta.fields(Options)) |field| {
+            if (!isDefaultValue(options, field)) {
+                writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
+                option_mask |= @field(create_gc.option_flag, field.name);
+                request_len += 4;
+            }
+        }
+
+        writeIntNative(u32, buf + 12, option_mask);
+        std.debug.assert((request_len & 0x3) == 0);
+        writeIntNative(u16, buf + 2, request_len >> 2);
+        return request_len;
+    }
+};
+
+pub const Rectangle = struct {
+    x: i16, y: i16, width: u16, height: u16,
+};
+
+pub const polly_fill_rectangle = struct {
+    pub const non_list_len =
+              2 // opcode and unused
+            + 2 // request length
+            + 4 // drawable id
+            + 4 // gc id
+            ;
+    pub fn getLen(rectangle_count: u16) u16 {
+        return non_list_len + (rectangle_count * 8);
+    }
+    pub const Args = struct {
+        drawable_id: u32,
+        gc_id: u32,
+    };
+    pub fn serialize(buf: [*]u8, args: Args, rectangles: []const Rectangle) void {
+        buf[0] = opcode.poly_fill_rectangle;
+        buf[1] = 0; // unused
+        // buf[2-3] is the len, set at the end of the function
+        writeIntNative(u32, buf + 4, args.drawable_id);
+        writeIntNative(u32, buf + 8, args.gc_id);
+        var request_len: u16 = non_list_len;
+        for (rectangles) |rectangle| {
+            writeIntNative(i16, buf + request_len + 0, rectangle.x);
+            writeIntNative(i16, buf + request_len + 2, rectangle.y);
+            writeIntNative(u16, buf + request_len + 4, rectangle.width);
+            writeIntNative(u16, buf + request_len + 6, rectangle.height);
+            request_len += 8;
+        }
+        std.debug.assert((request_len & 0x3) == 0);
+        writeIntNative(u16, buf + 2, request_len >> 2);
+        std.debug.assert(getLen(@intCast(u16, rectangles.len)) == request_len);
     }
 };
 

@@ -30,7 +30,7 @@ pub fn main() !void {
                 connect_setup_header.proto_minor_ver,
                 connect_setup_header.readFailReason(reader),
             });
-            std.os.exit(0xff);
+            return error.ConnectSetupFailed;
         },
         .authenticate => {
             std.log.err("AUTHENTICATE! not implemented", .{});
@@ -42,7 +42,7 @@ pub fn main() !void {
         },
         else => |status| {
             std.log.err("Error: expected 0, 1 or 2 as first byte of connect setup reply, but got {}", .{status});
-            std.os.exit(0xff);
+            return error.MalformedXReply;
         }
     }
 
@@ -82,13 +82,13 @@ pub fn main() !void {
             .window_id = window_id,
             .parent_window_id = screen.root,
             .x = 0, .y = 0,
-            .width = 400, .height = 200,
+            .width = 400, .height = 400,
             .border_width = 0, // TODO: what is this?
             .class = .input_output,
             .visual_id = screen.root_visual,
         }, .{
 //            .bg_pixmap = .copy_from_parent,
-//            .bg_pixel = 0xaabbccdd,
+            .bg_pixel = 0xaabbccdd,
 //            //.border_pixmap =
 //            .border_pixel = 0x01fa8ec9,
 //            .bit_gravity = .north_west,
@@ -120,6 +120,20 @@ pub fn main() !void {
         });
         try send(sock, msg_buf[0..len]);
     }
+
+    const gc_id = window_id + 1;
+    {
+        var msg_buf: [x.create_gc.max_len]u8 = undefined;
+        const len = x.create_gc.serialize(&msg_buf, .{
+            .gc_id = gc_id,
+            .drawable_id = screen.root,
+        }, .{
+            .background = screen.black_pixel,
+            .foreground = screen.white_pixel,
+        });
+        try send(sock, msg_buf[0..len]);
+    }
+
     {
         var msg: [x.map_window.len]u8 = undefined;
         x.map_window.serialize(&msg, window_id);
@@ -160,7 +174,7 @@ pub fn main() !void {
                 },
                 .reply => {
                     std.log.info("todo: handle a reply message", .{});
-                    std.os.exit(0xff);
+                    return error.TodoHandleReplyMessage;
                 },
                 .key_press => {
                     const event = @ptrCast(*x.Event.KeyOrButton, msg);
@@ -198,11 +212,12 @@ pub fn main() !void {
                 .expose => {
                     const event = @ptrCast(*x.Event.Expose, msg);
                     std.log.info("expose: {}", .{event});
+                    try render(sock, window_id, gc_id);
                 },
                 else => {
                     const event = @ptrCast(*x.Event, msg);
                     std.log.info("todo: handle event {}", .{event});
-                    std.os.exit(0xff);
+                    return error.UnhandledEventKind;
                 },
             }
         }
@@ -218,5 +233,18 @@ fn send(sock: std.os.socket_t, data: []const u8) !void {
     if (sent != data.len) {
         std.log.err("send {} only sent {}\n", .{data.len, sent});
         return error.DidNotSendAllData;
+    }
+}
+
+fn render(sock: std.os.socket_t, drawable_id: u32, gc_id: u32) !void {
+    {
+        var msg: [x.polly_fill_rectangle.getLen(1)]u8 = undefined;
+        x.polly_fill_rectangle.serialize(&msg, .{
+            .drawable_id = drawable_id,
+            .gc_id = gc_id,
+        }, &[_]x.Rectangle {
+            .{ .x = 40, .y = 40, .width = 200, .height = 200 },
+        });
+        try send(sock, &msg);
     }
 }
