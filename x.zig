@@ -439,6 +439,7 @@ test "ConnectSetupMessage" {
 const opcode = struct {
     pub const create_window = 1;
     pub const map_window = 8;
+    pub const list_fonts = 49;
     pub const get_font_path = 52;
     pub const create_gc = 55;
     pub const poly_fill_rectangle = 70;
@@ -639,6 +640,27 @@ pub const map_window = struct {
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, window_id);
+    }
+};
+
+pub const list_fonts = struct {
+    pub const non_list_len =
+              2 // opcode and unused
+            + 2 // request length
+            + 2 // max names
+            + 2 // pattern length
+            ;
+    pub fn getLen(pattern_len: u16) u16 {
+        return @intCast(u16, non_list_len + std.mem.alignForward(pattern_len, 4));
+    }
+    pub fn serialize(buf: [*]u8, max_names: u16, pattern: Slice(u16, [*]const u8)) void {
+        buf[0] = opcode.list_fonts;
+        buf[1] = 0; // unused
+        const len = getLen(pattern.len);
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u16, buf + 4, max_names);
+        writeIntNative(u16, buf + 6, pattern.len);
+        @memcpy(buf + 8, pattern.ptr, pattern.len);
     }
 };
 
@@ -1019,6 +1041,7 @@ pub const ServerMsgKind = enum(u8) {
 pub const ServerMsg = extern union {
     generic: Generic,
     get_font_path: GetFontPath,
+    list_fonts: ListFonts,
 
     // NOTE: can't used packed because of compiler bugs
     pub const Generic = extern struct {
@@ -1027,21 +1050,42 @@ pub const ServerMsg = extern union {
     };
     comptime { std.debug.assert(@sizeOf(Generic) == 32); }
 
+    pub const GetFontPath = StringList;
+    pub const ListFonts = StringList;
     // NOTE: can't used packed because of compiler bugs
-    pub const GetFontPath = extern struct {
+    pub const StringList = extern struct {
         kind: ReplyKind,
         unused: u8,
         sequence: u16,
-        path_strings_words: u32,
-        path_count: u16,
+        string_list_word_size: u32,
+        string_count: u16,
         unused_pad: [22]u8,
-        path_strings: [0]u8,
-        pub fn getPath(self: *const GetFontPath) []const u8 {
+        string_list: [0]u8,
+        pub fn iterator(self: *const GetFontPath) StringListIterator {
             const ptr = @intToPtr([*]u8, @ptrToInt(self) + 32);
-            return std.mem.trimRight(u8, ptr[0 .. self.path_strings_words * 4], &[_]u8 { 0 });
+            return StringListIterator { .mem = ptr[0 .. self.string_list_word_size * 4], .left = self.string_count, .offset = 0 };
         }
     };
+    comptime { std.debug.assert(@sizeOf(StringList) == 32); }
 
+
+};
+
+pub const StringListIterator = struct {
+    mem: []const u8,
+    left: u16,
+    offset: usize,
+    pub fn next(self: *StringListIterator) !?[]const u8 {
+        if (self.left == 0) return null;
+        const len = self.mem[self.offset];
+        const limit = self.offset + len + 1;
+        if (limit > self.mem.len)
+            return error.StringLenTooLarge;
+        const str = self.mem[self.offset + 1.. limit];
+        self.left -= 1;
+        self.offset = limit;
+        return str;
+    }
 };
 
 pub const ParsedMsg = struct {
@@ -1281,7 +1325,7 @@ pub fn readOneMsg(reader: anytype, buf: []align(4) u8) !u32 {
         @enumToInt(ServerMsgKind.err) => return 32,
         @enumToInt(ServerMsgKind.reply) => {
             const len = 32 + (4 * readIntNative(u32, buf.ptr + 4));
-            if (len <= buf.len) {
+            if (len > 32 and len <= buf.len) {
                 try readOneMsgFinish(reader, buf[0 .. len]);
             }
             return len;

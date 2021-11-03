@@ -70,18 +70,41 @@ fn main2() !void {
     {
         const msg_bytes = try x.readOneMsgAlloc(allocator, reader);
         defer allocator.free(msg_bytes);
-        const generic_msg = @ptrCast(*x.ServerMsg.Generic, msg_bytes.ptr);
-        if (generic_msg.kind != .reply) {
-            std.log.err("expected reply but got {}", .{generic_msg});
-            return error.UnexpectedReply;
+        const msg = try asReply(x.ServerMsg.GetFontPath, msg_bytes);
+        std.log.info("there are {} font paths on the server:", .{msg.string_count});
+        var it = msg.iterator();
+        while (try it.next()) |path| {
+            std.log.info("    '{s}'", .{path});
         }
-        const msg = @ptrCast(*x.ServerMsg.GetFontPath, generic_msg);
-        std.log.info("got msg of {} bytes: {}", .{msg_bytes.len, msg});
-        const path = msg.getPath();
-        std.log.info("path is {d}", .{path});
-        std.log.info("path is '{s}'", .{path});
     }
-    
+
+    {
+        const pattern_literal = "*";
+        const pattern = x.Slice(u16, [*]const u8) { .ptr = pattern_literal, .len = pattern_literal.len };
+        var msg: [x.list_fonts.getLen(pattern.len)]u8 = undefined;
+        x.list_fonts.serialize(&msg, 0xffff, pattern);
+        try send(sock, &msg);
+    }
+
+    {
+        const msg_bytes = try x.readOneMsgAlloc(allocator, reader);
+        defer allocator.free(msg_bytes);
+        const msg = try asReply(x.ServerMsg.ListFonts, msg_bytes);
+        std.log.info("there are {} fonts on the server:", .{msg.string_count});
+        var it = msg.iterator();
+        while (try it.next()) |path| {
+            std.log.info("    '{s}'", .{path});
+        }
+    }
+}
+
+fn asReply(comptime T: type, msg_bytes: []align(4) u8) !*T {
+    const generic_msg = @ptrCast(*x.ServerMsg.Generic, msg_bytes.ptr);
+    if (generic_msg.kind != .reply) {
+        std.log.err("expected reply but got {}", .{generic_msg});
+        return error.UnexpectedReply;
+    }
+    return @ptrCast(*T, generic_msg);
 }
 
 fn readSocket(sock: std.os.socket_t, buffer: []u8) !usize {
