@@ -439,6 +439,7 @@ test "ConnectSetupMessage" {
 const opcode = struct {
     pub const create_window = 1;
     pub const map_window = 8;
+    pub const get_font_path = 52;
     pub const create_gc = 55;
     pub const poly_fill_rectangle = 70;
     pub const image_text8 = 76;
@@ -638,6 +639,15 @@ pub const map_window = struct {
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, window_id);
+    }
+};
+
+pub const get_font_path = struct {
+    pub const len = 4;
+    pub fn serialize(buf: [*]u8) void {
+        buf[0] = opcode.get_font_path;
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
     }
 };
 
@@ -965,9 +975,10 @@ pub const EventCode = enum(u8) {
     mapping_notify = 34,
 };
 
+const ReplyKind = enum(u8) { reply = 1 };
 pub const ServerMsgKind = enum(u8) {
     err = 0,
-    reply = 1,
+    reply = @enumToInt(ReplyKind.reply),
     key_press         = @enumToInt(EventCode.key_press),
     key_release       = @enumToInt(EventCode.key_release),
     button_press      = @enumToInt(EventCode.button_press),
@@ -1005,11 +1016,33 @@ pub const ServerMsgKind = enum(u8) {
 };
 
 // NOTE: can't used packed because of compiler bugs
-pub const ServerMsg = extern struct {
-    kind: ServerMsgKind,
-    reserve_min: [31]u8,
+pub const ServerMsg = extern union {
+    generic: Generic,
+    get_font_path: GetFontPath,
+
+    // NOTE: can't used packed because of compiler bugs
+    pub const Generic = extern struct {
+        kind: ServerMsgKind,
+        reserve_min: [31]u8,
+    };
+    comptime { std.debug.assert(@sizeOf(Generic) == 32); }
+
+    // NOTE: can't used packed because of compiler bugs
+    pub const GetFontPath = extern struct {
+        kind: ReplyKind,
+        unused: u8,
+        sequence: u16,
+        path_strings_words: u32,
+        path_count: u16,
+        unused_pad: [22]u8,
+        path_strings: [0]u8,
+        pub fn getPath(self: *const GetFontPath) []const u8 {
+            const ptr = @intToPtr([*]u8, @ptrToInt(self) + 32);
+            return std.mem.trimRight(u8, ptr[0 .. self.path_strings_words * 4], &[_]u8 { 0 });
+        }
+    };
+
 };
-comptime { std.debug.assert(@sizeOf(ServerMsg) == 32); }
 
 pub const ParsedMsg = struct {
     len: u16,
@@ -1225,3 +1258,44 @@ pub const ConnectSetup = struct {
         return @ptrCast(*align(4) Screen, @alignCast(4, self.buf.ptr + format_list_limit));
     }
 };
+
+pub fn readOneMsgAlloc(allocator: *std.mem.Allocator, reader: anytype) ![]align(4) u8 {
+    var buf = try allocator.allocWithOptions(u8, 32, 4, null);
+    errdefer allocator.free(buf);
+    const len = try readOneMsg(reader, buf);
+    if (len > 32) {
+        buf = try allocator.realloc(buf, len);
+        try readOneMsgFinish(reader, buf);
+    }
+    return buf;
+}
+
+/// The caller must check whether the length returned is larger than the provided `buf`.
+/// If it is, then only the first 32-bytes have been read.  The caller can allocate a new
+/// buffer large enough to accomodate and finish reading the message by copying the first
+/// 32 bytes to the new buffer then calling `readOneMsgFinish`.
+pub fn readOneMsg(reader: anytype, buf: []align(4) u8) !u32 {
+    std.debug.assert(buf.len >= 32);
+    try readFull(reader, buf[0 .. 32]);
+    switch (buf[0]) {
+        @enumToInt(ServerMsgKind.err) => return 32,
+        @enumToInt(ServerMsgKind.reply) => {
+            const len = 32 + (4 * readIntNative(u32, buf.ptr + 4));
+            if (len <= buf.len) {
+                try readOneMsgFinish(reader, buf[0 .. len]);
+            }
+            return len;
+        },
+        2 ... 34 => return 32,
+        else => std.debug.panic("message kind {} not implemented", .{buf[0]}),
+    }
+}
+
+pub fn readOneMsgFinish(reader: anytype, buf: []align(4) u8) !void {
+    //
+    // for now this is the only case where this should happen
+    // I've added this check to audit the code again if this every changes
+    //
+    std.debug.assert(buf[0] == @enumToInt(ServerMsgKind.reply));
+    try readFull(reader, buf[32..]);
+}

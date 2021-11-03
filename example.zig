@@ -178,7 +178,7 @@ pub fn main() !void {
                 break;
             buf_start += parsed.len;
             const msg = parsed.msg;
-            switch (msg.kind) {
+            switch (msg.generic.kind) {
                 .err => {
                     const generic_error = @ptrCast(*x.ErrorReply, msg);
                     switch (generic_error.code) {
