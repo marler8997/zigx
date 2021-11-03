@@ -30,7 +30,7 @@ const testing = std.testing;
 const builtin = @import("builtin");
 const os = std.os;
 
-const zog = @import("zog");
+pub const CircularBuffer = @import("CircularBuffer.zig");
 
 pub const TcpBasePort = 6000;
 
@@ -848,61 +848,32 @@ pub const ServerMsg = extern struct {
 };
 comptime { std.debug.assert(@sizeOf(ServerMsg) == 32); }
 
-pub const ServerMsgReader = struct {
-    buf: []align(4) u8, // NOTE: should never be smaller than 32 bytes
-    offset: usize,
-    limit: usize,
-
-    fn consume(self: *ServerMsgReader, len: usize) void {
-        self.offset += len;
-        if (self.offset == self.limit) {
-            self.offset = 0;
-            self.limit = 0;
-        } else std.debug.assert(self.offset < self.limit);
-    }
-
-    // on error.ParitalXMsg, buf will be completely filled with a partial message
-    pub fn read(self: *ServerMsgReader, sock: std.os.socket_t) !*align(4) ServerMsg {
-        std.debug.assert(self.buf.len >= 32);
-        while (true) {
-            if (self.limit >= self.offset + 32) {
-                //switch (@intToEnum(ServerMsgKind, self.buf[self.offset])) {
-                switch (self.buf[self.offset]) {
-                    @enumToInt(ServerMsgKind.err) => {
-                        const off = self.offset;
-                        self.consume(32);
-                        return @alignCast(4, @ptrCast(*ServerMsg, self.buf.ptr + off));
-                    },
-                    @enumToInt(ServerMsgKind.reply) => {
-                        const full_len = 32 + (4 * readIntNative(u32, self.buf.ptr + self.offset + 4));
-                        if (self.limit >= self.offset + full_len) {
-                            const off = self.offset;
-                            self.consume(full_len);
-                            return @alignCast(4, @ptrCast(*ServerMsg, self.buf.ptr + off));
-                        }
-                    },
-                    2 ... 34 => {
-                        const off = self.offset;
-                        self.consume(32);
-                        return @alignCast(4, @ptrCast(*ServerMsg, self.buf.ptr + off));
-                    },
-                    else => std.debug.panic("handle reply type {}", .{self.buf[self.offset]}),
-                }
-            }
-
-            if (self.limit == self.buf.len)
-                return error.PartialXMsg;
-
-            if (self.offset > 0) {
-                @panic("todo: move memory");
-            }
-            const last_received = try std.os.recv(sock, self.buf[self.limit..], 0);
-            if (last_received == 0)
-                return error.ConnectionResetByPeer;
-            self.limit += last_received;
-        }
-    }
+pub const ParsedMsg = struct {
+    len: u16,
+    msg: *align(4) ServerMsg,
 };
+// on error.ParitalXMsg, buf will be completely filled with a partial message
+pub fn parseMsg(buf: []align(4) u8) ParsedMsg {
+    if (buf.len < 32)
+        return .{ .len = 0, .msg = undefined };
+
+    //switch (@intToEnum(ServerMsgKind, self.buf[self.offset])) {
+    switch (buf[0]) {
+        @enumToInt(ServerMsgKind.err) =>
+            return .{ .len = 32, .msg = @ptrCast(*align(4) ServerMsg, buf.ptr) },
+        @enumToInt(ServerMsgKind.reply) => {
+            //const full_len = 32 + (4 * readIntNative(u32, buf.ptr + self.offset + 4));
+            //if (self.limit >= self.offset + full_len) {
+            //    const off = self.offset;
+            //    self.consume(full_len);
+            //    return @alignCast(4, @ptrCast(*ServerMsg, buf.ptr + off));
+            //}
+            @panic("todo");
+        },
+        2 ... 34 => return .{ .len = 32, .msg = @ptrCast(*align(4) ServerMsg, buf.ptr) },
+        else => |t| std.debug.panic("handle reply type {}", .{t}),
+    }
+}
 
 pub const Format = packed struct {
     depth: u8,
