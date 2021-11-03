@@ -127,64 +127,60 @@ pub fn main() !void {
 
     //var buf align(4): [500]u8 = undefined;
     var buf align(4) = [_]u8 {undefined} ** 500;
-    var reply_reader = x.ReplyReader { .buf = &buf, .offset = 0, .limit = 0 };
+    var msg_reader = x.ServerMsgReader { .buf = &buf, .offset = 0, .limit = 0 };
     while (true) {
-        const reply = try reply_reader.read(sock);
-        _ = reply;
-    //    for (buf[0 .. result.total_received]) |c, i| {
-    //        std.log.debug("[{}] 0x{x} ({1})", .{i, c});
-    //    }
-        switch (@intToEnum(x.ReplyType, buf[0])) {
+        const msg = try msg_reader.read(sock);
+        switch (msg.kind) {
             .err => {
-                const generic_error = @ptrCast(*x.ErrorReply, &buf);
+                const generic_error = @ptrCast(*x.ErrorReply, msg);
                 switch (generic_error.code) {
                     .length => std.log.debug("{}", .{@ptrCast(*x.ErrorReplyLength, generic_error)}),
                     else => std.log.debug("{}", .{generic_error}),
                 }
             },
-            .normal => {
+            .reply => {
                 std.log.info("todo: handle a reply message", .{});
                 std.os.exit(0xff);
             },
             .key_press => {
-                const event = @ptrCast(*x.Event.KeyOrButton, &buf);
+                const event = @ptrCast(*x.Event.KeyOrButton, msg);
                 std.log.info("key_press: {}", .{event.detail});
             },
             .key_release => {
-                const event = @ptrCast(*x.Event.KeyOrButton, &buf);
+                const event = @ptrCast(*x.Event.KeyOrButton, msg);
                 std.log.info("key_release: {}", .{event.detail});
             },
             .button_press => {
-                const event = @ptrCast(*x.Event.KeyOrButton, &buf);
+                const event = @ptrCast(*x.Event.KeyOrButton, msg);
                 std.log.info("button_press: {}", .{event});
             },
             .button_release => {
-                const event = @ptrCast(*x.Event.KeyOrButton, &buf);
+                const event = @ptrCast(*x.Event.KeyOrButton, msg);
                 std.log.info("button_release: {}", .{event});
             },
             .enter_notify => {
-                const event = @ptrCast(*x.Event.Generic, &buf);
+                const event = @ptrCast(*x.Event.Generic, msg);
                 std.log.info("enter_window: {}", .{event});
             },
             .leave_notify => {
-                const event = @ptrCast(*x.Event.Generic, &buf);
+                const event = @ptrCast(*x.Event.Generic, msg);
                 std.log.info("leave_window: {}", .{event});
             },
             .motion_notify => {
                 // too much logging
-                //const event = @ptrCast(*x.Event.Generic, &buf);
+                //const event = @ptrCast(*x.Event.Generic, msg);
                 //std.log.info("pointer_motion: {}", .{event});
             },
             .keymap_notify => {
-                const event = @ptrCast(*x.Event, &buf);
+                const event = @ptrCast(*x.Event, msg);
                 std.log.info("keymap_state: {}", .{event});
             },
             .expose => {
-                const event = @ptrCast(*x.Event.Expose, &buf);
+                const event = @ptrCast(*x.Event.Expose, msg);
                 std.log.info("expose: {}", .{event});
             },
             else => {
-                const event = @ptrCast(*x.Event, &buf);
+                const event = @ptrCast(*x.Event, msg);
                 std.log.info("todo: handle event {}", .{event});
                 std.os.exit(0xff);
             },

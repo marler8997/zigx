@@ -802,9 +802,9 @@ pub const EventCode = enum(u8) {
     mapping_notify = 34,
 };
 
-pub const ReplyType = enum(u8) {
+pub const ServerMsgKind = enum(u8) {
     err = 0,
-    normal = 1,
+    reply = 1,
     key_press         = @enumToInt(EventCode.key_press),
     key_release       = @enumToInt(EventCode.key_release),
     button_press      = @enumToInt(EventCode.button_press),
@@ -841,12 +841,19 @@ pub const ReplyType = enum(u8) {
     _,
 };
 
-pub const ReplyReader = struct {
+// NOTE: can't used packed because of compiler bugs
+pub const ServerMsg = extern struct {
+    kind: ServerMsgKind,
+    reserve_min: [31]u8,
+};
+comptime { std.debug.assert(@sizeOf(ServerMsg) == 32); }
+
+pub const ServerMsgReader = struct {
     buf: []align(4) u8, // NOTE: should never be smaller than 32 bytes
     offset: usize,
     limit: usize,
 
-    fn consume(self: *ReplyReader, len: usize) void {
+    fn consume(self: *ServerMsgReader, len: usize) void {
         self.offset += len;
         if (self.offset == self.limit) {
             self.offset = 0;
@@ -855,30 +862,29 @@ pub const ReplyReader = struct {
     }
 
     // on error.ParitalXMsg, buf will be completely filled with a partial message
-    pub fn read(self: *ReplyReader, sock: std.os.socket_t) ![]u8 {
+    pub fn read(self: *ServerMsgReader, sock: std.os.socket_t) !*align(4) ServerMsg {
         std.debug.assert(self.buf.len >= 32);
         while (true) {
             if (self.limit >= self.offset + 32) {
-                //switch (@intToEnum(ReplyType, self.buf[self.offset])) {
+                //switch (@intToEnum(ServerMsgKind, self.buf[self.offset])) {
                 switch (self.buf[self.offset]) {
-                    @enumToInt(ReplyType.err) => {
+                    @enumToInt(ServerMsgKind.err) => {
                         const off = self.offset;
                         self.consume(32);
-                        return self.buf[off .. off + 32];
+                        return @alignCast(4, @ptrCast(*ServerMsg, self.buf.ptr + off));
                     },
-                    @enumToInt(ReplyType.normal) => {
+                    @enumToInt(ServerMsgKind.reply) => {
                         const full_len = 32 + (4 * readIntNative(u32, self.buf.ptr + self.offset + 4));
                         if (self.limit >= self.offset + full_len) {
                             const off = self.offset;
                             self.consume(full_len);
-                            return self.buf[off .. off + full_len];
+                            return @alignCast(4, @ptrCast(*ServerMsg, self.buf.ptr + off));
                         }
                     },
-                    2 ... 63 => {
-                    //.event => {
+                    2 ... 34 => {
                         const off = self.offset;
                         self.consume(32);
-                        return self.buf[off .. off + 32];
+                        return @alignCast(4, @ptrCast(*ServerMsg, self.buf.ptr + off));
                     },
                     else => std.debug.panic("handle reply type {}", .{self.buf[self.offset]}),
                 }
