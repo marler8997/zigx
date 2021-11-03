@@ -121,15 +121,26 @@ pub fn main() !void {
         try send(sock, msg_buf[0..len]);
     }
 
-    const gc_id = window_id + 1;
+    const bg_gc_id = window_id + 1;
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
-            .gc_id = gc_id,
+            .gc_id = bg_gc_id,
+            .drawable_id = screen.root,
+        }, .{
+            .foreground = screen.black_pixel,
+        });
+        try send(sock, msg_buf[0..len]);
+    }
+    const fg_gc_id = window_id + 2;
+    {
+        var msg_buf: [x.create_gc.max_len]u8 = undefined;
+        const len = x.create_gc.serialize(&msg_buf, .{
+            .gc_id = fg_gc_id,
             .drawable_id = screen.root,
         }, .{
             .background = screen.black_pixel,
-            .foreground = screen.white_pixel,
+            .foreground = 0xffaadd,
         });
         try send(sock, msg_buf[0..len]);
     }
@@ -212,7 +223,7 @@ pub fn main() !void {
                 .expose => {
                     const event = @ptrCast(*x.Event.Expose, msg);
                     std.log.info("expose: {}", .{event});
-                    try render(sock, window_id, gc_id);
+                    try render(sock, window_id, bg_gc_id, fg_gc_id);
                 },
                 else => {
                     const event = @ptrCast(*x.Event, msg);
@@ -236,14 +247,26 @@ fn send(sock: std.os.socket_t, data: []const u8) !void {
     }
 }
 
-fn render(sock: std.os.socket_t, drawable_id: u32, gc_id: u32) !void {
+fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32) !void {
     {
-        var msg: [x.polly_fill_rectangle.getLen(1)]u8 = undefined;
-        x.polly_fill_rectangle.serialize(&msg, .{
+        var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
+        x.poly_fill_rectangle.serialize(&msg, .{
             .drawable_id = drawable_id,
-            .gc_id = gc_id,
+            .gc_id = bg_gc_id,
         }, &[_]x.Rectangle {
-            .{ .x = 40, .y = 40, .width = 200, .height = 200 },
+            .{ .x = 100, .y = 100, .width = 200, .height = 200 },
+        });
+        try send(sock, &msg);
+    }
+    {
+        const text_literal: []const u8 = "Hello X!";
+        const text = x.Slice(u8, [*]const u8) { .ptr = text_literal.ptr, .len = text_literal.len };
+        var msg: [x.image_text8.getLen(text.len)]u8 = undefined;
+        x.image_text8.serialize(&msg, .{
+            .drawable_id = drawable_id,
+            .gc_id = fg_gc_id,
+            .x = 115, .y = 125,
+            .text = text,
         });
         try send(sock, &msg);
     }

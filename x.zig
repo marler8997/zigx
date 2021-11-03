@@ -440,6 +440,7 @@ const opcode = struct {
     pub const map_window = 8;
     pub const create_gc = 55;
     pub const poly_fill_rectangle = 70;
+    pub const image_text8 = 76;
 };
 
 pub const BitGravity = enum(u4) {
@@ -737,7 +738,7 @@ pub const Rectangle = struct {
     x: i16, y: i16, width: u16, height: u16,
 };
 
-pub const polly_fill_rectangle = struct {
+pub const poly_fill_rectangle = struct {
     pub const non_list_len =
               2 // opcode and unused
             + 2 // request length
@@ -770,6 +771,40 @@ pub const polly_fill_rectangle = struct {
         std.debug.assert(getLen(@intCast(u16, rectangles.len)) == request_len);
     }
 };
+
+pub const image_text8 = struct {
+    pub const non_list_len =
+              2 // opcode and string_length
+            + 2 // request length
+            + 4 // drawable id
+            + 4 // gc id
+            + 4 // x, y coordinates
+            ;
+    pub fn getLen(text_len: u8) u16 {
+        return @intCast(u16, non_list_len + std.mem.alignForward(text_len, 4));
+    }
+    pub const max_len = non_list_len + 255;
+    pub const Args = struct {
+        drawable_id: u32,
+        gc_id: u32,
+        x: i16,
+        y: i16,
+        text: Slice(u8, [*]const u8),
+    };
+    pub fn serialize(buf: [*]u8, args: Args) void {
+        buf[0] = opcode.image_text8;
+        buf[1] = args.text.len;
+        const request_len = getLen(args.text.len);
+        std.debug.assert(request_len & 0x3 == 0);
+        writeIntNative(u16, buf + 2, request_len >> 2);
+        writeIntNative(u32, buf + 4, args.drawable_id);
+        writeIntNative(u32, buf + 8, args.gc_id);
+        writeIntNative(i16, buf + 12, args.x);
+        writeIntNative(i16, buf + 14, args.y);
+        @memcpy(buf + 16, args.text.ptr, args.text.len);
+    }
+};
+
 
 pub fn writeIntNative(comptime T: type, buf: [*]u8, value: T) void {
     @ptrCast(*align(1) T, buf).* = value;
