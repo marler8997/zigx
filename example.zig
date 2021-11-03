@@ -1,5 +1,6 @@
 const std = @import("std");
 const x = @import("./x.zig");
+const Memfd = x.Memfd;
 const CircularBuffer = x.CircularBuffer;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -151,7 +152,9 @@ pub fn main() !void {
         try send(sock, &msg);
     }
 
-    var buf = try CircularBuffer.initMinSize(500);
+    const buf_memfd = try Memfd.init("CircularBuffer");
+    // no need to deinit
+    var buf = try CircularBuffer.initMinSize(buf_memfd, 500);
     std.log.info("circular buffer size is {}", .{buf.size});
     var buf_start: usize = 0;
     while (true) {
