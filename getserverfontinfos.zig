@@ -12,15 +12,17 @@ pub fn main() !void {
     defer std.os.shutdown(conn.sock, .both) catch {};
 
     {
-        var msg: [x.get_font_path.len]u8 = undefined;
-        x.get_font_path.serialize(&msg);
+        const pattern_string = "*";
+        const pattern = x.Slice(u16, [*]const u8) { .ptr = pattern_string, .len = pattern_string.len };
+        var msg: [x.list_fonts.getLen(pattern.len)]u8 = undefined;
+        x.list_fonts.serialize(&msg, 0xffff, pattern);
         try conn.send(&msg);
     }
 
     {
         const msg_bytes = try x.readOneMsgAlloc(allocator, conn.reader());
         defer allocator.free(msg_bytes);
-        const msg = try common.asReply(x.ServerMsg.GetFontPath, msg_bytes);
+        const msg = try common.asReply(x.ServerMsg.ListFonts, msg_bytes);
         var it = msg.iterator();
         const writer = std.io.getStdOut().writer();
         while (try it.next()) |path| {

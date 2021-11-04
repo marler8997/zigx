@@ -439,6 +439,8 @@ test "ConnectSetupMessage" {
 const opcode = struct {
     pub const create_window = 1;
     pub const map_window = 8;
+    pub const open_font = 45;
+    pub const query_font = 47;
     pub const list_fonts = 49;
     pub const get_font_path = 52;
     pub const create_gc = 55;
@@ -640,6 +642,39 @@ pub const map_window = struct {
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, window_id);
+    }
+};
+
+pub const open_font = struct {
+    pub const non_list_len =
+              2 // opcode and unused
+            + 2 // request length
+            + 4 // font id
+            + 4 // name length (2 bytes) and 2 unused bytes
+            ;
+    pub fn getLen(name_len: u16) u16 {
+        return non_list_len + @intCast(u16, std.mem.alignForward(name_len, 4));
+    }
+    pub fn serialize(buf: [*]u8, font_id: u32, name: Slice(u16, [*]const u8)) void {
+        buf[0] = opcode.open_font;
+        buf[1] = 0; // unused
+        const len = getLen(name.len);
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, font_id);
+        writeIntNative(u16, buf + 8, name.len);
+        buf[10] = 0; // unused
+        buf[11] = 0; // unused
+        @memcpy(buf + 12, name.ptr, name.len);
+    }
+};
+
+pub const query_font = struct {
+    pub const len = 8;
+    pub fn serialize(buf: [*]u8, font: u32) void {
+        buf[0] = opcode.query_font;
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, font);
     }
 };
 
