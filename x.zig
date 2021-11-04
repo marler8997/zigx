@@ -77,13 +77,13 @@ const ParsedDisplay = struct {
 // I think I can get away without an allocator here and without
 // freeing it and without error.
 pub fn getDisplay() []const u8 {
-    return std.os.getenv("DISPLAY") orelse ":0";
+    return os.getenv("DISPLAY") orelse ":0";
 }
 
 // Return: display if set, otherwise the environment variable DISPLAY
 //pub fn getDisplay(display: anytype) @TypeOf(display) {
 //    if (display.length == 0) {
-//        const env = std.os.getenv("DISPLAY");
+//        const env = os.getenv("DISPLAY");
 //        if (@TypeOf(display) == []const u8)
 //            return env else "";
 //        @compileError("display string type not implemented");
@@ -213,14 +213,14 @@ pub fn isUnixProtocol(optionalProtocol: ?[]const u8) bool {
 
 // The application should probably have access to the DISPLAY
 // for logging purposes.  This might be too much abstraction.
-//pub fn connect() !std.os.socket_t {
-//    const display = std.os.getenv("DISPLAY") orelse
+//pub fn connect() !os.socket_t {
+//    const display = os.getenv("DISPLAY") orelse
 //        return connectExplicit(null, null, 0);
 //    return connectDisplay(display);
 //}
 
 //pub const ConnectDisplayError = ParseDisplayError;
-pub fn connect(display: []const u8) !std.os.socket_t {
+pub fn connect(display: []const u8) !os.socket_t {
     const parsed = try parseDisplay(display);
     const optional_host: ?[]const u8 = blk: {
         const host_slice = parsed.hostSlice(display.ptr);
@@ -233,35 +233,53 @@ pub fn connect(display: []const u8) !std.os.socket_t {
     return connectExplicit(optional_host, optional_proto, parsed.display_num);
 }
 
-//pub const ConnectExplicitError = error{ DisplayNumberOutOfRange };
-pub fn connectExplicit(optionalHost: ?[]const u8, optionalProtocol: ?[]const u8, display_num: u32) !std.os.socket_t {
-    if (optionalHost) |host| {
-        if (!std.mem.eql(u8, host, "unix") and !isUnixProtocol(optionalProtocol)) {
-            const port = TcpBasePort + display_num;
-            if (port > std.math.maxInt(u16))
-                return error.DisplayNumberOutOfRange;
-            return connectTcp(host, optionalProtocol, @intCast(u16, port));
-        }
-    }
-    return error.NoHostNotImplemented;
+
+fn defaultTcpHost(optional_host: ?[]const u8) []const u8 {
+    return if (optional_host) |host| host else "localhost";
+}
+fn displayToTcpPort(display_num: u32) error{DisplayNumberOutOfRange}!u16 {
+    const port = TcpBasePort + display_num;
+    if (port > std.math.maxInt(u16))
+        return error.DisplayNumberOutOfRange;
+    return @intCast(u16, port);
 }
 
-pub fn connectTcp(optionalHost: ?[]const u8, optionalProtocol: ?[]const u8, port: u16) !std.os.socket_t {
-    var forceIpv6 = false;
-    if (optionalProtocol) |protocol| {
-        if (std.mem.eql(u8, protocol, "tcp")) { }
-        else if (std.mem.eql(u8, protocol, "inet")) { }
-        else if (std.mem.eql(u8, protocol, "inet6")) {
-            forceIpv6 = true;
-        } else {
-            return ConnectError.UnsupportedProtocol;
-        }
+pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u8, display_num: u32) !os.socket_t {
+
+    if (optional_protocol) |proto| {
+        if (std.mem.eql(u8, proto, "unix"))
+            return connectUnix(optional_host, display_num);
+        if (std.mem.eql(u8, proto, "tcp") or std.mem.eql(u8, proto, "inet"))
+            return connectTcp(defaultTcpHost(optional_host), try displayToTcpPort(display_num), .{});
+        if (std.mem.eql(u8, proto, "inet6"))
+            return connectTcp(defaultTcpHost(optional_host), try displayToTcpPort(display_num), .{ .inet6 = true });
+        return error.UnhandledDisplayProtocol;
     }
-    const host = if (optionalHost) |host| host else "localhost";
-    return try tcpConnectToHost(host, port);
+
+    if (optional_host) |host| {
+        if (std.mem.eql(u8, host, "unix")) {
+            // I don't want to carry this complexity if I don't have to, so for now I'll just make it an error
+            std.log.err("host is 'unix' this might mean 'unix domain socket' but not sure, giving up for now", .{});
+            return error.NotSureIWantToSupportAmbiguousUnixHost;
+        }
+        return connectTcp(host, try displayToTcpPort(display_num), .{});
+    } else {
+        // otherwise, strategy is to try connecting to a unix domain socket first
+        // and fall back to tcp localhost otherwise
+        return connectUnix(null, display_num) catch |err| switch (err) {
+            else => |e| return e,
+        };
+
+        // TODO: uncomment this one we handle some of the errors from connectUnix
+        //return connectTcp("localhost", try displayToTcpPort(display_num), .{});
+    }
 }
 
-pub fn tcpConnectToHost(name: []const u8, port: u16) !std.os.socket_t {
+pub const ConnectTcpOptions = struct {
+    inet6: bool = false,
+};
+pub fn connectTcp(name: []const u8, port: u16, options: ConnectTcpOptions) !os.socket_t {
+    if (options.inet6) return error.Inet6NotImplemented;
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const list = try std.net.getAddressList(&arena.allocator, name, port);
@@ -275,10 +293,10 @@ pub fn tcpConnectToHost(name: []const u8, port: u16) !std.os.socket_t {
         };
     }
     if (list.addrs.len == 0) return error.UnknownHostName;
-    return std.os.ConnectError.ConnectionRefused;
+    return os.ConnectError.ConnectionRefused;
 }
 
-pub fn tcpConnectToAddress(address: std.net.Address) !std.os.socket_t {
+pub fn tcpConnectToAddress(address: std.net.Address) !os.socket_t {
     const nonblock = if (std.io.is_async) os.SOCK.NONBLOCK else 0;
     const sock_flags = os.SOCK.STREAM | nonblock |
         (if (builtin.os.tag == .windows) 0 else os.SOCK.CLOEXEC);
@@ -295,9 +313,36 @@ pub fn tcpConnectToAddress(address: std.net.Address) !std.os.socket_t {
     return sockfd;
 }
 
-pub fn disconnect(sock: std.os.socket_t) void {
-    std.os.shutdown(sock, .both) catch {}; // ignore any error here
-    std.os.close(sock);
+pub fn disconnect(sock: os.socket_t) void {
+    os.shutdown(sock, .both) catch {}; // ignore any error here
+    os.close(sock);
+}
+
+pub fn connectUnix(display_host: ?[]const u8, display_num: u32) !os.socket_t {
+    if (display_host) |_| return error.ConnectUnixWithDisplayHostNotImplemented;
+
+    const path_prefix = "/tmp/.X11-unix/X";
+
+    var addr = os.sockaddr.un { .family = os.AF.UNIX, .path = undefined };
+
+    _ = std.fmt.bufPrintZ(&addr.path, "{s}{}", .{path_prefix, display_num}) catch unreachable;
+
+    const sock = try os.socket(os.AF.UNIX, os.SOCK.STREAM, 0);
+    errdefer os.close(sock);
+
+    // TODO: should we set any socket options?
+
+    os.connect(sock, @ptrCast(*os.sockaddr, &addr), @sizeOf(@TypeOf(addr))) catch |err| switch (err) {
+        // TODO: handle some of these errors and translate them so we can "fall back" to tcp
+        //       for example, we might handle error.FileNotFound, but I would probably
+        //       translate most errors to custom ones so we only fallback when we get
+        //       an error on the "connect" call itself
+        else => |e| {
+            std.debug.panic("TODO: connect failed with {}, need to implement fallback to TCP", .{e});
+            return e;
+        }
+    };
+    return sock;
 }
 
 
@@ -882,11 +927,11 @@ pub fn readIntNative(comptime T: type, buf: [*]const u8) T {
 }
 
 
-pub fn recvFull(sock: std.os.socket_t, buf: []u8) !void {
+pub fn recvFull(sock: os.socket_t, buf: []u8) !void {
     std.debug.assert(buf.len > 0);
     var total_received : usize = 0;
     while (true) {
-        const last_received = try std.os.recv(sock, buf[total_received..], 0);
+        const last_received = try os.recv(sock, buf[total_received..], 0);
         if (last_received == 0)
             return error.ConnectionResetByPeer;
         total_received += last_received;
