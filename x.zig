@@ -940,6 +940,73 @@ pub fn recvFull(sock: os.socket_t, buf: []u8) !void {
     }
 }
 
+pub const Atom = enum(u32) {
+    PRIMARY = 1,
+    SECONDARY = 2,
+    ARC = 3,
+    ATOM = 4,
+    BITMAP = 5,
+    CARDINAL = 6,
+    COLORMAP = 7,
+    CURSOR = 8,
+    CUT_BUFFER0 = 9,
+    CUT_BUFFER1 = 10,
+    CUT_BUFFER2 = 11,
+    CUT_BUFFER3 = 12,
+    CUT_BUFFER4 = 13,
+    CUT_BUFFER5 = 14,
+    CUT_BUFFER6 = 15,
+    CUT_BUFFER7 = 16,
+    DRAWABLE = 17,
+    FONT = 18,
+    INTEGER = 19,
+    PIXMAP = 20,
+    POINT = 21,
+    RECTANGLE = 22,
+    RESOURCE_MANAGER = 23,
+    RGB_COLOR_MAP = 24,
+    RGB_BEST_MAP = 25,
+    RGB_BLUE_MAP = 26,
+    RGB_DEFAULT_MAP = 27,
+    RGB_GRAY_MAP = 28,
+    RGB_GREEN_MAP = 29,
+    RGB_RED_MAP = 30,
+    STRING = 31,
+    VISUALID = 32,
+    WINDOW = 33,
+    WM_COMMAND = 34,
+    WM_NORMAL_HINTS = 40,
+    WM_SIZE_HINTS = 41,
+    WM_ZOOM_HINTS = 42,
+    MIN_SPACE = 43,
+    NORM_SPACE = 44,
+    MAX_SPACE = 45,
+    END_SPACE = 46,
+    SUPERSCRIPT_X = 47,
+    SUPERSCRIPT_Y = 48,
+    SUBSCRIPT_X = 49,
+    SUBSCRIPT_Y = 50,
+    UNDERLINE_POSITION = 51,
+    UNDERLINE_THICKNESS = 52,
+    STRIKEOUT_ASCENT = 53,
+    STRIKEOUT_DESCENT = 54,
+    ITALIC_ANGLE = 55,
+    X_HEIGHT = 56,
+    QUAD_WIDTH = 57,
+    WEIGHT = 58,
+    POINT_SIZE = 59,
+    RESOLUTION = 60,
+    COPYRIGHT = 61,
+    NOTICE = 62,
+    FONT_NAME = 63,
+    FAMILY_NAME = 64,
+    FULL_NAME = 65,
+    CAP_HEIGHT = 66,
+    WM_CLASS = 67,
+    WM_TRANSIENT_FOR = 68,
+    _,
+};
+
 pub const EventKind = enum(u8) {
     key_press = 2,
     _,
@@ -1120,8 +1187,9 @@ pub const ServerMsgKind = enum(u8) {
 // NOTE: can't used packed because of compiler bugs
 pub const ServerMsg = extern union {
     generic: Generic,
-    get_font_path: GetFontPath,
+    query_font: QueryFont,
     list_fonts: ListFonts,
+    get_font_path: GetFontPath,
 
     // NOTE: can't used packed because of compiler bugs
     pub const Generic = extern struct {
@@ -1141,14 +1209,78 @@ pub const ServerMsg = extern union {
         string_count: u16,
         unused_pad: [22]u8,
         string_list: [0]u8,
-        pub fn iterator(self: *const GetFontPath) StringListIterator {
+        pub fn iterator(self: *const StringList) StringListIterator {
             const ptr = @intToPtr([*]u8, @ptrToInt(self) + 32);
             return StringListIterator { .mem = ptr[0 .. self.string_list_word_size * 4], .left = self.string_count, .offset = 0 };
         }
     };
     comptime { std.debug.assert(@sizeOf(StringList) == 32); }
 
+    // NOTE: can't used packed because of compiler bugs
+    pub const QueryFont = extern struct {
+        kind: ReplyKind,
+        unused: u8,
+        sequence: u16,
+        reply_word_size: u32,
+        min_bounds: CharInfo,
+        unused2: u32,
+        max_bounds: CharInfo,
+        unused3: u32,
+        min_char_or_byte2: u16,
+        max_char_or_byte2: u16,
+        default_char: u16,
+        property_count: u16,
+        draw_direction: u8, // 0 left to right, 1 right to left
+        min_byte1: u8,
+        max_byte1: u8,
+        all_chars_exist: u8,
+        font_ascent: i16,
+        font_descent: i16,
+        info_count: u32,
+        property_list: [0]FontProp,
 
+        // workaround @offsetOf not working on 0-sized fields
+        //const property_list_offset = @offsetOf(QueryFont, "property_list");
+        const property_list_offset = 60;
+
+        pub fn properties(self: *const QueryFont) []FontProp {
+            const ptr = @intToPtr([*]FontProp, @ptrToInt(self) + property_list_offset);
+            return ptr[0 .. self.property_count];
+        }
+        pub fn lists(self: QueryFont) Lists {
+            return Lists { .property_list_byte_len = self.property_count * @sizeOf(FontProp) };
+        }
+        pub const Lists = struct {
+            property_list_byte_len: usize,
+            pub fn inBounds(self: Lists, msg: QueryFont) bool {
+                const msg_len = 32 + (4 * msg.reply_word_size);
+                const msg_list_capacity = msg_len - property_list_offset;
+                const actual_list_len = self.property_list_byte_len + (msg.info_count * @sizeOf(CharInfo));
+                return actual_list_len <= msg_list_capacity;
+            }
+            pub fn charInfos(self: Lists, msg: *const QueryFont) []CharInfo {
+                const ptr = @intToPtr([*]CharInfo, @ptrToInt(msg) + property_list_offset + self.property_list_byte_len);
+                return ptr[0 .. msg.info_count];
+            }
+        };
+    };
+};
+
+// NOTE: can't used packed because of compiler bugs
+const FontProp = extern struct {
+    atom: Atom,
+    value: u32,
+};
+comptime { std.debug.assert(@sizeOf(FontProp) == 8); }
+
+// NOTE: can't used packed because of compiler bugs
+const CharInfo = extern struct {
+    left_side_bearing: i16,
+    right_side_bearing: i16,
+    char_width: i16,
+    ascent: i16,
+    descent: i16,
+    attributes: u16,
 };
 
 pub const StringListIterator = struct {
