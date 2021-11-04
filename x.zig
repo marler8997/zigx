@@ -353,8 +353,29 @@ pub fn connectUnix(display_host: ?[]const u8, display_num: u32) !os.socket_t {
 //};
 
 pub fn Slice(comptime LenType: type, comptime Ptr: type) type { return struct {
+    const Self = @This();
+
     ptr: Ptr,
     len: LenType,
+
+    pub fn lenCast(self: @This(), comptime NewLenType: type) Slice(NewLenType, Ptr) {
+        return .{ .ptr = self.ptr, .len = @intCast(NewLenType, self.len) };
+    }
+
+    pub usingnamespace switch (@typeInfo(Ptr).Pointer.child) {
+        u8 => struct {
+            pub fn format(
+                self: Self,
+                comptime fmt: []const u8,
+                options: std.fmt.FormatOptions,
+                writer: anytype,
+            ) !void {
+                _ = fmt; _ = options;
+                try writer.writeAll(self.ptr[0 .. self.len]);
+            }
+        },
+        else => struct {},
+    };
 };}
 
 pub fn ArrayPointer(comptime T: type) type {
@@ -481,16 +502,19 @@ test "ConnectSetupMessage" {
     connect_setup.serialize(&buf, 1, 1, auth_proto_name, auth_proto_data);
 }
 
-const opcode = struct {
-    pub const create_window = 1;
-    pub const map_window = 8;
-    pub const open_font = 45;
-    pub const query_font = 47;
-    pub const list_fonts = 49;
-    pub const get_font_path = 52;
-    pub const create_gc = 55;
-    pub const poly_fill_rectangle = 70;
-    pub const image_text8 = 76;
+pub const Opcode = enum(u8) {
+    create_window = 1,
+    map_window = 8,
+    open_font = 45,
+    close_font = 46,
+    query_font = 47,
+    list_fonts = 49,
+    get_font_path = 52,
+    create_gc = 55,
+    change_gc = 56,
+    poly_fill_rectangle = 70,
+    image_text8 = 76,
+    _,
 };
 
 pub const BitGravity = enum(u4) {
@@ -647,7 +671,7 @@ pub const create_window = struct {
     };
 
     pub fn serialize(buf: [*]u8, args: Args, options: Options) u16 {
-        buf[0] = opcode.create_window;
+        buf[0] = @enumToInt(Opcode.create_window);
         buf[1] = 0; // depth? what is this?
 
         // buf[2-3] is the len, set at the end of the function
@@ -683,7 +707,7 @@ pub const create_window = struct {
 pub const map_window = struct {
     pub const len = 8;
     pub fn serialize(buf: [*]u8, window_id: u32) void {
-        buf[0] = opcode.map_window;
+        buf[0] = @enumToInt(Opcode.map_window);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, window_id);
@@ -701,7 +725,7 @@ pub const open_font = struct {
         return non_list_len + @intCast(u16, std.mem.alignForward(name_len, 4));
     }
     pub fn serialize(buf: [*]u8, font_id: u32, name: Slice(u16, [*]const u8)) void {
-        buf[0] = opcode.open_font;
+        buf[0] = @enumToInt(Opcode.open_font);
         buf[1] = 0; // unused
         const len = getLen(name.len);
         writeIntNative(u16, buf + 2, len >> 2);
@@ -713,10 +737,20 @@ pub const open_font = struct {
     }
 };
 
+pub const close_font = struct {
+    pub const len = 8;
+    pub fn serialize(buf: [*]u8, font_id: u32) void {
+        buf[0] = @enumToInt(Opcode.close_font);
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, font_id);
+    }
+};
+
 pub const query_font = struct {
     pub const len = 8;
     pub fn serialize(buf: [*]u8, font: u32) void {
-        buf[0] = opcode.query_font;
+        buf[0] = @enumToInt(Opcode.query_font);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, font);
@@ -734,7 +768,7 @@ pub const list_fonts = struct {
         return @intCast(u16, non_list_len + std.mem.alignForward(pattern_len, 4));
     }
     pub fn serialize(buf: [*]u8, max_names: u16, pattern: Slice(u16, [*]const u8)) void {
-        buf[0] = opcode.list_fonts;
+        buf[0] = @enumToInt(Opcode.list_fonts);
         buf[1] = 0; // unused
         const len = getLen(pattern.len);
         writeIntNative(u16, buf + 2, len >> 2);
@@ -747,39 +781,104 @@ pub const list_fonts = struct {
 pub const get_font_path = struct {
     pub const len = 4;
     pub fn serialize(buf: [*]u8) void {
-        buf[0] = opcode.get_font_path;
+        buf[0] = @enumToInt(Opcode.get_font_path);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
     }
 };
 
-pub const create_gc = struct {
-    pub const option_flag = struct {
-        pub const function           : u32 = (1 <<  0);
-        pub const plane_mask         : u32 = (1 <<  1);
-        pub const foreground         : u32 = (1 <<  2);
-        pub const background         : u32 = (1 <<  3);
-        pub const line_width         : u32 = (1 <<  4);
-        pub const line_style         : u32 = (1 <<  5);
-        pub const cap_style          : u32 = (1 <<  6);
-        pub const join_style         : u32 = (1 <<  7);
-        pub const fill_style         : u32 = (1 <<  8);
-        pub const fill_rule          : u32 = (1 <<  9);
-        pub const title              : u32 = (1 << 10);
-        pub const stipple            : u32 = (1 << 11);
-        pub const tile_stipple_x_origin : u32 = (1 << 12);
-        pub const tile_stipple_y_origin : u32 = (1 << 13);
-        pub const font               : u32 = (1 << 14);
-        pub const subwindow_mode     : u32 = (1 << 15);
-        pub const graphics_exposures : u32 = (1 << 16);
-        pub const clip_x_origin      : u32 = (1 << 17);
-        pub const clip_y_origin      : u32 = (1 << 18);
-        pub const clip_mask          : u32 = (1 << 19);
-        pub const dash_offset        : u32 = (1 << 20);
-        pub const dashes             : u32 = (1 << 21);
-        pub const arc_mode           : u32 = (1 << 22);
-    };
+pub const gc_option_count = 23;
+pub const gc_option_flag = struct {
+    pub const function           : u32 = (1 <<  0);
+    pub const plane_mask         : u32 = (1 <<  1);
+    pub const foreground         : u32 = (1 <<  2);
+    pub const background         : u32 = (1 <<  3);
+    pub const line_width         : u32 = (1 <<  4);
+    pub const line_style         : u32 = (1 <<  5);
+    pub const cap_style          : u32 = (1 <<  6);
+    pub const join_style         : u32 = (1 <<  7);
+    pub const fill_style         : u32 = (1 <<  8);
+    pub const fill_rule          : u32 = (1 <<  9);
+    pub const title              : u32 = (1 << 10);
+    pub const stipple            : u32 = (1 << 11);
+    pub const tile_stipple_x_origin : u32 = (1 << 12);
+    pub const tile_stipple_y_origin : u32 = (1 << 13);
+    pub const font               : u32 = (1 << 14);
+    pub const subwindow_mode     : u32 = (1 << 15);
+    pub const graphics_exposures : u32 = (1 << 16);
+    pub const clip_x_origin      : u32 = (1 << 17);
+    pub const clip_y_origin      : u32 = (1 << 18);
+    pub const clip_mask          : u32 = (1 << 19);
+    pub const dash_offset        : u32 = (1 << 20);
+    pub const dashes             : u32 = (1 << 21);
+    pub const arc_mode           : u32 = (1 << 22);
+};
+pub const GcOptions = struct {
+    // TODO: add all the options
+    // Here are the defaults:
+    // function copy
+    // plane_mask all ones
+    foreground: u32 = 0,
+    background: u32 = 1,
+    // line_width 0
+    // line_style solid
+    // cap_style butt
+    // join_style miter
+    // fill_style solid
+    // fill_rule even_odd
+    // arc_mode pie_slice
+    // tile ?
+    // stipple ?
+    // tile_stipple_x_origin 0
+    // tile_stipple_y_origin 0
+    font: ?u32 = null,
+    // font <server dependent>
+    // subwindow_mode clip_by_children
+    // graphics_exposures true
+    // clip_x_origin 0
+    // clip_y_origin 0
+    // clip_mask none
+    // dash_offset 0
+    // dashes the list 4, 4
+};
 
+const GcVariant = union(enum) {
+    create: u32,
+    change: void,
+};
+pub fn createOrChangeGcSerialize(buf: [*]u8, gc_id: u32, variant: GcVariant, options: GcOptions) u16 {
+    buf[0] = switch (variant) { .create => @enumToInt(Opcode.create_gc), .change => @enumToInt(Opcode.change_gc) };
+    buf[1] = 0; // unused
+    // buf[2-3] is the len, set at the end of the function
+
+    writeIntNative(u32, buf + 4, gc_id);
+    const non_option_len: u16 = blk: {
+        switch (variant) {
+            .create => |drawable_id| {
+                writeIntNative(u32, buf + 8, drawable_id);
+                break :blk create_gc.non_option_len;
+            },
+            .change => break :blk change_gc.non_option_len,
+        }
+    };
+    var option_mask: u32 = 0;
+    var request_len: u16 = non_option_len;
+
+    inline for (std.meta.fields(GcOptions)) |field| {
+        if (!isDefaultValue(options, field)) {
+            writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
+            option_mask |= @field(gc_option_flag, field.name);
+            request_len += 4;
+        }
+    }
+
+    writeIntNative(u32, buf + non_option_len - 4, option_mask);
+    std.debug.assert((request_len & 0x3) == 0);
+    writeIntNative(u16, buf + 2, request_len >> 2);
+    return request_len;
+}
+
+pub const create_gc = struct {
     pub const non_option_len =
               2 // opcode and unused
             + 2 // request length
@@ -787,63 +886,23 @@ pub const create_gc = struct {
             + 4 // drawable id
             + 4 // option mask
             ;
-    pub const max_len = non_option_len + (23 * 4);  // 23 possible 4-byte options
+    pub const max_len = non_option_len + (gc_option_count * 4);
+    pub fn serialize(buf: [*]u8, arg: struct { gc_id: u32, drawable_id: u32 }, options: GcOptions) u16 {
+        return createOrChangeGcSerialize(buf, arg.gc_id, .{ .create = arg.drawable_id }, options);
+    }
+};
 
-    pub const Args = struct {
-        gc_id: u32,
-        drawable_id: u32,
-    };
-    pub const Options = struct {
-        // TODO: add all the options
-        // Here are the defaults:
-        // function copy
-        // plane_mask all ones
-        foreground: u32 = 0,
-        background: u32 = 1,
-        // line_width 0
-        // line_style solid
-        // cap_style butt
-        // join_style miter
-        // fill_style solid
-        // fill_rule even_odd
-        // arc_mode pie_slice
-        // tile ?
-        // stipple ?
-        // tile_stipple_x_origin 0
-        // tile_stipple_y_origin 0
-        // font <server dependent>
-        // subwindow_mode clip_by_children
-        // graphics_exposures true
-        // clip_x_origin 0
-        // clip_y_origin 0
-        // clip_mask none
-        // dash_offset 0
-        // dashes the list 4, 4
-    };
+pub const change_gc = struct {
+    pub const non_option_len =
+              2 // opcode and unused
+            + 2 // request length
+            + 4 // gc id
+            + 4 // option mask
+            ;
+    pub const max_len = non_option_len + (gc_option_count * 4);
 
-    pub fn serialize(buf: [*]u8, args: Args, options: Options) u16 {
-        buf[0] = opcode.create_gc;
-        buf[1] = 0; // unused
-        // buf[2-3] is the len, set at the end of the function
-
-        writeIntNative(u32, buf + 4, args.gc_id);
-        writeIntNative(u32, buf + 8, args.drawable_id);
-
-        var request_len: u16 = non_option_len;
-        var option_mask: u32 = 0;
-
-        inline for (std.meta.fields(Options)) |field| {
-            if (!isDefaultValue(options, field)) {
-                writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
-                option_mask |= @field(create_gc.option_flag, field.name);
-                request_len += 4;
-            }
-        }
-
-        writeIntNative(u32, buf + 12, option_mask);
-        std.debug.assert((request_len & 0x3) == 0);
-        writeIntNative(u16, buf + 2, request_len >> 2);
-        return request_len;
+    pub fn serialize(buf: [*]u8, gc_id: u32, options: GcOptions) u16 {
+        return createOrChangeGcSerialize(buf, gc_id, .change, options);
     }
 };
 
@@ -866,7 +925,7 @@ pub const poly_fill_rectangle = struct {
         gc_id: u32,
     };
     pub fn serialize(buf: [*]u8, args: Args, rectangles: []const Rectangle) void {
-        buf[0] = opcode.poly_fill_rectangle;
+        buf[0] = @enumToInt(Opcode.poly_fill_rectangle);
         buf[1] = 0; // unused
         // buf[2-3] is the len, set at the end of the function
         writeIntNative(u32, buf + 4, args.drawable_id);
@@ -904,8 +963,13 @@ pub const image_text8 = struct {
         y: i16,
         text: Slice(u8, [*]const u8),
     };
+    pub const text_offset = 16;
     pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = opcode.image_text8;
+        serializeNoTextCopy(buf, args);
+        @memcpy(buf + text_offset, args.text.ptr, args.text.len);
+    }
+    pub fn serializeNoTextCopy(buf: [*]u8, args: Args) void {
+        buf[0] = @enumToInt(Opcode.image_text8);
         buf[1] = args.text.len;
         const request_len = getLen(args.text.len);
         std.debug.assert(request_len & 0x3 == 0);
@@ -914,7 +978,6 @@ pub const image_text8 = struct {
         writeIntNative(u32, buf + 8, args.gc_id);
         writeIntNative(i16, buf + 12, args.x);
         writeIntNative(i16, buf + 14, args.y);
-        @memcpy(buf + 16, args.text.ptr, args.text.len);
     }
 };
 
@@ -1007,65 +1070,14 @@ pub const Atom = enum(u32) {
     _,
 };
 
-pub const EventKind = enum(u8) {
-    key_press = 2,
-    _,
+
+const ErrorCodeFont = enum(u8) {
+    font = 7,
 };
-// NOTE: can't used packed because of compiler bugs
-pub const Event = extern union {
-    generic: Generic,
-    key_press: KeyOrButton,
-    key_release: KeyOrButton,
-    button_press: KeyOrButton,
-    button_release: KeyOrButton,
-    exposure: Expose,
-
-    // NOTE: can't used packed because of compiler bugs
-    pub const Generic = extern struct {
-        code: EventCode,
-        detail: u8,
-        sequence: u16,
-        data: [28]u8,
-    };
-    comptime { std.debug.assert(@sizeOf(Generic) == 32); }
-
-    // NOTE: can't used packed because of compiler bugs
-    pub const KeyOrButton = extern struct {
-        code: u8,
-        detail: u8,
-        sequence: u16,
-        time: u32,
-        root: u32,
-        event: u32,
-        child: u32,
-        root_x: i16,
-        root_y: i16,
-        event_x: i16,
-        event_y: i16,
-        state: u16,
-        same_screen: u8,
-        unused: u8,
-    };
-    comptime { std.debug.assert(@sizeOf(KeyOrButton) == 32); }
-
-    // NOTE: can't used packed because of compiler bugs
-    pub const Expose = extern struct {
-        code: u8,
-        unused: u8,
-        sequence: u16,
-        window: u32,
-        x: u16,
-        y: u16,
-        width: u16,
-        height: u16,
-        count: u16,
-        unused_pad: [14]u8,
-    };
-    comptime { std.debug.assert(@sizeOf(Expose) == 32); }
+const ErrorCodeOpcode = enum(u8) {
+    name = 15,
+    length = 16,
 };
-comptime { std.debug.assert(@sizeOf(Event) == 32); }
-
-
 pub const ErrorCode = enum(u8) {
     request = 1,
     value = 2,
@@ -1073,7 +1085,7 @@ pub const ErrorCode = enum(u8) {
     pixmap = 4,
     atom = 5,
     cursor = 6,
-    font = 7,
+    font = @enumToInt(ErrorCodeFont.font),
     match = 8,
     drawable = 9,
     access = 10,
@@ -1081,32 +1093,11 @@ pub const ErrorCode = enum(u8) {
     colormap = 12,
     gcontext = 13,
     id_choice = 14,
-    name = 15,
-    length = 16,
+    name = @enumToInt(ErrorCodeOpcode.name),
+    length = @enumToInt(ErrorCodeOpcode.length),
     implementation = 17,
     _, // allow unknown errors
 };
-
-// NOTE: can't used packed struct because of compiler bugs
-pub const ErrorReply = extern struct {
-    reponse_type: u8, // should be 0
-    code: ErrorCode,
-    sequence: u16,
-    data: [28]u8,
-};
-comptime { std.debug.assert(@sizeOf(ErrorReply) == 32); }
-
-// NOTE: can't used packed struct because of compiler bugs
-pub const ErrorReplyLength = extern struct {
-    reponse_type: u8, // should be 0
-    code: ErrorCode, // should be .length
-    sequence: u16,
-    unused1: u32,
-    minor_opcode: u16,
-    major_opcode: u8,
-    unused2: [21]u8,
-};
-comptime { std.debug.assert(@sizeOf(ErrorReplyLength) == 32); }
 
 pub const EventCode = enum(u8) {
     key_press = 2,
@@ -1144,9 +1135,10 @@ pub const EventCode = enum(u8) {
     mapping_notify = 34,
 };
 
+const ErrorKind = enum(u8) { err = 0 };
 const ReplyKind = enum(u8) { reply = 1 };
 pub const ServerMsgKind = enum(u8) {
-    err = 0,
+    err = @enumToInt(ErrorKind.err),
     reply = @enumToInt(ReplyKind.reply),
     key_press         = @enumToInt(EventCode.key_press),
     key_release       = @enumToInt(EventCode.key_release),
@@ -1184,9 +1176,42 @@ pub const ServerMsgKind = enum(u8) {
     _,
 };
 
+pub const ServerMsgTaggedUnion = union(enum) {
+    unhandled: *align(4) ServerMsg.Generic,
+    err: *align(4) ServerMsg.Error,
+    reply: *align(4) ServerMsg.Generic,
+    key_press: *align(4) Event.KeyPress,
+    key_release: *align(4) Event.KeyRelease,
+    button_press: *align(4) Event.ButtonPress,
+    button_release: *align(4) Event.ButtonRelease,
+    enter_notify: *align(4) Event.EnterNotify,
+    leave_notify: *align(4) Event.LeaveNotify,
+    motion_notify: *align(4) Event.MotionNotify,
+    keymap_notify: *align(4) Event.KeymapNotify,
+    expose: *align(4) Event.Expose,
+};
+pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
+    switch (@intToEnum(ServerMsgKind, msg_ptr[0])) {
+        .err => return .{ .err = @ptrCast(*align(4) ServerMsg.Error, msg_ptr) },
+        .reply => return .{ .reply = @ptrCast(*align(4) ServerMsg.Generic, msg_ptr) },
+        .key_press => return .{ .key_press = @ptrCast(*align(4) Event.KeyPress, msg_ptr) },
+        .key_release => return .{ .key_release = @ptrCast(*align(4) Event.KeyRelease, msg_ptr) },
+        .button_press => return .{ .button_press = @ptrCast(*align(4) Event.ButtonPress, msg_ptr) },
+        .button_release => return .{ .button_release = @ptrCast(*align(4) Event.ButtonRelease, msg_ptr) },
+        .enter_notify => return .{ .enter_notify = @ptrCast(*align(4) Event.EnterNotify, msg_ptr) },
+        .leave_notify => return .{ .leave_notify = @ptrCast(*align(4) Event.LeaveNotify, msg_ptr) },
+        .motion_notify => return .{ .motion_notify = @ptrCast(*align(4) Event.MotionNotify, msg_ptr) },
+        .keymap_notify => return .{ .keymap_notify = @ptrCast(*align(4) Event.KeymapNotify, msg_ptr) },
+        .expose => return .{ .expose = @ptrCast(*align(4) Event.Expose, msg_ptr) },
+        else => return .{ .unhandled = @ptrCast(*align(4) ServerMsg.Generic, msg_ptr) },
+    }
+}
+
+
 // NOTE: can't used packed because of compiler bugs
 pub const ServerMsg = extern union {
     generic: Generic,
+    err: Error,
     query_font: QueryFont,
     list_fonts: ListFonts,
     get_font_path: GetFontPath,
@@ -1197,6 +1222,34 @@ pub const ServerMsg = extern union {
         reserve_min: [31]u8,
     };
     comptime { std.debug.assert(@sizeOf(Generic) == 32); }
+
+    // NOTE: can't used packed struct because of compiler bugs
+    comptime { std.debug.assert(@sizeOf(Error) == 32); }
+    pub const Error = extern struct {
+        reponse_type: ErrorKind,
+        code: ErrorCode,
+        sequence: u16,
+        generic: u32,
+        minor_opcode: u16,
+        major_opcode: Opcode,
+        data: [21]u8,
+
+        pub const Length = Error;
+        pub const Name = Error;
+        pub const OpenFont = Font;
+
+        comptime { std.debug.assert(@sizeOf(Font) == 32); }
+        pub const Font = extern struct {
+            reponse_type: ErrorKind,
+            code: ErrorCodeFont,
+            sequence: u16,
+            bad_resource_id: u32,
+            minor_opcode: u16,
+            major_opcode: Opcode,
+            unused2: [21]u8,
+        };
+    };
+
 
     pub const GetFontPath = StringList;
     pub const ListFonts = StringList;
@@ -1264,7 +1317,75 @@ pub const ServerMsg = extern union {
             }
         };
     };
+
+    pub const EventKind = enum(u8) {
+        key_press = 2,
+        _,
+    };
 };
+
+// NOTE: can't used packed because of compiler bugs
+pub const Event = extern union {
+    generic: Generic,
+    key_press: KeyPress,
+    key_release: KeyRelease,
+    button_press: ButtonPress,
+    button_release: ButtonRelease,
+    exposure: Expose,
+
+    pub const KeyPress = KeyOrButton;
+    pub const KeyRelease = KeyOrButton;
+    pub const ButtonPress = KeyOrButton;
+    pub const ButtonRelease = KeyOrButton;
+    pub const EnterNotify = Generic; // TODO
+    pub const LeaveNotify = Generic; // TODO
+    pub const MotionNotify = Generic; // TODO
+    pub const KeymapNotify = Generic; // TODO
+
+    // NOTE: can't used packed because of compiler bugs
+    pub const Generic = extern struct {
+        code: EventCode,
+        detail: u8,
+        sequence: u16,
+        data: [28]u8,
+    };
+    comptime { std.debug.assert(@sizeOf(Generic) == 32); }
+
+    // NOTE: can't used packed because of compiler bugs
+    pub const KeyOrButton = extern struct {
+        code: u8,
+        detail: u8,
+        sequence: u16,
+        time: u32,
+        root: u32,
+        event: u32,
+        child: u32,
+        root_x: i16,
+        root_y: i16,
+        event_x: i16,
+        event_y: i16,
+        state: u16,
+        same_screen: u8,
+        unused: u8,
+    };
+    comptime { std.debug.assert(@sizeOf(KeyOrButton) == 32); }
+
+    // NOTE: can't used packed because of compiler bugs
+    pub const Expose = extern struct {
+        code: u8,
+        unused: u8,
+        sequence: u16,
+        window: u32,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        count: u16,
+        unused_pad: [14]u8,
+    };
+    comptime { std.debug.assert(@sizeOf(Expose) == 32); }
+};
+comptime { std.debug.assert(@sizeOf(Event) == 32); }
 
 // NOTE: can't used packed because of compiler bugs
 const FontProp = extern struct {
@@ -1287,42 +1408,31 @@ pub const StringListIterator = struct {
     mem: []const u8,
     left: u16,
     offset: usize,
-    pub fn next(self: *StringListIterator) !?[]const u8 {
+    pub fn next(self: *StringListIterator) !?Slice(u8, [*]const u8) {
         if (self.left == 0) return null;
         const len = self.mem[self.offset];
         const limit = self.offset + len + 1;
         if (limit > self.mem.len)
             return error.StringLenTooLarge;
-        const str = self.mem[self.offset + 1.. limit];
+        const ptr = self.mem.ptr + self.offset + 1;
+        const str = Slice(u8, [*]const u8) { .ptr = ptr, .len = len };
         self.left -= 1;
         self.offset = limit;
         return str;
     }
 };
 
-pub const ParsedMsg = struct {
-    len: u16,
-    msg: *align(4) ServerMsg,
-};
-// on error.ParitalXMsg, buf will be completely filled with a partial message
-pub fn parseMsg(buf: []align(4) u8) ParsedMsg {
+pub fn parseMsgLen(buf: []align(4) u8) u32 {
     if (buf.len < 32)
-        return .{ .len = 0, .msg = undefined };
+        return 0;
 
-    //switch (@intToEnum(ServerMsgKind, self.buf[self.offset])) {
     switch (buf[0]) {
-        @enumToInt(ServerMsgKind.err) =>
-            return .{ .len = 32, .msg = @ptrCast(*align(4) ServerMsg, buf.ptr) },
+        @enumToInt(ServerMsgKind.err) => return 32,
         @enumToInt(ServerMsgKind.reply) => {
-            //const full_len = 32 + (4 * readIntNative(u32, buf.ptr + self.offset + 4));
-            //if (self.limit >= self.offset + full_len) {
-            //    const off = self.offset;
-            //    self.consume(full_len);
-            //    return @alignCast(4, @ptrCast(*ServerMsg, buf.ptr + off));
-            //}
-            @panic("todo");
+            const len = 32 + (4 * readIntNative(u32, buf.ptr + 4));
+            return if (buf.len < len) 0 else len;
         },
-        2 ... 34 => return .{ .len = 32, .msg = @ptrCast(*align(4) ServerMsg, buf.ptr) },
+        2 ... 34 => return 32,
         else => |t| std.debug.panic("handle reply type {}", .{t}),
     }
 }

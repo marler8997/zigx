@@ -7,7 +7,7 @@ const CircularBuffer = x.CircularBuffer;
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = &arena.allocator;
 
-pub fn main() !void {
+pub fn main() !u8 {
     const conn = try common.connect(allocator);
     defer std.os.shutdown(conn.sock, .both) catch {};
 
@@ -119,7 +119,7 @@ pub fn main() !void {
             const len = try std.os.recv(conn.sock, buf.next(), 0);
             if (len == 0) {
                 std.log.info("X server connection closed", .{});
-                break;
+                return 0;
             }
             buf.scroll(len);
             std.log.info("got {} bytes", .{len});
@@ -130,65 +130,52 @@ pub fn main() !void {
             }
             std.debug.assert(buf_start <= buf.cursor); // TODO: is this necessary?  will I still get an exception on the next line anyway?
             const data = buf.ptr[buf_start .. buf.cursor];
-            const parsed = x.parseMsg(@alignCast(4, data));
-            if (parsed.len == 0)
+            const msg_len = x.parseMsgLen(@alignCast(4, data));
+            if (msg_len == 0)
                 break;
-            buf_start += parsed.len;
-            const msg = parsed.msg;
-            switch (msg.generic.kind) {
-                .err => {
-                    const generic_error = @ptrCast(*x.ErrorReply, msg);
-                    switch (generic_error.code) {
-                        .length => std.log.debug("{}", .{@ptrCast(*x.ErrorReplyLength, generic_error)}),
-                        else => std.log.debug("{}", .{generic_error}),
-                    }
+            buf_start += msg_len;
+            switch (x.serverMsgTaggedUnion(@alignCast(4, data.ptr))) {
+                .err => |msg| {
+                    std.log.err("{}", .{msg});
+                    return 1;
                 },
-                .reply => {
-                    std.log.info("todo: handle a reply message", .{});
+                .reply => |msg| {
+                    std.log.info("todo: handle a reply message {}", .{msg});
                     return error.TodoHandleReplyMessage;
                 },
-                .key_press => {
-                    const event = @ptrCast(*x.Event.KeyOrButton, msg);
-                    std.log.info("key_press: {}", .{event.detail});
+                .key_press => |msg| {
+                    std.log.info("key_press: {}", .{msg.detail});
                 },
-                .key_release => {
-                    const event = @ptrCast(*x.Event.KeyOrButton, msg);
-                    std.log.info("key_release: {}", .{event.detail});
+                .key_release => |msg| {
+                    std.log.info("key_release: {}", .{msg.detail});
                 },
-                .button_press => {
-                    const event = @ptrCast(*x.Event.KeyOrButton, msg);
-                    std.log.info("button_press: {}", .{event});
+                .button_press => |msg| {
+                    std.log.info("button_press: {}", .{msg});
                 },
-                .button_release => {
-                    const event = @ptrCast(*x.Event.KeyOrButton, msg);
-                    std.log.info("button_release: {}", .{event});
+                .button_release => |msg| {
+                    std.log.info("button_release: {}", .{msg});
                 },
-                .enter_notify => {
-                    const event = @ptrCast(*x.Event.Generic, msg);
-                    std.log.info("enter_window: {}", .{event});
+                .enter_notify => |msg| {
+                    std.log.info("enter_window: {}", .{msg});
                 },
-                .leave_notify => {
-                    const event = @ptrCast(*x.Event.Generic, msg);
-                    std.log.info("leave_window: {}", .{event});
+                .leave_notify => |msg| {
+                    std.log.info("leave_window: {}", .{msg});
                 },
-                .motion_notify => {
+                .motion_notify => |msg| {
                     // too much logging
-                    //const event = @ptrCast(*x.Event.Generic, msg);
-                    //std.log.info("pointer_motion: {}", .{event});
+                    _ = msg;
+                    //std.log.info("pointer_motion: {}", .{msg});
                 },
-                .keymap_notify => {
-                    const event = @ptrCast(*x.Event, msg);
-                    std.log.info("keymap_state: {}", .{event});
+                .keymap_notify => |msg| {
+                    std.log.info("keymap_state: {}", .{msg});
                 },
-                .expose => {
-                    const event = @ptrCast(*x.Event.Expose, msg);
-                    std.log.info("expose: {}", .{event});
+                .expose => |msg| {
+                    std.log.info("expose: {}", .{msg});
                     try render(conn.sock, window_id, bg_gc_id, fg_gc_id);
                 },
-                else => {
-                    const event = @ptrCast(*x.Event, msg);
-                    std.log.info("todo: handle event {}", .{event});
-                    return error.UnhandledEventKind;
+                .unhandled => |msg| {
+                    std.log.info("todo: server msg {}", .{msg});
+                    return error.UnhandledServerMsg;
                 },
             }
         }
