@@ -218,7 +218,7 @@ const State = struct {
         fonts: []x.Slice(u8, [*]const u8),
     ) !void {
         switch (self.exposed) {
-            .yes => @panic("codebug"),
+            .yes => @panic("not impl"),
             .no => {
                 std.log.info("expose: {}", .{msg});
                 self.exposed = .{ .yes = .{ .idle = .{ .open_font_index = null } } };
@@ -368,6 +368,8 @@ fn render(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), fo
     try renderText(sock, ids.window(), ids.gcText(), 10, 10 + (font_height * 3), "property_count={} char_info_count={}", .{
         font_info.property_count, font_info.info_count});
     try renderText(sock, ids.window(), ids.gcText(), 10, 10 + (font_height * 4), "The quick brown fox jumped over the lazy dog", .{});
+    try renderText(sock, ids.window(), ids.gcText(), 10, 10 + (font_height * 5), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", .{});
+    try renderText(sock, ids.window(), ids.gcText(), 10, 10 + (font_height * 6), "abcdefghijklmnopqrstuvwxyz", .{});
 }
 
 fn renderNoFontInfo(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), font_index: usize, still_open: bool) !void {
