@@ -111,22 +111,31 @@ pub fn main() !u8 {
 
     const buf_memfd = try Memfd.init("CircularBuffer");
     // no need to deinit
-    var buf = try CircularBuffer.initMinSize(buf_memfd, 500);
+
+    // some of the QueryFont replies are huge!
+    var buf = try CircularBuffer.initMinSize(buf_memfd, 1024 * 1024);
     std.log.info("circular buffer size is {}", .{buf.size});
     var buf_start: usize = 0;
     while (true) {
         {
-            const len = try std.os.recv(conn.sock, buf.next(), 0);
+            const reserved = buf.cursor - buf_start;
+            const recv_buf = buf.nextWithLen(buf.size - reserved);
+            if (recv_buf.len == 0) {
+                std.log.err("buffer size {} not big enough!", .{buf.size});
+                return 1;
+            }
+            const len = try std.os.recv(conn.sock, recv_buf, 0);
             if (len == 0) {
                 std.log.info("X server connection closed", .{});
                 return 0;
             }
-            buf.scroll(len);
-        }
-        while (true) {
-            while (buf_start > buf.cursor) {
+            //std.log.info("buf start={} cursor={} recvlen={}", .{buf_start, buf.cursor, len});
+            if (buf.scroll(len)) {
                 buf_start -= buf.size;
             }
+            //std.log.info("    start={} cursor={}", .{buf_start, buf.cursor});
+        }
+        while (true) {
             std.debug.assert(buf_start <= buf.cursor); // TODO: is this necessary?  will I still get an exception on the next line anyway?
             const data = buf.ptr[buf_start .. buf.cursor];
             const msg_len = x.parseMsgLen(@alignCast(4, data));
@@ -352,9 +361,13 @@ fn render(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), fo
         try common.send(sock, msg_buf[0..len]);
     }
 
-    try renderText(sock, ids.window(), ids.gcText(), 10, 30, "font {}/{}", .{font_index+1, fonts.len});
-    try renderText(sock, ids.window(), ids.gcText(), 10, 60, "{s}", .{font_name});
-    try renderText(sock, ids.window(), ids.gcText(), 10, 90, "The quick brown fox jumped over the lazy dog", .{});
+    const font_height = font_info.font_ascent + font_info.font_descent;
+
+    try renderText(sock, ids.window(), ids.gcText(), 10, 10 + (font_height * 1), "font {}/{}", .{font_index+1, fonts.len});
+    try renderText(sock, ids.window(), ids.gcText(), 10, 10 + (font_height * 2), "{s}", .{font_name});
+    try renderText(sock, ids.window(), ids.gcText(), 10, 10 + (font_height * 3), "property_count={} char_info_count={}", .{
+        font_info.property_count, font_info.info_count});
+    try renderText(sock, ids.window(), ids.gcText(), 10, 10 + (font_height * 4), "The quick brown fox jumped over the lazy dog", .{});
 }
 
 fn renderNoFontInfo(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), font_index: usize, still_open: bool) !void {

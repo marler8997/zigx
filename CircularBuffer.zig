@@ -47,10 +47,16 @@ pub fn next(self: CircularBuffer) []u8 {
     return (self.ptr + self.cursor)[0 .. self.size];
 }
 
-pub fn scroll(self: *CircularBuffer, len: usize) void {
-    std.debug.assert(len < self.size);
+pub fn nextWithLen(self: CircularBuffer, len: usize) []u8 {
+    return (self.ptr + self.cursor)[0 .. len];
+}
+
+pub fn scroll(self: *CircularBuffer, len: usize) bool {
+    std.debug.assert(len <= self.size);
     self.cursor += len;
     if (self.cursor >= 2*self.size) {
         self.cursor -= self.size;
+        return true;
     }
+    return false;
 }

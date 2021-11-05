@@ -116,18 +116,24 @@ pub fn main() !u8 {
     var buf_start: usize = 0;
     while (true) {
         {
-            const len = try std.os.recv(conn.sock, buf.next(), 0);
+            const reserved = buf.cursor - buf_start;
+            const recv_buf = buf.nextWithLen(buf.size - reserved);
+            if (recv_buf.len == 0) {
+                std.log.err("buffer size {} not big enough!", .{buf.size});
+                return 1;
+            }
+            const len = try std.os.recv(conn.sock, recv_buf, 0);
             if (len == 0) {
                 std.log.info("X server connection closed", .{});
                 return 0;
             }
-            buf.scroll(len);
-            std.log.info("got {} bytes", .{len});
-        }
-        while (true) {
-            while (buf_start > buf.cursor) {
+            //std.log.info("buf start={} cursor={} recvlen={}", .{buf_start, buf.cursor, len});
+            if (buf.scroll(len)) {
                 buf_start -= buf.size;
             }
+            //std.log.info("    start={} cursor={}", .{buf_start, buf.cursor});
+        }
+        while (true) {
             std.debug.assert(buf_start <= buf.cursor); // TODO: is this necessary?  will I still get an exception on the next line anyway?
             const data = buf.ptr[buf_start .. buf.cursor];
             const msg_len = x.parseMsgLen(@alignCast(4, data));
