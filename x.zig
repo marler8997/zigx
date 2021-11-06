@@ -508,6 +508,7 @@ pub const Opcode = enum(u8) {
     open_font = 45,
     close_font = 46,
     query_font = 47,
+    query_text_extents = 48,
     list_fonts = 49,
     get_font_path = 52,
     create_gc = 55,
@@ -754,6 +755,31 @@ pub const query_font = struct {
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, font);
+    }
+};
+
+pub const query_text_extents = struct {
+    pub const non_list_len =
+              2 // opcode and odd_length
+            + 2 // request length
+            + 4 // font_id
+            ;
+    pub fn getLen(u16_char_count: u16) u16 {
+        return @intCast(u16, non_list_len + std.mem.alignForward(u16_char_count * 2, 4));
+    }
+    pub fn serialize(buf: [*]u8, font_id: u32, text: Slice(u16, [*]const u16)) void {
+        buf[0] = @enumToInt(Opcode.query_text_extents);
+        buf[1] = @intCast(u8, text.len % 2); // odd_length
+        const len = getLen(text.len);
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, font_id);
+        var off: usize = 8;
+        for (text.ptr[0..text.len]) |c| {
+            std.mem.writeIntSliceBig(u16, (buf + off)[0..2], c);
+            off += 2;
+        }
+        std.log.info("len={} off={} align={}", .{len, off, std.mem.alignForward(off, 4)});
+        std.debug.assert(len == std.mem.alignForward(off, 4));
     }
 };
 
@@ -1213,6 +1239,7 @@ pub const ServerMsg = extern union {
     generic: Generic,
     err: Error,
     query_font: QueryFont,
+    query_text_extents: QueryTextExtents,
     list_fonts: ListFonts,
     get_font_path: GetFontPath,
 
@@ -1316,6 +1343,23 @@ pub const ServerMsg = extern union {
                 return ptr[0 .. msg.info_count];
             }
         };
+    };
+
+    // NOTE: can't used packed because of compiler bugs
+    comptime { std.debug.assert(@sizeOf(QueryTextExtents) == 32); }
+    pub const QueryTextExtents = extern struct {
+        kind: ReplyKind,
+        draw_direction: u8, // 0=left-to-right, 1=right-to-left
+        sequence: u16,
+        reply_word_size: u32, // should be 0
+        font_ascent: i16,
+        font_descent: i16,
+        overal_ascent: i16,
+        overall_descent: i16,
+        overall_width: i32,
+        overall_left: i32,
+        overall_right: i32,
+        unused: [4]u8,
     };
 
     pub const EventKind = enum(u8) {

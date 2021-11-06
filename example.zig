@@ -7,6 +7,9 @@ const CircularBuffer = x.CircularBuffer;
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = &arena.allocator;
 
+const window_width = 400;
+const window_height = 400;
+
 pub fn main() !u8 {
     const conn = try common.connect(allocator);
     defer std.os.shutdown(conn.sock, .both) catch {};
@@ -40,7 +43,7 @@ pub fn main() !u8 {
             .window_id = window_id,
             .parent_window_id = screen.root,
             .x = 0, .y = 0,
-            .width = 400, .height = 400,
+            .width = window_width, .height = window_height,
             .border_width = 0, // TODO: what is this?
             .class = .input_output,
             .visual_id = screen.root_visual,
@@ -103,9 +106,12 @@ pub fn main() !u8 {
         try conn.send(msg_buf[0..len]);
     }
 
+    // get some font information
     {
-        var msg: [x.map_window.len]u8 = undefined;
-        x.map_window.serialize(&msg, window_id);
+        const text_literal = [_]u16 { 'm' };
+        const text = x.Slice(u16, [*]const u16) { .ptr = &text_literal, .len = text_literal.len };
+        var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
+        x.query_text_extents.serialize(&msg, fg_gc_id, text);
         try conn.send(&msg);
     }
 
@@ -113,6 +119,32 @@ pub fn main() !u8 {
     // no need to deinit
     var buf = try CircularBuffer.initMinSize(buf_memfd, 500);
     std.log.info("circular buffer size is {}", .{buf.size});
+
+    const font_dims: FontDims = blk: {
+        _ = try x.readOneMsg(conn.reader(), @alignCast(4, buf.next()));
+        switch (x.serverMsgTaggedUnion(@alignCast(4, buf.ptr))) {
+            .reply => |msg_reply| {
+                const msg = @ptrCast(*x.ServerMsg.QueryTextExtents, msg_reply);
+                break :blk .{
+                    .width = @intCast(u8, msg.overall_width),
+                    .height = @intCast(u8, msg.font_ascent + msg.font_descent),
+                    .font_left = @intCast(i16, msg.overall_left),
+                    .font_ascent = msg.font_ascent,
+                };
+            },
+            else => |msg| {
+                std.log.err("expected a reply but got {}", .{msg});
+                return 1;
+            },
+        }
+    };
+
+    {
+        var msg: [x.map_window.len]u8 = undefined;
+        x.map_window.serialize(&msg, window_id);
+        try conn.send(&msg);
+    }
+
     var buf_start: usize = 0;
     while (true) {
         {
@@ -177,7 +209,7 @@ pub fn main() !u8 {
                 },
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
-                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id);
+                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims);
                 },
                 .unhandled => |msg| {
                     std.log.info("todo: server msg {}", .{msg});
@@ -188,7 +220,14 @@ pub fn main() !u8 {
     }
 }
 
-fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32) !void {
+const FontDims = struct {
+    width: u8,
+    height: u8,
+    font_left: i16, // pixels to the left of the text basepoint
+    font_ascent: i16, // pixels up from the text basepoint to the top of the text
+};
+
+fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32, font_dims: FontDims) !void {
     {
         var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
         x.poly_fill_rectangle.serialize(&msg, .{
@@ -203,10 +242,14 @@ fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32)
         const text_literal: []const u8 = "Hello X!";
         const text = x.Slice(u8, [*]const u8) { .ptr = text_literal.ptr, .len = text_literal.len };
         var msg: [x.image_text8.getLen(text.len)]u8 = undefined;
+
+        const text_width = font_dims.width * text_literal.len;
+
         x.image_text8.serialize(&msg, .{
             .drawable_id = drawable_id,
             .gc_id = fg_gc_id,
-            .x = 115, .y = 125,
+            .x = @divTrunc((window_width - @intCast(i16, text_width)),  2) + font_dims.font_left,
+            .y = @divTrunc((window_height - @intCast(i16, font_dims.height)), 2) + font_dims.font_ascent,
             .text = text,
         });
         try common.send(sock, &msg);
