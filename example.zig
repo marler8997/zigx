@@ -239,6 +239,13 @@ fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32,
         try common.send(sock, &msg);
     }
     {
+        var msg: [x.clear_area.len]u8 = undefined;
+        x.clear_area.serialize(&msg, false, drawable_id, .{
+            .x = 150, .y = 150, .width = 100, .height = 100,
+        });
+        try common.send(sock, &msg);
+    }
+    {
         const text_literal: []const u8 = "Hello X!";
         const text = x.Slice(u8, [*]const u8) { .ptr = text_literal.ptr, .len = text_literal.len };
         var msg: [x.image_text8.getLen(text.len)]u8 = undefined;

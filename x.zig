@@ -513,6 +513,7 @@ pub const Opcode = enum(u8) {
     get_font_path = 52,
     create_gc = 55,
     change_gc = 56,
+    clear_area = 61,
     poly_fill_rectangle = 70,
     image_text8 = 76,
     _,
@@ -929,6 +930,20 @@ pub const change_gc = struct {
 
     pub fn serialize(buf: [*]u8, gc_id: u32, options: GcOptions) u16 {
         return createOrChangeGcSerialize(buf, gc_id, .change, options);
+    }
+};
+
+pub const clear_area = struct {
+    pub const len = 16;
+    pub fn serialize(buf: [*]u8, exposures: bool, window_id: u32, area: Rectangle) void {
+        buf[0] = @enumToInt(Opcode.clear_area);
+        buf[1] = if (exposures) 1 else 0;
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, window_id);
+        writeIntNative(i16, buf + 8, area.x);
+        writeIntNative(i16, buf + 10, area.y);
+        writeIntNative(u16, buf + 12, area.width);
+        writeIntNative(u16, buf + 14, area.height);
     }
 };
 
