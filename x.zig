@@ -780,7 +780,6 @@ pub const query_text_extents = struct {
             std.mem.writeIntSliceBig(u16, (buf + off)[0..2], c);
             off += 2;
         }
-        std.log.info("len={} off={} align={}", .{len, off, std.mem.alignForward(off, 4)});
         std.debug.assert(len == std.mem.alignForward(off, 4));
     }
 };
