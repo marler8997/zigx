@@ -2,7 +2,7 @@ const std = @import("std");
 const x = @import("x.zig");
 const common = @import("common.zig");
 const Memfd = @import("Memfd.zig");
-const CircularBuffer = @import("CircularBuffer.zig");
+const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 
 pub const log_level = std.log.Level.info;
 
@@ -111,17 +111,16 @@ pub fn main() !u8 {
 
     const buf_memfd = try Memfd.init("CircularBuffer");
     // no need to deinit
-
     // some of the QueryFont replies are huge!
-    var buf = try CircularBuffer.initMinSize(buf_memfd, 1024 * 1024);
-    std.log.info("circular buffer size is {}", .{buf.size});
-    var buf_start: usize = 0;
+    const buffer_capacity = std.mem.alignForward(1024 * 1024, std.mem.page_size);
+    std.log.info("buffer capacity is {}", .{buffer_capacity});
+
+    var buf = ContiguousReadBuffer { .double_buffer_ptr = try buf_memfd.toDoubleBuffer(buffer_capacity), .half_size = buffer_capacity };
     while (true) {
         {
-            const reserved = buf.cursor - buf_start;
-            const recv_buf = buf.nextWithLen(buf.size - reserved);
+            const recv_buf = buf.nextReadBuffer();
             if (recv_buf.len == 0) {
-                std.log.err("buffer size {} not big enough!", .{buf.size});
+                std.log.err("buffer size {} not big enough!", .{buf.half_size});
                 return 1;
             }
             const len = try std.os.recv(conn.sock, recv_buf, 0);
@@ -129,19 +128,14 @@ pub fn main() !u8 {
                 std.log.info("X server connection closed", .{});
                 return 0;
             }
-            //std.log.info("buf start={} cursor={} recvlen={}", .{buf_start, buf.cursor, len});
-            if (buf.scroll(len)) {
-                buf_start -= buf.size;
-            }
-            //std.log.info("    start={} cursor={}", .{buf_start, buf.cursor});
+            buf.reserve(len);
         }
         while (true) {
-            std.debug.assert(buf_start <= buf.cursor); // TODO: is this necessary?  will I still get an exception on the next line anyway?
-            const data = buf.ptr[buf_start .. buf.cursor];
+            const data = buf.nextReservedBuffer();
             const msg_len = x.parseMsgLen(@alignCast(4, data));
             if (msg_len == 0)
                 break;
-            buf_start += msg_len;
+            buf.release(msg_len);
             switch (x.serverMsgTaggedUnion(@alignCast(4, data.ptr))) {
                 .err => |generic_msg| {
                     var error_handled = false;

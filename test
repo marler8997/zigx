@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+set -ex
+
+zig run getserverfontnames.zig > fontnames.txt
+font=$(head -n 1 fontnames.txt)
+rm fontnames.txt
+
+zig run queryfont.zig -- $font > /dev/null
+zig run example.zig
+zig run fontviewer.zig
+
+echo Success

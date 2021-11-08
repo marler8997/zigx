@@ -30,8 +30,9 @@ const testing = std.testing;
 const builtin = @import("builtin");
 const os = std.os;
 
+// Expose some helpful stuff
 pub const Memfd = @import("Memfd.zig");
-pub const CircularBuffer = @import("CircularBuffer.zig");
+pub const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 
 pub const TcpBasePort = 6000;
 
