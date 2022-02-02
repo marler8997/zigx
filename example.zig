@@ -5,7 +5,7 @@ const Memfd = x.Memfd;
 const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-const allocator = &arena.allocator;
+const allocator = arena.allocator();
 
 const window_width = 400;
 const window_height = 400;

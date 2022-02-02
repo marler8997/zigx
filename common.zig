@@ -23,7 +23,7 @@ pub const ConnectResult = struct {
     }
 };
 
-pub fn connect(allocator: *std.mem.Allocator) !ConnectResult {
+pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
     const display = x.getDisplay();
 
     const sock = x.connect(display) catch |err| {

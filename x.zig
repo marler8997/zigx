@@ -283,7 +283,7 @@ pub fn connectTcp(name: []const u8, port: u16, options: ConnectTcpOptions) !os.s
     if (options.inet6) return error.Inet6NotImplemented;
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    const list = try std.net.getAddressList(&arena.allocator, name, port);
+    const list = try std.net.getAddressList(arena.allocator(), name, port);
     defer list.deinit();
     for (list.addrs) |addr| {
         return tcpConnectToAddress(addr) catch |err| switch (err) {
@@ -1598,7 +1598,7 @@ pub const ConnectSetup = struct {
     // to 4-bytes
     buf: []align(4) u8,
 
-    pub fn deinit(self: ConnectSetup, allocator: *std.mem.Allocator) void {
+    pub fn deinit(self: ConnectSetup, allocator: std.mem.Allocator) void {
         allocator.free(self.buf);
     }
 
@@ -1684,7 +1684,7 @@ pub const ConnectSetup = struct {
     }
 };
 
-pub fn readOneMsgAlloc(allocator: *std.mem.Allocator, reader: anytype) ![]align(4) u8 {
+pub fn readOneMsgAlloc(allocator: std.mem.Allocator, reader: anytype) ![]align(4) u8 {
     var buf = try allocator.allocWithOptions(u8, 32, 4, null);
     errdefer allocator.free(buf);
     const len = try readOneMsg(reader, buf);

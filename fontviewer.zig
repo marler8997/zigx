@@ -7,7 +7,7 @@ const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 pub const log_level = std.log.Level.info;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-const allocator = &arena.allocator;
+const allocator = arena.allocator();
 
 const window_width = 600;
 const window_height = 400;

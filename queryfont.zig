@@ -5,7 +5,7 @@ const common = @import("common.zig");
 pub const log_level = std.log.Level.info;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-const allocator = &arena.allocator;
+const allocator = arena.allocator();
 
 pub fn main() !u8 {
     const all_args = try std.process.argsAlloc(allocator);
