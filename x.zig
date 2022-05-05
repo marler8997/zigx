@@ -1391,13 +1391,13 @@ pub const Event = extern union {
     button_release: ButtonRelease,
     exposure: Expose,
 
-    pub const KeyPress = KeyOrButton;
-    pub const KeyRelease = KeyOrButton;
-    pub const ButtonPress = KeyOrButton;
-    pub const ButtonRelease = KeyOrButton;
+    pub const KeyPress = KeyOrButtonOrMotion;
+    pub const KeyRelease = KeyOrButtonOrMotion;
+    pub const ButtonPress = KeyOrButtonOrMotion;
+    pub const ButtonRelease = KeyOrButtonOrMotion;
     pub const EnterNotify = Generic; // TODO
     pub const LeaveNotify = Generic; // TODO
-    pub const MotionNotify = Generic; // TODO
+    pub const MotionNotify = KeyOrButtonOrMotion; // TODO
     pub const KeymapNotify = Generic; // TODO
 
     // NOTE: can't used packed because of compiler bugs
@@ -1410,7 +1410,7 @@ pub const Event = extern union {
     comptime { std.debug.assert(@sizeOf(Generic) == 32); }
 
     // NOTE: can't used packed because of compiler bugs
-    pub const KeyOrButton = extern struct {
+    pub const KeyOrButtonOrMotion = extern struct {
         code: u8,
         detail: u8,
         sequence: u16,
@@ -1426,7 +1426,7 @@ pub const Event = extern union {
         same_screen: u8,
         unused: u8,
     };
-    comptime { std.debug.assert(@sizeOf(KeyOrButton) == 32); }
+    comptime { std.debug.assert(@sizeOf(KeyOrButtonOrMotion) == 32); }
 
     // NOTE: can't used packed because of compiler bugs
     pub const Expose = extern struct {
