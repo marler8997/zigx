@@ -506,6 +506,8 @@ test "ConnectSetupMessage" {
 pub const Opcode = enum(u8) {
     create_window = 1,
     map_window = 8,
+    grab_pointer = 26,
+    ungrab_pointer = 27,
     open_font = 45,
     close_font = 46,
     query_font = 47,
@@ -713,6 +715,47 @@ pub const map_window = struct {
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, window_id);
+    }
+};
+
+pub const SyncMode = enum(u1) { synchronous = 0, asynchronous = 1 };
+
+pub const grab_pointer = struct {
+    pub const len = 24;
+    pub const Args = struct {
+        owner_events: bool,
+        grab_window: u32,
+        event_mask: u16,
+        pointer_mode: SyncMode,
+        keyboard_mode: SyncMode,
+        confine_to: u32, // 0 is none
+        cursor: u32, // 0 is none
+        time: u32, // 0 is CurrentTime
+    };
+    pub fn serialize(buf: [*]u8, args: Args) void {
+        buf[0] = @enumToInt(Opcode.grab_pointer);
+        buf[1] = if (args.owner_events) 1 else 0;
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, args.grab_window);
+        writeIntNative(u16, buf + 8, args.event_mask);
+        buf[10] = @enumToInt(args.pointer_mode);
+        buf[11] = @enumToInt(args.keyboard_mode);
+        writeIntNative(u32, buf + 12, args.confine_to);
+        writeIntNative(u32, buf + 16, args.cursor);
+        writeIntNative(u32, buf + 20, args.time);
+    }
+};
+
+pub const ungrab_pointer = struct {
+    pub const len = 8;
+    pub const Args = struct {
+        time: u32, // 0 is CurrentTime
+    };
+    pub fn serialize(buf: [*]u8, args: Args) void {
+        buf[0] = @enumToInt(Opcode.ungrab_pointer);
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, args.time);
     }
 };
 

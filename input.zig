@@ -10,16 +10,12 @@ const allocator = arena.allocator();
 const window_width = 400;
 const window_height = 400;
 
-fn Pos(comptime T: type) type {
-    return struct {
-        x: T,
-        y: T,
-    };
-}
-const global = struct {
-    var pointer_root_pos = Pos(i16) { .x = -1, .y = -1};
-    var pointer_event_pos = Pos(i16) { .x = -1, .y = -1};
+const Key = enum(u8) {
+    g = 42,
 };
+
+const bg_color = 0x231a20;
+const fg_color = 0xadccfa;
 
 pub fn main() !u8 {
     const conn = try common.connect(allocator);
@@ -60,7 +56,7 @@ pub fn main() !u8 {
             .visual_id = screen.root_visual,
         }, .{
 //            .bg_pixmap = .copy_from_parent,
-            .bg_pixel = 0xaabbccdd,
+            .bg_pixel = bg_color,
 //            //.border_pixmap =
 //            .border_pixel = 0x01fa8ec9,
 //            .bit_gravity = .north_west,
@@ -100,7 +96,7 @@ pub fn main() !u8 {
             .gc_id = bg_gc_id,
             .drawable_id = screen.root,
         }, .{
-            .foreground = screen.black_pixel,
+            .foreground = fg_color,
         });
         try conn.send(msg_buf[0..len]);
     }
@@ -111,8 +107,8 @@ pub fn main() !u8 {
             .gc_id = fg_gc_id,
             .drawable_id = screen.root,
         }, .{
-            .background = screen.black_pixel,
-            .foreground = 0xffaadd,
+            .background = bg_color,
+            .foreground = fg_color,
         });
         try conn.send(msg_buf[0..len]);
     }
@@ -156,6 +152,7 @@ pub fn main() !u8 {
         x.map_window.serialize(&msg, window_id);
         try conn.send(&msg);
     }
+    var state = State { };
 
     while (true) {
         {
@@ -184,11 +181,35 @@ pub fn main() !u8 {
                     return 1;
                 },
                 .reply => |msg| {
-                    std.log.info("todo: handle a reply message {}", .{msg});
-                    return error.TodoHandleReplyMessage;
+                    if (state.grab == .requested) {
+                        // I guess we'll assume this is the reply for now
+                        const status = msg.reserve_min[0];
+                        if (status == 0) {
+                            std.log.info("grab success!", .{});
+                            state.grab = .enabled;
+                        } else {
+                            const error_msg = switch (status) {
+                                1 => "already grabbed",
+                                2 => "invalid time",
+                                3 => "not viewable",
+                                4 => "frozen",
+                                else => "unknown error code",
+                            };
+                            std.log.info("grab failed with '{s}' ({})", .{error_msg, status});
+                            state.grab = .disabled;
+                        }
+                        try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                    } else {
+                        std.log.info("todo: handle a reply message {}", .{msg});
+                        return error.TodoHandleReplyMessage;
+                    }
                 },
                 .key_press => |msg| {
                     std.log.info("key_press: {}", .{msg.detail});
+                    if (msg.detail == @enumToInt(Key.g)) {
+                        try state.toggleGrab(conn.sock, screen.root);
+                    }
+                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
                 },
                 .key_release => |msg| {
                     std.log.info("key_release: {}", .{msg.detail});
@@ -209,18 +230,18 @@ pub fn main() !u8 {
                     // too much logging
                     _ = msg;
                     //std.log.info("pointer_motion: {}", .{msg});
-                    global.pointer_root_pos.x = msg.root_x;
-                    global.pointer_root_pos.y = msg.root_y;
-                    global.pointer_event_pos.x = msg.event_x;
-                    global.pointer_event_pos.y = msg.event_y;
-                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims);
+                    state.pointer_root_pos.x = msg.root_x;
+                    state.pointer_root_pos.y = msg.root_y;
+                    state.pointer_event_pos.x = msg.event_x;
+                    state.pointer_event_pos.y = msg.event_y;
+                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
                 },
                 .keymap_notify => |msg| {
                     std.log.info("keymap_state: {}", .{msg});
                 },
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
-                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims);
+                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
                 },
                 .unhandled => |msg| {
                     std.log.info("todo: server msg {}", .{msg});
@@ -236,6 +257,51 @@ const FontDims = struct {
     height: u8,
     font_left: i16, // pixels to the left of the text basepoint
     font_ascent: i16, // pixels up from the text basepoint to the top of the text
+};
+
+fn Pos(comptime T: type) type {
+    return struct {
+        x: T,
+        y: T,
+    };
+}
+const State = struct {
+    pointer_root_pos: Pos(i16) = .{ .x = -1, .y = -1},
+    pointer_event_pos: Pos(i16) = .{ .x = -1, .y = -1},
+    grab: enum { disabled, requested, enabled } = .disabled,
+
+    fn toggleGrab(self: *State, sock: std.os.socket_t, root: u32) !void {
+        switch (self.grab) {
+            .disabled => {
+                std.log.info("requesting grab...", .{});
+                var msg: [x.grab_pointer.len]u8 = undefined;
+                x.grab_pointer.serialize(&msg, .{
+                    .owner_events = true,
+                    .grab_window = root,
+                    .event_mask = 0,
+                    .pointer_mode = .synchronous,
+                    .keyboard_mode = .asynchronous,
+                    .confine_to = 0,
+                    .cursor = 0,
+                    .time = 0,
+                });
+                try common.send(sock, &msg);
+                self.grab = .requested;
+            },
+            .requested => {
+                std.log.info("grab already requested", .{});
+            },
+            .enabled => {
+                std.log.info("ungrabbing", .{});
+                var msg: [x.ungrab_pointer.len]u8 = undefined;
+                x.ungrab_pointer.serialize(&msg, .{
+                    .time = 0,
+                });
+                try common.send(sock, &msg);
+                self.grab = .disabled;
+            },
+        }
+    }
 };
 
 fn renderString(
@@ -260,7 +326,14 @@ fn renderString(
     try common.send(sock, msg[0 .. x.image_text8.getLen(text_len)]);
 }
 
-fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32, font_dims: FontDims) !void {
+fn render(
+    sock: std.os.socket_t,
+    drawable_id: u32,
+    bg_gc_id: u32,
+    fg_gc_id: u32,
+    font_dims: FontDims,
+    state: State,
+) !void {
     _ = bg_gc_id;
     {
         var msg: [x.clear_area.len]u8 = undefined;
@@ -274,10 +347,10 @@ fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32,
         drawable_id,
         fg_gc_id,
         font_dims.font_left,
-        font_dims.font_ascent,
+        font_dims.font_ascent + (0 * font_dims.height),
         "root: {} x {}", .{
-            global.pointer_root_pos.x,
-            global.pointer_root_pos.y,
+            state.pointer_root_pos.x,
+            state.pointer_root_pos.y,
         },
     );
     try renderString(
@@ -285,10 +358,18 @@ fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32,
         drawable_id,
         fg_gc_id,
         font_dims.font_left,
-        font_dims.font_ascent + font_dims.height,
+        font_dims.font_ascent + (1 * font_dims.height),
         "event: {} x {}", .{
-            global.pointer_event_pos.x,
-            global.pointer_event_pos.y,
+            state.pointer_event_pos.x,
+            state.pointer_event_pos.y,
         },
+    );
+    try renderString(
+        sock,
+        drawable_id,
+        fg_gc_id,
+        font_dims.font_left,
+        font_dims.font_ascent + (2 * font_dims.height),
+        "grab: {s}", .{ @tagName(state.grab) },
     );
 }
