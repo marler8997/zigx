@@ -12,6 +12,7 @@ const window_height = 400;
 
 const Key = enum(u8) {
     w = 25,
+    i = 31,
     g = 42,
     c = 54,
 };
@@ -92,6 +93,8 @@ pub fn main() !u8 {
     }
 
     const bg_gc_id = window_id + 1;
+    const fg_gc_id = window_id + 2;
+    const child_window_id = window_id + 3;
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
@@ -102,7 +105,6 @@ pub fn main() !u8 {
         });
         try conn.send(msg_buf[0..len]);
     }
-    const fg_gc_id = window_id + 2;
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
@@ -219,6 +221,8 @@ pub fn main() !u8 {
                         try warpPointer(conn.sock);
                     } else if (msg.detail == @enumToInt(Key.c)) {
                         state.confine_grab = !state.confine_grab;
+                    } else if (msg.detail == @enumToInt(Key.i)) {
+                        try createWindow(conn, screen.root, child_window_id);
                     } else {
                         do_render = false;
                     }
@@ -284,6 +288,59 @@ fn warpPointer(sock: std.os.socket_t) !void {
     try common.send(sock, &msg);
 }
 
+fn createWindow(conn: common.ConnectResult, parent_window_id: u32, window_id: u32) !void {
+    {
+        var msg_buf: [x.create_window.max_len]u8 = undefined;
+        const len = x.create_window.serialize(&msg_buf, .{
+            .window_id = window_id,
+            .parent_window_id = parent_window_id,
+            .x = 0, .y = 0,
+            .width = 500, .height = 500,
+            .border_width = 0, // TODO: what is this?
+            .class = .input_output,
+            //.class = .input_only,
+            .visual_id = 0, // copy from parent
+        }, .{
+//            .bg_pixmap = .copy_from_parent,
+//            .bg_pixel = bg_color,
+//            //.border_pixmap =
+//            .border_pixel = 0x01fa8ec9,
+//            .bit_gravity = .north_west,
+//            .win_gravity = .east,
+//            .backing_store = .when_mapped,
+//            .backing_planes = 0x1234,
+//            .backing_pixel = 0xbbeeeeff,
+//            .override_redirect = true,
+//            .save_under = true,
+//            .event_mask =
+//                  x.event.key_press
+//                | x.event.key_release
+//                | x.event.button_press
+//                | x.event.button_release
+//                | x.event.enter_window
+//                | x.event.leave_window
+//                | x.event.pointer_motion
+////                | x.event.pointer_motion_hint WHAT THIS DO?
+////                | x.event.button1_motion  WHAT THIS DO?
+////                | x.event.button2_motion  WHAT THIS DO?
+////                | x.event.button3_motion  WHAT THIS DO?
+////                | x.event.button4_motion  WHAT THIS DO?
+////                | x.event.button5_motion  WHAT THIS DO?
+////                | x.event.button_motion  WHAT THIS DO?
+//                | x.event.keymap_state
+//                | x.event.exposure
+//                ,
+////            .dont_propagate = 1,
+        });
+        try conn.send(msg_buf[0..len]);
+    }
+    {
+        var msg: [x.map_window.len]u8 = undefined;
+        x.map_window.serialize(&msg, window_id);
+        try conn.send(&msg);
+    }
+}
+
 const FontDims = struct {
     width: u8,
     height: u8,
@@ -313,7 +370,8 @@ const State = struct {
                 std.log.info("requesting grab...", .{});
                 var msg: [x.grab_pointer.len]u8 = undefined;
                 x.grab_pointer.serialize(&msg, .{
-                    .owner_events = true,
+                    //.owner_events = true,
+                    .owner_events = false,
                     .grab_window = grab_window,
                     .event_mask = x.pointer_event.pointer_motion,
                     .pointer_mode = .synchronous,
@@ -429,5 +487,13 @@ fn render(
         font_dims.font_left,
         font_dims.font_ascent + (4 * font_dims.height),
         "(W)arp", .{},
+    );
+    try renderString(
+        sock,
+        drawable_id,
+        fg_gc_id,
+        font_dims.font_left,
+        font_dims.font_ascent + (5 * font_dims.height),
+        "Create W(i)ndow", .{},
     );
 }
