@@ -11,7 +11,9 @@ const window_width = 400;
 const window_height = 400;
 
 const Key = enum(u8) {
+    w = 25,
     g = 42,
+    c = 54,
 };
 
 const bg_color = 0x231a20;
@@ -67,22 +69,22 @@ pub fn main() !u8 {
 //            .override_redirect = true,
 //            .save_under = true,
             .event_mask =
-                  x.create_window.event_mask.key_press
-                | x.create_window.event_mask.key_release
-                | x.create_window.event_mask.button_press
-                | x.create_window.event_mask.button_release
-                | x.create_window.event_mask.enter_window
-                | x.create_window.event_mask.leave_window
-                | x.create_window.event_mask.pointer_motion
-//                | x.create_window.event_mask.pointer_motion_hint WHAT THIS DO?
-//                | x.create_window.event_mask.button1_motion  WHAT THIS DO?
-//                | x.create_window.event_mask.button2_motion  WHAT THIS DO?
-//                | x.create_window.event_mask.button3_motion  WHAT THIS DO?
-//                | x.create_window.event_mask.button4_motion  WHAT THIS DO?
-//                | x.create_window.event_mask.button5_motion  WHAT THIS DO?
-//                | x.create_window.event_mask.button_motion  WHAT THIS DO?
-                | x.create_window.event_mask.keymap_state
-                | x.create_window.event_mask.exposure
+                  x.event.key_press
+                | x.event.key_release
+                | x.event.button_press
+                | x.event.button_release
+                | x.event.enter_window
+                | x.event.leave_window
+                | x.event.pointer_motion
+//                | x.event.pointer_motion_hint WHAT THIS DO?
+//                | x.event.button1_motion  WHAT THIS DO?
+//                | x.event.button2_motion  WHAT THIS DO?
+//                | x.event.button3_motion  WHAT THIS DO?
+//                | x.event.button4_motion  WHAT THIS DO?
+//                | x.event.button5_motion  WHAT THIS DO?
+//                | x.event.button_motion  WHAT THIS DO?
+                | x.event.keymap_state
+                | x.event.exposure
                 ,
 //            .dont_propagate = 1,
         });
@@ -181,35 +183,49 @@ pub fn main() !u8 {
                     return 1;
                 },
                 .reply => |msg| {
-                    if (state.grab == .requested) {
-                        // I guess we'll assume this is the reply for now
-                        const status = msg.reserve_min[0];
-                        if (status == 0) {
-                            std.log.info("grab success!", .{});
-                            state.grab = .enabled;
-                        } else {
-                            const error_msg = switch (status) {
-                                1 => "already grabbed",
-                                2 => "invalid time",
-                                3 => "not viewable",
-                                4 => "frozen",
-                                else => "unknown error code",
-                            };
-                            std.log.info("grab failed with '{s}' ({})", .{error_msg, status});
-                            state.grab = .disabled;
-                        }
-                        try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
-                    } else {
-                        std.log.info("todo: handle a reply message {}", .{msg});
-                        return error.TodoHandleReplyMessage;
+                    switch (state.grab) {
+                        .requested => |requested_grab| {
+                            // I guess we'll assume this is the reply for now
+                            const status = msg.reserve_min[0];
+                            if (status == 0) {
+                                std.log.info("grab success!", .{});
+                                state.grab = .{ .enabled = .{ .confined = requested_grab.confined } };
+                            } else {
+                                const error_msg = switch (status) {
+                                    1 => "already grabbed",
+                                    2 => "invalid time",
+                                    3 => "not viewable",
+                                    4 => "frozen",
+                                    else => "unknown error code",
+                                };
+                                std.log.info("grab failed with '{s}' ({})", .{error_msg, status});
+                                state.grab = .disabled;
+                            }
+                            try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                        },
+                        else => {
+                            std.log.info("todo: handle a reply message {}", .{msg});
+                            return error.TodoHandleReplyMessage;
+                        },
                     }
                 },
                 .key_press => |msg| {
                     std.log.info("key_press: {}", .{msg.detail});
+                    var do_render = true;
                     if (msg.detail == @enumToInt(Key.g)) {
-                        try state.toggleGrab(conn.sock, screen.root);
+                        //try state.toggleGrab(conn.sock, screen.root);
+                        try state.toggleGrab(conn.sock, window_id);
+                    } else if (msg.detail == @enumToInt(Key.w)) {
+                        try warpPointer(conn.sock);
+                    } else if (msg.detail == @enumToInt(Key.c)) {
+                        state.confine_grab = !state.confine_grab;
+                    } else {
+                        do_render = false;
                     }
-                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+
+                    if (do_render) {
+                        try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                    }
                 },
                 .key_release => |msg| {
                     std.log.info("key_release: {}", .{msg.detail});
@@ -252,6 +268,22 @@ pub fn main() !u8 {
     }
 }
 
+fn warpPointer(sock: std.os.socket_t) !void {
+    std.log.info("warping pointer 20 x 10...", .{});
+    var msg: [x.warp_pointer.len]u8 = undefined;
+    x.warp_pointer.serialize(&msg, .{
+        .src_window = 0,
+        .dst_window = 0,
+        .src_x = 0,
+        .src_y = 0,
+        .src_width = 0,
+        .src_height = 0,
+        .dst_x = 20,
+        .dst_y = 10,
+    });
+    try common.send(sock, &msg);
+}
+
 const FontDims = struct {
     width: u8,
     height: u8,
@@ -268,25 +300,30 @@ fn Pos(comptime T: type) type {
 const State = struct {
     pointer_root_pos: Pos(i16) = .{ .x = -1, .y = -1},
     pointer_event_pos: Pos(i16) = .{ .x = -1, .y = -1},
-    grab: enum { disabled, requested, enabled } = .disabled,
+    grab: union(enum) {
+        disabled: void,
+        requested: struct { confined: bool },
+        enabled: struct { confined: bool },
+    } = .disabled,
+    confine_grab: bool = false,
 
-    fn toggleGrab(self: *State, sock: std.os.socket_t, root: u32) !void {
+    fn toggleGrab(self: *State, sock: std.os.socket_t, grab_window: u32) !void {
         switch (self.grab) {
             .disabled => {
                 std.log.info("requesting grab...", .{});
                 var msg: [x.grab_pointer.len]u8 = undefined;
                 x.grab_pointer.serialize(&msg, .{
                     .owner_events = true,
-                    .grab_window = root,
-                    .event_mask = 0,
+                    .grab_window = grab_window,
+                    .event_mask = x.pointer_event.pointer_motion,
                     .pointer_mode = .synchronous,
                     .keyboard_mode = .asynchronous,
-                    .confine_to = 0,
+                    .confine_to = if (self.confine_grab) grab_window else 0,
                     .cursor = 0,
                     .time = 0,
                 });
                 try common.send(sock, &msg);
-                self.grab = .requested;
+                self.grab = .{ .requested = .{ .confined = self.confine_grab } };
             },
             .requested => {
                 std.log.info("grab already requested", .{});
@@ -364,12 +401,33 @@ fn render(
             state.pointer_event_pos.y,
         },
     );
+    const grab_suffix: []const u8 = switch (state.grab) {
+        .disabled => "",
+        .requested => |c| if (c.confined) " confined=true" else " confined=false",
+        .enabled   => |c| if (c.confined) " confined=true" else " confined=false",
+    };
     try renderString(
         sock,
         drawable_id,
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (2 * font_dims.height),
-        "grab: {s}", .{ @tagName(state.grab) },
+        "(G)rab: {s}{s}", .{ @tagName(state.grab), grab_suffix },
+    );
+    try renderString(
+        sock,
+        drawable_id,
+        fg_gc_id,
+        font_dims.font_left,
+        font_dims.font_ascent + (3 * font_dims.height),
+        "(C)onfine Grab: {}", .{ state.confine_grab },
+    );
+    try renderString(
+        sock,
+        drawable_id,
+        fg_gc_id,
+        font_dims.font_left,
+        font_dims.font_ascent + (4 * font_dims.height),
+        "(W)arp", .{},
     );
 }

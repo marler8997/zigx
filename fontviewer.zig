@@ -20,8 +20,10 @@ const Ids = struct {
     pub fn gcText(self: Ids) u32 { return self.base + 3; }
 };
 
-const keycode_up = 98;
-const keycode_down = 104;
+const keycode_up_moba = 98;
+const keycode_down_moba = 104;
+const keycode_up_linux = 111;
+const keycode_down_linux = 116;
 
 pub fn main() !u8 {
     const conn = try common.connect(allocator);
@@ -70,8 +72,8 @@ pub fn main() !u8 {
         }, .{
             .bg_pixel = 0xffffff,
             .event_mask =
-                  x.create_window.event_mask.key_press
-                | x.create_window.event_mask.exposure
+                  x.event.key_press
+                | x.event.exposure
                 ,
         });
         try conn.send(msg_buf[0..len]);
@@ -170,8 +172,12 @@ pub fn main() !u8 {
                 },
                 .key_press => |msg| {
                     //std.log.info("key_press: {}", .{msg.detail});
-                    if (msg.detail == keycode_down or msg.detail == keycode_up) {
-                        const diff: usize = if (msg.detail == keycode_down) 1 else fonts.len - 1;
+                    if (msg.detail == keycode_down_linux
+                            or msg.detail == keycode_up_linux
+                            or msg.detail == keycode_up_moba
+                            or msg.detail == keycode_up_moba
+                        ) {
+                        const diff: usize = if (msg.detail == keycode_down_linux or msg.detail == keycode_down_moba) 1 else fonts.len - 1;
                         try state.updateDesiredFont(conn.sock, ids, fonts, (state.desired_font_index + diff) % fonts.len);
                     }
                 },

@@ -508,6 +508,7 @@ pub const Opcode = enum(u8) {
     map_window = 8,
     grab_pointer = 26,
     ungrab_pointer = 27,
+    warp_pointer = 41,
     open_font = 45,
     close_font = 46,
     query_font = 47,
@@ -575,6 +576,52 @@ fn optionToU32(value: anytype) u32 {
     @compileError("TODO: implement optionToU32 for type: " ++ @typeName(T));
 }
 
+pub const event = struct {
+    pub const key_press          = (1 <<  0);
+    pub const key_release        = (1 <<  1);
+    pub const button_press       = (1 <<  2);
+    pub const button_release     = (1 <<  3);
+    pub const enter_window       = (1 <<  4);
+    pub const leave_window       = (1 <<  5);
+    pub const pointer_motion     = (1 <<  6);
+    pub const pointer_motion_hint= (1 <<  7);
+    pub const button1_motion     = (1 <<  8);
+    pub const button2_motion     = (1 <<  9);
+    pub const button3_motion     = (1 << 10);
+    pub const button4_motion     = (1 << 11);
+    pub const button5_motion     = (1 << 12);
+    pub const button_motion      = (1 << 13);
+    pub const keymap_state       = (1 << 14);
+    pub const exposure           = (1 << 15);
+    pub const visibility_change  = (1 << 16);
+    pub const structure_notify   = (1 << 17);
+    pub const resize_redirect    = (1 << 18);
+    pub const substructure_notify= (1 << 19);
+    pub const substructure_redirect= (1 << 20);
+    pub const focus_change       = (1 << 21);
+    pub const property_change    = (1 << 22);
+    pub const colormap_change    = (1 << 23);
+    pub const owner_grab_button  = (1 << 24);
+    pub const unused_mask: u32   = (0x7f << 25);
+};
+
+pub const pointer_event = struct {
+    pub const button_press       = event.button_press;
+    pub const button_release     = event.button_release;
+    pub const enter_window       = event.enter_window;
+    pub const leave_window       = event.leave_window;
+    pub const pointer_motion     = event.pointer_motion;
+    pub const pointer_motion_hint= event.pointer_motion_hint;
+    pub const button1_motion     = event.button1_motion;
+    pub const button2_motion     = event.button2_motion;
+    pub const button3_motion     = event.button3_motion;
+    pub const button4_motion     = event.button4_motion;
+    pub const button5_motion     = event.button5_motion;
+    pub const button_motion      = event.button_motion;
+    pub const keymap_state       = event.keymap_state;
+    pub const unused_mask: u32   = 0xFFFF8003;
+};
+
 pub const create_window = struct {
     pub const option_flag = struct {
         pub const bg_pixmap         : u32 = (1 <<  0);
@@ -611,35 +658,6 @@ pub const create_window = struct {
         input_output = 1,
         input_only = 2,
     };
-    pub const event_mask = struct {
-        pub const key_press          = (1 <<  0);
-        pub const key_release        = (1 <<  1);
-        pub const button_press       = (1 <<  2);
-        pub const button_release     = (1 <<  3);
-        pub const enter_window       = (1 <<  4);
-        pub const leave_window       = (1 <<  5);
-        pub const pointer_motion     = (1 <<  6);
-        pub const pointer_motion_hint= (1 <<  7);
-        pub const button1_motion     = (1 <<  8);
-        pub const button2_motion     = (1 <<  9);
-        pub const button3_motion     = (1 << 10);
-        pub const button4_motion     = (1 << 11);
-        pub const button5_motion     = (1 << 12);
-        pub const button_motion      = (1 << 13);
-        pub const keymap_state       = (1 << 14);
-        pub const exposure           = (1 << 15);
-        pub const visibility_change  = (1 << 16);
-        pub const structure_notify   = (1 << 17);
-        pub const resize_redirect    = (1 << 18);
-        pub const substructure_notify= (1 << 19);
-        pub const substructure_redirect= (1 << 20);
-        pub const focus_change       = (1 << 21);
-        pub const property_change    = (1 << 22);
-        pub const colormap_change    = (1 << 23);
-        pub const owner_grab_button  = (1 << 24);
-        pub const unused_mask: u32   = (0x7f << 25);
-    };
-
     pub const Args = struct {
         window_id: u32,
         parent_window_id: u32,
@@ -756,6 +774,33 @@ pub const ungrab_pointer = struct {
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, args.time);
+    }
+};
+
+pub const warp_pointer = struct {
+    pub const len = 24;
+    pub const Args = struct {
+        src_window: u32, // 0 means none
+        dst_window: u32, // 0 means none
+        src_x: i16,
+        src_y: i16,
+        src_width: u16,
+        src_height: u16,
+        dst_x: i16,
+        dst_y: i16,
+    };
+    pub fn serialize(buf: [*]u8, args: Args) void {
+        buf[0] = @enumToInt(Opcode.warp_pointer);
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, args.src_window);
+        writeIntNative(u32, buf + 8, args.dst_window);
+        writeIntNative(i16, buf + 12, args.src_x);
+        writeIntNative(i16, buf + 14, args.src_y);
+        writeIntNative(u16, buf + 16, args.src_width);
+        writeIntNative(u16, buf + 18, args.src_height);
+        writeIntNative(i16, buf + 20, args.dst_x);
+        writeIntNative(i16, buf + 22, args.dst_y);
     }
 };
 

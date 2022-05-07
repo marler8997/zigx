@@ -60,22 +60,22 @@ pub fn main() !u8 {
 //            .override_redirect = true,
 //            .save_under = true,
             .event_mask =
-                  x.create_window.event_mask.key_press
-                | x.create_window.event_mask.key_release
-                | x.create_window.event_mask.button_press
-                | x.create_window.event_mask.button_release
-                | x.create_window.event_mask.enter_window
-                | x.create_window.event_mask.leave_window
-                | x.create_window.event_mask.pointer_motion
-//                | x.create_window.event_mask.pointer_motion_hint WHAT THIS DO?
-//                | x.create_window.event_mask.button1_motion  WHAT THIS DO?
-//                | x.create_window.event_mask.button2_motion  WHAT THIS DO?
-//                | x.create_window.event_mask.button3_motion  WHAT THIS DO?
-//                | x.create_window.event_mask.button4_motion  WHAT THIS DO?
-//                | x.create_window.event_mask.button5_motion  WHAT THIS DO?
-//                | x.create_window.event_mask.button_motion  WHAT THIS DO?
-                | x.create_window.event_mask.keymap_state
-                | x.create_window.event_mask.exposure
+                  x.event.key_press
+                | x.event.key_release
+                | x.event.button_press
+                | x.event.button_release
+                | x.event.enter_window
+                | x.event.leave_window
+                | x.event.pointer_motion
+//                | x.event.pointer_motion_hint WHAT THIS DO?
+//                | x.event.button1_motion  WHAT THIS DO?
+//                | x.event.button2_motion  WHAT THIS DO?
+//                | x.event.button3_motion  WHAT THIS DO?
+//                | x.event.button4_motion  WHAT THIS DO?
+//                | x.event.button5_motion  WHAT THIS DO?
+//                | x.event.button_motion  WHAT THIS DO?
+                | x.event.keymap_state
+                | x.event.exposure
                 ,
 //            .dont_propagate = 1,
         });
