@@ -11,8 +11,10 @@ const window_width = 400;
 const window_height = 400;
 
 const Key = enum(u8) {
+    esc = 9,
     w = 25,
     i = 31,
+    d = 40,
     g = 42,
     c = 54,
 };
@@ -45,6 +47,7 @@ pub fn main() !u8 {
     };
 
     // TODO: maybe need to call conn.setup.verify or something?
+    var msg_sequencer = MsgSequencer { .sock = conn.sock };
 
     const window_id = conn.setup.fixed().resource_id_base;
     {
@@ -89,7 +92,7 @@ pub fn main() !u8 {
                 ,
 //            .dont_propagate = 1,
         });
-        try conn.send(msg_buf[0..len]);
+        try msg_sequencer.send(msg_buf[0..len], 1);
     }
 
     const bg_gc_id = window_id + 1;
@@ -103,7 +106,7 @@ pub fn main() !u8 {
         }, .{
             .foreground = fg_color,
         });
-        try conn.send(msg_buf[0..len]);
+        try msg_sequencer.send(msg_buf[0..len], 1);
     }
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
@@ -114,7 +117,7 @@ pub fn main() !u8 {
             .background = bg_color,
             .foreground = fg_color,
         });
-        try conn.send(msg_buf[0..len]);
+        try msg_sequencer.send(msg_buf[0..len], 1);
     }
 
     // get some font information
@@ -123,7 +126,7 @@ pub fn main() !u8 {
         const text = x.Slice(u16, [*]const u16) { .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
         x.query_text_extents.serialize(&msg, fg_gc_id, text);
-        try conn.send(&msg);
+        try msg_sequencer.send(&msg, 1);
     }
 
     const buf_memfd = try Memfd.init("ZigX11DoubleBuffer");
@@ -154,7 +157,7 @@ pub fn main() !u8 {
     {
         var msg: [x.map_window.len]u8 = undefined;
         x.map_window.serialize(&msg, window_id);
-        try conn.send(&msg);
+        try msg_sequencer.send(&msg, 1);
     }
     var state = State { };
 
@@ -185,50 +188,45 @@ pub fn main() !u8 {
                     return 1;
                 },
                 .reply => |msg| {
-                    switch (state.grab) {
-                        .requested => |requested_grab| {
-                            // I guess we'll assume this is the reply for now
-                            const status = msg.reserve_min[0];
-                            if (status == 0) {
-                                std.log.info("grab success!", .{});
-                                state.grab = .{ .enabled = .{ .confined = requested_grab.confined } };
-                            } else {
-                                const error_msg = switch (status) {
-                                    1 => "already grabbed",
-                                    2 => "invalid time",
-                                    3 => "not viewable",
-                                    4 => "frozen",
-                                    else => "unknown error code",
-                                };
-                                std.log.info("grab failed with '{s}' ({})", .{error_msg, status});
-                                state.grab = .disabled;
-                            }
-                            try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
-                        },
-                        else => {
-                            std.log.info("todo: handle a reply message {}", .{msg});
-                            return error.TodoHandleReplyMessage;
-                        },
+                    const handled = try handleReply(
+                        &msg_sequencer,
+                        &state,
+                        msg,
+                        window_id,
+                        bg_gc_id,
+                        fg_gc_id,
+                        font_dims,
+                    );
+                    if (!handled) {
+                        std.log.info("unexpected reply message {}", .{msg});
+                        std.os.exit(0xff);
                     }
+                    // just always do another render, it's *probably* needed
+                    try render(&msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state);
                 },
                 .key_press => |msg| {
                     std.log.info("key_press: {}", .{msg.detail});
                     var do_render = true;
                     if (msg.detail == @enumToInt(Key.g)) {
                         //try state.toggleGrab(conn.sock, screen.root);
-                        try state.toggleGrab(conn.sock, window_id);
+                        try state.toggleGrab(&msg_sequencer, window_id);
                     } else if (msg.detail == @enumToInt(Key.w)) {
-                        try warpPointer(conn.sock);
+                        try warpPointer(&msg_sequencer);
                     } else if (msg.detail == @enumToInt(Key.c)) {
                         state.confine_grab = !state.confine_grab;
                     } else if (msg.detail == @enumToInt(Key.i)) {
-                        try createWindow(conn, screen.root, child_window_id);
+                        try createWindow(&msg_sequencer, screen.root, child_window_id);
+                    } else if (msg.detail == @enumToInt(Key.d)) {
+                        try disableInputDevice(&msg_sequencer, &state);
+                    } else if (msg.detail == @enumToInt(Key.esc)) {
+                        std.log.info("ESC pressed, exiting loop...", .{});
+                        return 0;
                     } else {
                         do_render = false;
                     }
 
                     if (do_render) {
-                        try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                        try render(&msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state);
                     }
                 },
                 .key_release => |msg| {
@@ -254,14 +252,14 @@ pub fn main() !u8 {
                     state.pointer_root_pos.y = msg.root_y;
                     state.pointer_event_pos.x = msg.event_x;
                     state.pointer_event_pos.y = msg.event_y;
-                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                    try render(&msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state);
                 },
                 .keymap_notify => |msg| {
                     std.log.info("keymap_state: {}", .{msg});
                 },
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
-                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                    try render(&msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state);
                 },
                 .unhandled => |msg| {
                     std.log.info("todo: server msg {}", .{msg});
@@ -272,7 +270,105 @@ pub fn main() !u8 {
     }
 }
 
-fn warpPointer(sock: std.os.socket_t) !void {
+fn handleReply(
+    msg_sequencer: *MsgSequencer,
+    state: *State,
+    msg: *const x.ServerMsg.Reply,
+    window_id: u32,
+    bg_gc_id: u32,
+    fg_gc_id: u32,
+    font_dims: FontDims,
+) !bool {
+    switch (state.grab) {
+        .disabled => {},
+        .requested => |requested_grab| if (requested_grab.sequence == msg.sequence) {
+            // I guess we'll assume this is the reply for now
+            const status = msg.reserve_min[0];
+            if (status == 0) {
+                std.log.info("grab success!", .{});
+                state.grab = .{ .enabled = .{ .confined = requested_grab.confined } };
+            } else {
+                const error_msg = switch (status) {
+                    1 => "already grabbed",
+                    2 => "invalid time",
+                    3 => "not viewable",
+                    4 => "frozen",
+                    else => "unknown error code",
+                };
+                std.log.info("grab failed with '{s}' ({})", .{error_msg, status});
+                state.grab = .disabled;
+            }
+            try render(msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state.*);
+            return true; // handled
+        },
+        .enabled => {},
+    }
+
+    switch (state.disable_input_device) {
+        .initial, .extension_missing => {},
+        .query_extension => |sequence| if (msg.sequence == sequence) {
+            const present = msg.reserve_min[0];
+            const ext_opcode = msg.reserve_min[1];
+            //const first_event = msg.reserve_min[2];
+            //const first_error = msg.reserve_min[3];
+            if (present == 0) {
+                state.disable_input_device = .extension_missing;
+            } else {
+                std.debug.assert(present == 1);
+                const name = comptime x.Slice(u16, [*]const u8).initComptime("XInputExtension");
+                var get_version_msg: [x.inputext.get_extension_version.getLen(name.len)]u8 = undefined;
+                x.inputext.get_extension_version.serialize(&get_version_msg, ext_opcode, name);
+                try msg_sequencer.send(&get_version_msg, 1);
+                state.disable_input_device = .{ .get_version = .{
+                    .sequence = msg_sequencer.last_sequence,
+                    .ext_opcode = ext_opcode,
+                }};
+            }
+            return true; // handled
+        },
+        .get_version => |info| if (msg.sequence == info.sequence) {
+            const opcode = msg.flexible;
+            const ptr: [*]const u8 = &msg.reserve_min;
+            const major = x.readIntNative(u16, ptr + 0);
+            const minor = x.readIntNative(u16, ptr + 2);
+            const present = msg.reserve_min[4];
+            if (opcode != @enumToInt(x.inputext.ExtOpcode.get_extension_version))
+                std.debug.panic("invalid opcode in reply {}, expected {}", .{
+                    opcode, @enumToInt(x.inputext.ExtOpcode.get_extension_version)});
+            if (present == 0)
+                std.debug.panic("XInputExtension is not present, but it was before?", .{});
+            if (major != 2)
+                std.debug.panic("XInputExtension major version is {} but need {}", .{major, 2});
+            if (minor < 3)
+                std.debug.panic("XInputExtension minor version is {} but I've only tested >= {}", .{minor, 3});
+            var list_devices_msg: [x.inputext.list_input_devices.len]u8 = undefined;
+            x.inputext.list_input_devices.serialize(&list_devices_msg, info.ext_opcode);
+            try msg_sequencer.send(&list_devices_msg, 1);
+            state.disable_input_device = .{ .list_devices = .{
+                .sequence = msg_sequencer.last_sequence,
+                .ext_opcode = info.ext_opcode,
+            }};
+            return true; // handled
+        },
+        .list_devices => |info| if (msg.sequence == info.sequence) {
+            std.log.info("TODO: parse device list {}", .{msg});
+            return true; // handled
+        },
+    }
+
+    return false; // not handled
+}
+
+const MsgSequencer = struct {
+    sock: std.os.socket_t,
+    last_sequence: u16 = 0,
+    pub fn send(self: *MsgSequencer, data: []const u8, msg_count: u16) !void {
+        try common.send(self.sock, data);
+        self.last_sequence = self.last_sequence +% msg_count;
+    }
+};
+
+fn warpPointer(msg_sequencer: *MsgSequencer) !void {
     std.log.info("warping pointer 20 x 10...", .{});
     var msg: [x.warp_pointer.len]u8 = undefined;
     x.warp_pointer.serialize(&msg, .{
@@ -285,10 +381,10 @@ fn warpPointer(sock: std.os.socket_t) !void {
         .dst_x = 20,
         .dst_y = 10,
     });
-    try common.send(sock, &msg);
+    try msg_sequencer.send(&msg, 1);
 }
 
-fn createWindow(conn: common.ConnectResult, parent_window_id: u32, window_id: u32) !void {
+fn createWindow(msg_sequencer: *MsgSequencer, parent_window_id: u32, window_id: u32) !void {
     {
         var msg_buf: [x.create_window.max_len]u8 = undefined;
         const len = x.create_window.serialize(&msg_buf, .{
@@ -332,12 +428,36 @@ fn createWindow(conn: common.ConnectResult, parent_window_id: u32, window_id: u3
 //                ,
 ////            .dont_propagate = 1,
         });
-        try conn.send(msg_buf[0..len]);
+        try msg_sequencer.send(msg_buf[0..len], 1);
     }
     {
         var msg: [x.map_window.len]u8 = undefined;
         x.map_window.serialize(&msg, window_id);
-        try conn.send(&msg);
+        try msg_sequencer.send(&msg, 1);
+    }
+}
+
+fn disableInputDevice(msg_sequencer: *MsgSequencer, state: *State) !void {
+    switch (state.disable_input_device) {
+        .initial => {
+            const name = comptime x.Slice(u16, [*]const u8).initComptime("XInputExtension");
+            var msg: [x.query_extension.getLen(name.len)]u8 = undefined;
+            x.query_extension.serialize(&msg, name);
+            try msg_sequencer.send(&msg, 1);
+            state.disable_input_device = .{ .query_extension = msg_sequencer.last_sequence };
+        },
+        .query_extension => {
+            std.log.info("disable input device already requested", .{});
+        },
+        .extension_missing => {
+            std.log.info("can't disable input device, XInputExtension is missing", .{});
+        },
+        .get_version => {
+            std.log.info("disable input device already requested, getting extension version...", .{});
+        },
+        .list_devices => {
+            std.log.info("disable input device already requested, getting input devices...", .{});
+        },
     }
 }
 
@@ -359,12 +479,25 @@ const State = struct {
     pointer_event_pos: Pos(i16) = .{ .x = -1, .y = -1},
     grab: union(enum) {
         disabled: void,
-        requested: struct { confined: bool },
+        requested: struct { confined: bool, sequence: u16 },
         enabled: struct { confined: bool },
     } = .disabled,
     confine_grab: bool = false,
+    disable_input_device: union(enum) {
+        initial: void,
+        query_extension: u16,
+        extension_missing: void,
+        get_version: struct {
+            sequence: u16,
+            ext_opcode: u8,
+        },
+        list_devices: struct {
+            sequence: u16,
+            ext_opcode: u8,
+        },
+    } = .initial,
 
-    fn toggleGrab(self: *State, sock: std.os.socket_t, grab_window: u32) !void {
+    fn toggleGrab(self: *State, msg_sequencer: *MsgSequencer, grab_window: u32) !void {
         switch (self.grab) {
             .disabled => {
                 std.log.info("requesting grab...", .{});
@@ -380,8 +513,11 @@ const State = struct {
                     .cursor = 0,
                     .time = 0,
                 });
-                try common.send(sock, &msg);
-                self.grab = .{ .requested = .{ .confined = self.confine_grab } };
+                try msg_sequencer.send(&msg, 1);
+                self.grab = .{ .requested = .{
+                    .confined = self.confine_grab,
+                    .sequence = msg_sequencer.last_sequence,
+                } };
             },
             .requested => {
                 std.log.info("grab already requested", .{});
@@ -392,7 +528,7 @@ const State = struct {
                 x.ungrab_pointer.serialize(&msg, .{
                     .time = 0,
                 });
-                try common.send(sock, &msg);
+                try msg_sequencer.send(&msg, 1);
                 self.grab = .disabled;
             },
         }
@@ -400,7 +536,7 @@ const State = struct {
 };
 
 fn renderString(
-    sock: std.os.socket_t,
+    msg_sequencer: *MsgSequencer,
     drawable_id: u32,
     fg_gc_id: u32,
     pos_x: i16,
@@ -418,11 +554,11 @@ fn renderString(
         .y = pos_y,
         .text = x.Slice(u8, [*]const u8) { .ptr = undefined, .len = text_len },
     });
-    try common.send(sock, msg[0 .. x.image_text8.getLen(text_len)]);
+    try msg_sequencer.send(msg[0 .. x.image_text8.getLen(text_len)], 1);
 }
 
 fn render(
-    sock: std.os.socket_t,
+    msg_sequencer: *MsgSequencer,
     drawable_id: u32,
     bg_gc_id: u32,
     fg_gc_id: u32,
@@ -435,10 +571,10 @@ fn render(
         x.clear_area.serialize(&msg, false, drawable_id, .{
             .x = 0, .y = 0, .width = window_width, .height = window_height,
         });
-        try common.send(sock, &msg);
+        try msg_sequencer.send(&msg, 1);
     }
     try renderString(
-        sock,
+        msg_sequencer,
         drawable_id,
         fg_gc_id,
         font_dims.font_left,
@@ -449,7 +585,7 @@ fn render(
         },
     );
     try renderString(
-        sock,
+        msg_sequencer,
         drawable_id,
         fg_gc_id,
         font_dims.font_left,
@@ -465,7 +601,7 @@ fn render(
         .enabled   => |c| if (c.confined) " confined=true" else " confined=false",
     };
     try renderString(
-        sock,
+        msg_sequencer,
         drawable_id,
         fg_gc_id,
         font_dims.font_left,
@@ -473,7 +609,7 @@ fn render(
         "(G)rab: {s}{s}", .{ @tagName(state.grab), grab_suffix },
     );
     try renderString(
-        sock,
+        msg_sequencer,
         drawable_id,
         fg_gc_id,
         font_dims.font_left,
@@ -481,7 +617,7 @@ fn render(
         "(C)onfine Grab: {}", .{ state.confine_grab },
     );
     try renderString(
-        sock,
+        msg_sequencer,
         drawable_id,
         fg_gc_id,
         font_dims.font_left,
@@ -489,11 +625,28 @@ fn render(
         "(W)arp", .{},
     );
     try renderString(
-        sock,
+        msg_sequencer,
         drawable_id,
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (5 * font_dims.height),
         "Create W(i)ndow", .{},
     );
+    {
+        const suffix: []const u8 = switch (state.disable_input_device) {
+            .initial => "",
+            .query_extension => " (query extension sent...)",
+            .extension_missing => " (XInputExtension is missing)",
+            .get_version => " (getting extension version...)",
+            .list_devices => " (listing input devices...)",
+        };
+        try renderString(
+            msg_sequencer,
+            drawable_id,
+            fg_gc_id,
+            font_dims.font_left,
+            font_dims.font_ascent + (6 * font_dims.height),
+            "(D)isable Input Device{s}", .{suffix},
+        );
+    }
 }

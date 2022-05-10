@@ -30,6 +30,8 @@ const testing = std.testing;
 const builtin = @import("builtin");
 const os = std.os;
 
+pub const inputext = @import("xinputext.zig");
+
 // Expose some helpful stuff
 pub const Memfd = @import("Memfd.zig");
 pub const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
@@ -355,9 +357,26 @@ pub fn connectUnix(display_host: ?[]const u8, display_num: u32) !os.socket_t {
 
 pub fn Slice(comptime LenType: type, comptime Ptr: type) type { return struct {
     const Self = @This();
+    const ptr_info = @typeInfo(Ptr).Pointer;
+    pub const NativeSlice = @Type(std.builtin.TypeInfo {
+        .Pointer = .{
+            .size = .Slice,
+            .is_const = ptr_info.is_const,
+            .is_volatile = ptr_info.is_volatile,
+            .alignment = ptr_info.alignment,
+            .address_space = ptr_info.address_space,
+            .child = ptr_info.child,
+            .is_allowzero = ptr_info.is_allowzero,
+            .sentinel = ptr_info.sentinel,
+        },
+    });
 
     ptr: Ptr,
     len: LenType,
+
+    pub fn initComptime(comptime ct_slice: NativeSlice) @This() {
+        return .{ .ptr = ct_slice.ptr, .len = @intCast(LenType, ct_slice.len) };
+    }
 
     pub fn lenCast(self: @This(), comptime NewLenType: type) Slice(NewLenType, Ptr) {
         return .{ .ptr = self.ptr, .len = @intCast(NewLenType, self.len) };
@@ -520,6 +539,7 @@ pub const Opcode = enum(u8) {
     clear_area = 61,
     poly_fill_rectangle = 70,
     image_text8 = 76,
+    query_extension = 98,
     _,
 };
 
@@ -1109,6 +1129,34 @@ pub const image_text8 = struct {
     }
 };
 
+pub const query_extension = struct {
+    pub const non_list_len =
+              2 // opcode and string_length
+            + 2 // request length
+            + 2 // name length
+            + 2 // unused
+            ;
+    pub fn getLen(name_len: u16) u16 {
+        return @intCast(u16, non_list_len + std.mem.alignForward(name_len, 4));
+    }
+    pub const max_len = non_list_len + 0xffff;
+    pub const name_offset = 8;
+    pub fn serialize(buf: [*]u8, name: Slice(u16, [*]const u8)) void {
+        serializeNoNameCopy(buf, name);
+        @memcpy(buf + name_offset, name.ptr, name.len);
+    }
+    pub fn serializeNoNameCopy(buf: [*]u8, name: Slice(u16, [*]const u8)) void {
+        buf[0] = @enumToInt(Opcode.query_extension);
+        buf[1] = 0; // unused
+        const request_len = getLen(name.len);
+        std.debug.assert(request_len & 0x3 == 0);
+        writeIntNative(u16, buf + 2, request_len >> 2);
+        writeIntNative(u32, buf + 4, name.len);
+        buf[6] = 0; // unused
+        buf[7] = 0; // unused
+    }
+};
+
 
 pub fn writeIntNative(comptime T: type, buf: [*]u8, value: T) void {
     @ptrCast(*align(1) T, buf).* = value;
@@ -1307,7 +1355,7 @@ pub const ServerMsgKind = enum(u8) {
 pub const ServerMsgTaggedUnion = union(enum) {
     unhandled: *align(4) ServerMsg.Generic,
     err: *align(4) ServerMsg.Error,
-    reply: *align(4) ServerMsg.Generic,
+    reply: *align(4) ServerMsg.Reply,
     key_press: *align(4) Event.KeyPress,
     key_release: *align(4) Event.KeyRelease,
     button_press: *align(4) Event.ButtonPress,
@@ -1321,7 +1369,7 @@ pub const ServerMsgTaggedUnion = union(enum) {
 pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
     switch (@intToEnum(ServerMsgKind, msg_ptr[0])) {
         .err => return .{ .err = @ptrCast(*align(4) ServerMsg.Error, msg_ptr) },
-        .reply => return .{ .reply = @ptrCast(*align(4) ServerMsg.Generic, msg_ptr) },
+        .reply => return .{ .reply = @ptrCast(*align(4) ServerMsg.Reply, msg_ptr) },
         .key_press => return .{ .key_press = @ptrCast(*align(4) Event.KeyPress, msg_ptr) },
         .key_release => return .{ .key_release = @ptrCast(*align(4) Event.KeyRelease, msg_ptr) },
         .button_press => return .{ .button_press = @ptrCast(*align(4) Event.ButtonPress, msg_ptr) },
@@ -1340,6 +1388,7 @@ pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
 pub const ServerMsg = extern union {
     generic: Generic,
     err: Error,
+    reply: Reply,
     query_font: QueryFont,
     query_text_extents: QueryTextExtents,
     list_fonts: ListFonts,
@@ -1351,6 +1400,14 @@ pub const ServerMsg = extern union {
         reserve_min: [31]u8,
     };
     comptime { std.debug.assert(@sizeOf(Generic) == 32); }
+    pub const Reply = extern struct {
+        response_type: ReplyKind,
+        flexible: u8,
+        sequence: u16,
+        length: u32, // length in 4-byte words
+        reserve_min: [24]u8,
+    };
+    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
 
     // NOTE: can't used packed struct because of compiler bugs
     comptime { std.debug.assert(@sizeOf(Error) == 32); }

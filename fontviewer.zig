@@ -285,12 +285,12 @@ const State = struct {
 
     pub fn onReply(
         self: *State,
-        generic_msg: *align(4) x.ServerMsg.Generic,
+        reply_msg: *align(4) x.ServerMsg.Reply,
         sock: std.os.socket_t,
         ids: Ids,
         fonts: []x.Slice(u8, [*]const u8),
     ) !void {
-        const msg = @ptrCast(*x.ServerMsg.QueryFont, generic_msg);
+        const msg = @ptrCast(*x.ServerMsg.QueryFont, reply_msg);
         //std.log.info("{}", .{msg});
         switch (self.exposed) {
             .no => @panic("codebug"),
