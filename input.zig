@@ -305,7 +305,7 @@ fn handleReply(
     }
 
     switch (state.disable_input_device) {
-        .initial, .extension_missing, .no_pointer_to_disable => {},
+        .initial, .extension_missing, .no_pointer_to_disable, .disabled => {},
         .query_extension => |sequence| if (msg.sequence == sequence) {
             const present = msg.reserve_min[0];
             const ext_opcode = msg.reserve_min[1];
@@ -357,12 +357,11 @@ fn handleReply(
             var selected_pointer_id: ?u8 = null;
             for (devices_reply.deviceInfos().nativeSlice()) |*device| {
                 const name = (try names_it.next()) orelse @panic("malformed reply");
-                if (device.use == .pointer) {
-                    if (selected_pointer_id) |_| {
-                        std.log.warn("multiple pointer ids, dropping {}", .{device.id});
-                    } else {
-                        selected_pointer_id = device.id;
+                if (device.use == .extension_pointer) {
+                    if (selected_pointer_id) |id| {
+                        std.log.warn("multiple pointer ids, dropping {}", .{id});
                     }
+                    selected_pointer_id = device.id;
                 }
                 std.log.info("Device {} '{s}', type={}, use={s}:", .{device.id, name, device.device_type, @tagName(device.use)});
                 var info_index: u8 = 0;
@@ -407,12 +406,29 @@ fn handleReply(
                 .sequence = msg_sequencer.last_sequence,
                 .ext_opcode = info.ext_opcode,
                 .pointer_id = info.pointer_id,
+                .atom = atom,
             }};
             return true;
         },
         .get_prop => |info| if (msg.sequence == info.sequence) {
             const reply = @ptrCast(*const x.inputext.get_property.Reply, msg);
-            std.log.info("todo: handle get_property value {}", .{reply});
+            std.log.info("get_property returned {}", .{reply});
+
+            const change_prop_u8 = x.inputext.change_property.withFormat(u8);
+            var change_prop_msg: [change_prop_u8.getLen(1)]u8 = undefined;
+            change_prop_u8.serialize(&change_prop_msg, info.ext_opcode, .{
+                .device_id = info.pointer_id,
+                .mode = .replace,
+                .property = info.atom,
+                .@"type" = @enumToInt(x.Atom.INTEGER),
+                .values = x.Slice(u16, [*]const u8).initComptime(&[_]u8 { 0 }),
+            });
+            try msg_sequencer.send(&change_prop_msg, 1);
+            state.disable_input_device = .{ .disabled = .{
+                .ext_opcode = info.ext_opcode,
+                .pointer_id = info.pointer_id,
+                .atom = info.atom,
+            }};
             return true;
         },
     }
@@ -514,6 +530,9 @@ fn disableInputDevice(msg_sequencer: *MsgSequencer, state: *State) !void {
         .list_devices => std.log.info(already_fmt, .{"getting input devices"}),
         .intern_atom => std.log.info(already_fmt, .{"interning atom"}),
         .get_prop => std.log.info(already_fmt, .{"getting property"}),
+        .disabled => |info| {
+            std.log.info("TODO: re-enabled input device {}", .{info.pointer_id});
+        },
     }
 }
 
@@ -561,6 +580,12 @@ const State = struct {
             sequence: u16,
             ext_opcode: u8,
             pointer_id: u8,
+            atom: u32,
+        },
+        disabled: struct {
+            ext_opcode: u8,
+            pointer_id: u8,
+            atom: u32,
         },
     } = .initial,
 
@@ -709,6 +734,7 @@ fn render(
             .no_pointer_to_disable => " (failed: no pointer to disable)",
             .intern_atom => " (interning atom...)",
             .get_prop => " (getting current property value...)",
+            .disabled => " (disabled)",
         };
         try renderString(
             msg_sequencer,

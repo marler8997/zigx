@@ -31,6 +31,7 @@ pub const ExtOpcode = enum(u8) {
     get_device_key_mapping = 24,
     change_device_key_mapping = 25,
     get_device_modifier_mapping = 26,
+    change_property = 57,
     get_property = 59,
 };
 
@@ -71,6 +72,52 @@ pub const list_input_devices = struct {
     }
 };
 
+pub const change_property = struct {
+    pub const non_list_len =
+          2 // extension and command opcodes
+        + 2 // request length
+        + 2 // device id
+        + 2 // mode and format
+        + 4 // property atom
+        + 4 // type
+        + 4 // value length
+    ;
+    pub const Mode = enum(u8) {
+        replace = 0,
+        prepend = 1,
+        append = 2,
+    };
+    pub fn withFormat(comptime T: type) type {
+        return struct {
+            pub fn getLen(value_count: u16) u16 {
+                return @intCast(u16, non_list_len + std.mem.alignForward(value_count * @sizeOf(T), 4));
+            }
+            pub const Args = struct {
+                device_id: u16,
+                mode: Mode,
+                value_format: u8 = @sizeOf(T),
+                property: u32, // atom
+                @"type": u32, // atom or AnyPropertyType
+                values: x.Slice(u16, [*]const T),
+            };
+            pub fn serialize(buf: [*]u8, input_ext_opcode: u8, args: Args) void {
+                buf[0] = input_ext_opcode;
+                buf[1] = @enumToInt(ExtOpcode.change_property);
+                const request_len = getLen(args.values.len);
+                std.debug.assert(request_len & 0x3 == 0);
+                x.writeIntNative(u16, buf + 2, request_len >> 2);
+                x.writeIntNative(u16, buf + 4, args.device_id);
+                buf[6] = @enumToInt(args.mode);
+                buf[7] = @sizeOf(T) * 8;
+                x.writeIntNative(u32, buf + 8, args.property);
+                x.writeIntNative(u32, buf + 12, args.@"type");
+                x.writeIntNative(u32, buf + 16, args.values.len);
+                @memcpy(buf + 20, args.values.ptr, args.values.len * @sizeOf(T));
+            }
+        };
+    }
+};
+
 pub const get_property = struct {
     pub const len = 24;
     pub const Args = struct {
@@ -106,7 +153,7 @@ pub const get_property = struct {
     };
     comptime { std.debug.assert(@sizeOf(Reply) == 32); }
 };
-//pub const change_property =
+
 
 
 pub const DeviceUse = enum(u8) {
