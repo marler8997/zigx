@@ -351,7 +351,19 @@ fn handleReply(
             return true; // handled
         },
         .list_devices => |info| if (msg.sequence == info.sequence) {
-            std.log.info("TODO: parse device list {}", .{msg});
+            const devices_reply = @ptrCast(*const x.inputext.ListInputDevicesReply, msg);
+            var input_info_it = devices_reply.inputInfoIterator();
+            var names_it = devices_reply.findNames();
+            for (devices_reply.deviceInfos().nativeSlice()) |*device| {
+                const name = (try names_it.next()) orelse @panic("malformed reply");
+                std.log.info("Device {} '{s}', type={}, use={s}:", .{device.id, name, device.device_type, @tagName(device.use)});
+                var info_index: u8 = 0;
+                while (info_index < device.class_count) : (info_index += 1) {
+                    std.log.info("  Input: {}", .{input_info_it.front()});
+                    input_info_it.pop();
+                }
+            }
+            std.debug.assert((try names_it.next()) == null);
             return true; // handled
         },
     }

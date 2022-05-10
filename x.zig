@@ -374,6 +374,10 @@ pub fn Slice(comptime LenType: type, comptime Ptr: type) type { return struct {
     ptr: Ptr,
     len: LenType,
 
+    pub fn nativeSlice(self: @This()) NativeSlice {
+        return self.ptr[0 .. self.len];
+    }
+
     pub fn initComptime(comptime ct_slice: NativeSlice) @This() {
         return .{ .ptr = ct_slice.ptr, .len = @intCast(LenType, ct_slice.len) };
     }
@@ -1311,8 +1315,8 @@ pub const EventCode = enum(u8) {
     mapping_notify = 34,
 };
 
-const ErrorKind = enum(u8) { err = 0 };
-const ReplyKind = enum(u8) { reply = 1 };
+pub const ErrorKind = enum(u8) { err = 0 };
+pub const ReplyKind = enum(u8) { reply = 1 };
 pub const ServerMsgKind = enum(u8) {
     err = @enumToInt(ErrorKind.err),
     reply = @enumToInt(ReplyKind.reply),
@@ -1610,7 +1614,7 @@ const CharInfo = extern struct {
 pub const StringListIterator = struct {
     mem: []const u8,
     left: u16,
-    offset: usize,
+    offset: usize = 0,
     pub fn next(self: *StringListIterator) !?Slice(u8, [*]const u8) {
         if (self.left == 0) return null;
         const len = self.mem[self.offset];
