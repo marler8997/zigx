@@ -31,6 +31,7 @@ pub const ExtOpcode = enum(u8) {
     get_device_key_mapping = 24,
     change_device_key_mapping = 25,
     get_device_modifier_mapping = 26,
+    get_property = 59,
 };
 
 pub const get_extension_version = struct {
@@ -69,6 +70,43 @@ pub const list_input_devices = struct {
         x.writeIntNative(u16, buf + 2, len >> 2);
     }
 };
+
+pub const get_property = struct {
+    pub const len = 24;
+    pub const Args = struct {
+        device_id: u16,
+        property: u32, // atom
+        @"type": u32, // atom or AnyPropertyType
+        offset: u32,
+        len: u32,
+        delete: bool,
+    };
+    pub fn serialize(buf: [*]u8, input_ext_opcode: u8, args: Args) void {
+        buf[0] = input_ext_opcode;
+        buf[1] = @enumToInt(ExtOpcode.get_property);
+        x.writeIntNative(u16, buf + 2, len >> 2);
+        x.writeIntNative(u16, buf + 4, args.device_id);
+        x.writeIntNative(u8, buf + 6, @boolToInt(args.delete));
+        buf[7] = 0; // unused pad
+        x.writeIntNative(u32, buf + 8, args.property);
+        x.writeIntNative(u32, buf + 12, args.@"type");
+        x.writeIntNative(u32, buf + 16, args.offset);
+        x.writeIntNative(u32, buf + 20, args.len);
+    }
+    pub const Reply = extern struct {
+        response_type: x.ReplyKind,
+        unused_pad: u8,
+        sequence: u16,
+        word_len: u32,
+        @"type": u32,
+        bytes_after: u32,
+        value_count: u32,
+        format: u8,
+        pad: [11]u8,
+    };
+    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+};
+//pub const change_property =
 
 
 pub const DeviceUse = enum(u8) {

@@ -393,7 +393,26 @@ fn handleReply(
         },
         .intern_atom => |info| if (msg.sequence == info.sequence) {
             const atom = x.readIntNative(u32, msg.reserve_min[0..]);
-            std.log.info("todo: handle intern_atom reply (atom={})", .{atom});
+            var get_prop_msg: [x.inputext.get_property.len]u8 = undefined;
+            x.inputext.get_property.serialize(&get_prop_msg, info.ext_opcode, .{
+                .device_id = info.pointer_id,
+                .property = atom,
+                .@"type" = 0,
+                .offset = 0,
+                .len = 0,
+                .delete = false,
+            });
+            try msg_sequencer.send(&get_prop_msg, 1);
+            state.disable_input_device = .{ .get_prop = .{
+                .sequence = msg_sequencer.last_sequence,
+                .ext_opcode = info.ext_opcode,
+                .pointer_id = info.pointer_id,
+            }};
+            return true;
+        },
+        .get_prop => |info| if (msg.sequence == info.sequence) {
+            const reply = @ptrCast(*const x.inputext.get_property.Reply, msg);
+            std.log.info("todo: handle get_property value {}", .{reply});
             return true;
         },
     }
@@ -480,6 +499,7 @@ fn createWindow(msg_sequencer: *MsgSequencer, parent_window_id: u32, window_id: 
 }
 
 fn disableInputDevice(msg_sequencer: *MsgSequencer, state: *State) !void {
+    const already_fmt = "disable input device already requested, {s}...";
     switch (state.disable_input_device) {
         .initial, .no_pointer_to_disable => {
             const name = comptime x.Slice(u16, [*]const u8).initComptime("XInputExtension");
@@ -488,21 +508,12 @@ fn disableInputDevice(msg_sequencer: *MsgSequencer, state: *State) !void {
             try msg_sequencer.send(&msg, 1);
             state.disable_input_device = .{ .query_extension = msg_sequencer.last_sequence };
         },
-        .query_extension => {
-            std.log.info("disable input device already requested", .{});
-        },
-        .extension_missing => {
-            std.log.info("can't disable input device, XInputExtension is missing", .{});
-        },
-        .get_version => {
-            std.log.info("disable input device already requested, getting extension version...", .{});
-        },
-        .list_devices => {
-            std.log.info("disable input device already requested, getting input devices...", .{});
-        },
-        .intern_atom => {
-            std.log.info("disable input device already requested, interning atom...", .{});
-        },
+        .query_extension => std.log.info(already_fmt, .{"querying extension"}),
+        .extension_missing => std.log.info("can't disable input device, XInputExtension is missing", .{}),
+        .get_version => std.log.info(already_fmt, .{"getting extension version"}),
+        .list_devices => std.log.info(already_fmt, .{"getting input devices"}),
+        .intern_atom => std.log.info(already_fmt, .{"interning atom"}),
+        .get_prop => std.log.info(already_fmt, .{"getting property"}),
     }
 }
 
@@ -542,6 +553,11 @@ const State = struct {
         },
         no_pointer_to_disable: void,
         intern_atom: struct {
+            sequence: u16,
+            ext_opcode: u8,
+            pointer_id: u8,
+        },
+        get_prop: struct {
             sequence: u16,
             ext_opcode: u8,
             pointer_id: u8,
@@ -692,6 +708,7 @@ fn render(
             .list_devices => " (listing input devices...)",
             .no_pointer_to_disable => " (failed: no pointer to disable)",
             .intern_atom => " (interning atom...)",
+            .get_prop => " (getting current property value...)",
         };
         try renderString(
             msg_sequencer,
