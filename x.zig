@@ -529,6 +529,7 @@ test "ConnectSetupMessage" {
 pub const Opcode = enum(u8) {
     create_window = 1,
     map_window = 8,
+    intern_atom = 16,
     grab_pointer = 26,
     ungrab_pointer = 27,
     warp_pointer = 41,
@@ -757,6 +758,30 @@ pub const map_window = struct {
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, window_id);
+    }
+};
+
+pub const intern_atom = struct {
+    pub const non_list_len =
+          2 // opcode and only-if-exists
+        + 2 // request length
+        + 2 // name length
+        + 2 // unused
+        ;
+    pub fn getLen(name_len: u16) u16 {
+        return non_list_len + @intCast(u16, std.mem.alignForward(name_len, 4));
+    }
+    pub const Args = struct {
+        only_if_exists: bool,
+        name: Slice(u16, [*]const u8),
+    };
+    pub fn serialize(buf: [*]u8, args: Args) void {
+        buf[0] = @enumToInt(Opcode.intern_atom);
+        buf[1] = @boolToInt(args.only_if_exists);
+        const len = getLen(args.name.len);
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u16, buf + 4, args.name.len);
+        @memcpy(buf + 8, args.name.ptr, args.name.len);
     }
 };
 
@@ -1408,7 +1433,7 @@ pub const ServerMsg = extern union {
         response_type: ReplyKind,
         flexible: u8,
         sequence: u16,
-        length: u32, // length in 4-byte words
+        word_len: u32, // length in 4-byte words
         reserve_min: [24]u8,
     };
     comptime { std.debug.assert(@sizeOf(Reply) == 32); }

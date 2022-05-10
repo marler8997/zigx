@@ -305,7 +305,7 @@ fn handleReply(
     }
 
     switch (state.disable_input_device) {
-        .initial, .extension_missing => {},
+        .initial, .extension_missing, .no_pointer_to_disable => {},
         .query_extension => |sequence| if (msg.sequence == sequence) {
             const present = msg.reserve_min[0];
             const ext_opcode = msg.reserve_min[1];
@@ -350,12 +350,20 @@ fn handleReply(
             }};
             return true; // handled
         },
-        .list_devices => |info| if (msg.sequence == info.sequence) {
+        .list_devices => |state_info| if (msg.sequence == state_info.sequence) {
             const devices_reply = @ptrCast(*const x.inputext.ListInputDevicesReply, msg);
             var input_info_it = devices_reply.inputInfoIterator();
             var names_it = devices_reply.findNames();
+            var selected_pointer_id: ?u8 = null;
             for (devices_reply.deviceInfos().nativeSlice()) |*device| {
                 const name = (try names_it.next()) orelse @panic("malformed reply");
+                if (device.use == .pointer) {
+                    if (selected_pointer_id) |_| {
+                        std.log.warn("multiple pointer ids, dropping {}", .{device.id});
+                    } else {
+                        selected_pointer_id = device.id;
+                    }
+                }
                 std.log.info("Device {} '{s}', type={}, use={s}:", .{device.id, name, device.device_type, @tagName(device.use)});
                 var info_index: u8 = 0;
                 while (info_index < device.class_count) : (info_index += 1) {
@@ -364,7 +372,29 @@ fn handleReply(
                 }
             }
             std.debug.assert((try names_it.next()) == null);
+
+            if (selected_pointer_id) |pointer_id| {
+                const name = comptime x.Slice(u16, [*]const u8).initComptime("Device Enabled");
+                var intern_atom_msg: [x.intern_atom.getLen(name.len)]u8 = undefined;
+                x.intern_atom.serialize(&intern_atom_msg, .{
+                    .only_if_exists = false,
+                    .name = name,
+                });
+                try msg_sequencer.send(&intern_atom_msg, 1);
+                state.disable_input_device = .{ .intern_atom = .{
+                    .sequence = msg_sequencer.last_sequence,
+                    .ext_opcode = state_info.ext_opcode,
+                    .pointer_id = pointer_id,
+                }};
+            } else {
+                state.disable_input_device = .no_pointer_to_disable;
+            }
             return true; // handled
+        },
+        .intern_atom => |info| if (msg.sequence == info.sequence) {
+            const atom = x.readIntNative(u32, msg.reserve_min[0..]);
+            std.log.info("todo: handle intern_atom reply (atom={})", .{atom});
+            return true;
         },
     }
 
@@ -451,7 +481,7 @@ fn createWindow(msg_sequencer: *MsgSequencer, parent_window_id: u32, window_id: 
 
 fn disableInputDevice(msg_sequencer: *MsgSequencer, state: *State) !void {
     switch (state.disable_input_device) {
-        .initial => {
+        .initial, .no_pointer_to_disable => {
             const name = comptime x.Slice(u16, [*]const u8).initComptime("XInputExtension");
             var msg: [x.query_extension.getLen(name.len)]u8 = undefined;
             x.query_extension.serialize(&msg, name);
@@ -469,6 +499,9 @@ fn disableInputDevice(msg_sequencer: *MsgSequencer, state: *State) !void {
         },
         .list_devices => {
             std.log.info("disable input device already requested, getting input devices...", .{});
+        },
+        .intern_atom => {
+            std.log.info("disable input device already requested, interning atom...", .{});
         },
     }
 }
@@ -506,6 +539,12 @@ const State = struct {
         list_devices: struct {
             sequence: u16,
             ext_opcode: u8,
+        },
+        no_pointer_to_disable: void,
+        intern_atom: struct {
+            sequence: u16,
+            ext_opcode: u8,
+            pointer_id: u8,
         },
     } = .initial,
 
@@ -651,6 +690,8 @@ fn render(
             .extension_missing => " (XInputExtension is missing)",
             .get_version => " (getting extension version...)",
             .list_devices => " (listing input devices...)",
+            .no_pointer_to_disable => " (failed: no pointer to disable)",
+            .intern_atom => " (interning atom...)",
         };
         try renderString(
             msg_sequencer,
