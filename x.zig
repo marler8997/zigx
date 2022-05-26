@@ -328,14 +328,14 @@ pub fn connectUnix(display_host: ?[]const u8, display_num: u32) !os.socket_t {
 
     var addr = os.sockaddr.un { .family = os.AF.UNIX, .path = undefined };
 
-    _ = std.fmt.bufPrintZ(&addr.path, "{s}{}", .{path_prefix, display_num}) catch unreachable;
+    const path_len = (std.fmt.bufPrintZ(&addr.path, "{s}{}", .{path_prefix, display_num}) catch unreachable).len;
 
     const sock = try os.socket(os.AF.UNIX, os.SOCK.STREAM, 0);
     errdefer os.close(sock);
 
     // TODO: should we set any socket options?
-
-    os.connect(sock, @ptrCast(*os.sockaddr, &addr), @sizeOf(@TypeOf(addr))) catch |err| switch (err) {
+    const addr_len = @intCast(os.socklen_t, @offsetOf(os.sockaddr.un, "path") + path_len + 1);
+    os.connect(sock, @ptrCast(*os.sockaddr, &addr), addr_len) catch |err| switch (err) {
         // TODO: handle some of these errors and translate them so we can "fall back" to tcp
         //       for example, we might handle error.FileNotFound, but I would probably
         //       translate most errors to custom ones so we only fallback when we get
