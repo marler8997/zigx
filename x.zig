@@ -542,6 +542,7 @@ pub const Opcode = enum(u8) {
     create_gc = 55,
     change_gc = 56,
     clear_area = 61,
+    poly_line = 65,
     poly_fill_rectangle = 70,
     image_text8 = 76,
     query_extension = 98,
@@ -598,6 +599,7 @@ fn optionToU32(value: anytype) u32 {
     }
     if (T == u32) return value;
     if (T == ?u32) return value.?;
+    if (T == u16) return @intCast(u32, value);
     @compileError("TODO: implement optionToU32 for type: " ++ @typeName(T));
 }
 
@@ -983,7 +985,7 @@ pub const GcOptions = struct {
     // plane_mask all ones
     foreground: u32 = 0,
     background: u32 = 1,
-    // line_width 0
+    line_width: u16 = 0,
     // line_style solid
     // cap_style butt
     // join_style miter
@@ -1080,6 +1082,43 @@ pub const clear_area = struct {
         writeIntNative(i16, buf + 10, area.y);
         writeIntNative(u16, buf + 12, area.width);
         writeIntNative(u16, buf + 14, area.height);
+    }
+};
+
+pub const Point = struct {
+    x: i16, y: i16,
+};
+
+pub const poly_line = struct {
+    pub const non_list_len =
+              2 // opcode and coordinate-mode
+            + 2 // request length
+            + 4 // drawable id
+            + 4 // gc id
+            ;
+    pub fn getLen(point_count: u16) u16 {
+        return non_list_len + (point_count * 4);
+    }
+    pub const Args = struct {
+        coordinate_mode: enum(u8) { origin = 0, previous = 1 },
+        drawable_id: u32,
+        gc_id: u32,
+    };
+    pub fn serialize(buf: [*]u8, args: Args, points: []const Point) void {
+        buf[0] = @enumToInt(Opcode.poly_line);
+        buf[1] = @enumToInt(args.coordinate_mode);
+        // buf[2-3] is the len, set at the end of the function
+        writeIntNative(u32, buf + 4, args.drawable_id);
+        writeIntNative(u32, buf + 8, args.gc_id);
+        var request_len: u16 = non_list_len;
+        for (points) |point| {
+            writeIntNative(i16, buf + request_len + 0, point.x);
+            writeIntNative(i16, buf + request_len + 2, point.y);
+            request_len += 4;
+        }
+        std.debug.assert((request_len & 0x3) == 0);
+        writeIntNative(u16, buf + 2, request_len >> 2);
+        std.debug.assert(getLen(@intCast(u16, points.len)) == request_len);
     }
 };
 
