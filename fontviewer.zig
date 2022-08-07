@@ -404,7 +404,7 @@ fn renderNoFontInfo(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]con
 
 fn renderText(sock: std.os.socket_t, drawable_id: u32, gc_id: u32, x_coord: i16, y: i16, comptime fmt: []const u8, args: anytype) !void {
     const str_len_u64 = std.fmt.count(fmt, args);
-    const str_len = std.math.cast(u8, str_len_u64) catch
+    const str_len = std.math.cast(u8, str_len_u64) orelse
         std.debug.panic("render large string {} not implemented", .{str_len_u64});
     
     const msg_len = x.image_text8.getLen(str_len);
