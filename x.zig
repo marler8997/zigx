@@ -498,6 +498,7 @@ pub const Opcode = enum(u8) {
     clear_area = 61,
     poly_line = 65,
     poly_fill_rectangle = 70,
+    put_image = 72,
     image_text8 = 76,
     query_extension = 98,
     _,
@@ -1114,6 +1115,59 @@ pub const poly_fill_rectangle = struct {
     }
 };
 
+pub const put_image = struct {
+    pub const non_list_len =
+          2 // opcode and format
+        + 2 // request length
+        + 4 // drawable id
+        + 4 // gc id
+        + 4 // width/height
+        + 4 // x/y
+        + 4 // left-pad, depth and 2 unused bytes
+        ;
+    pub fn getLen(data_len: u18) u18 {
+        return @intCast(u18, non_list_len + std.mem.alignForward(data_len, 4));
+    }
+    pub const Args = struct {
+        format: enum(u8) {
+            bitmap = 0,
+            xy_pixmap = 1,
+            z_pixmap = 2,
+        },
+        drawable_id: u32,
+        gc_id: u32,
+        width: u16,
+        height: u16,
+        x: i16,
+        y: i16,
+        left_pad: u8,
+        depth: u8,
+    };
+    pub const data_offset = non_list_len;
+    pub fn serialize(buf: [*]u8, args: Args, data: Slice(u18, [*]const u8)) void {
+        serializeNoDataCopy(buf, args, data.len);
+        @memcpy(buf + data_offset, data.ptr, data.len);
+    }
+    pub fn serializeNoDataCopy(buf: [*]u8, args: Args, data_len: u18) void {
+        buf[0] = @enumToInt(Opcode.put_image);
+        buf[1] = @enumToInt(args.format);
+        const request_len = getLen(data_len);
+        std.debug.assert((request_len & 0x3) == 0);
+        writeIntNative(u16, buf + 2, @intCast(u16, request_len >> 2));
+        writeIntNative(u32, buf + 4, args.drawable_id);
+        writeIntNative(u32, buf + 8, args.gc_id);
+        writeIntNative(u16, buf + 12, args.width);
+        writeIntNative(u16, buf + 14, args.height);
+        writeIntNative(i16, buf + 16, args.x);
+        writeIntNative(i16, buf + 18, args.y);
+        buf[20] = args.left_pad;
+        buf[21] = args.depth;
+        buf[22] = 0; // unused
+        buf[23] = 0; // unused
+        comptime { std.debug.assert(24 == data_offset); }
+    }
+};
+
 pub const image_text8 = struct {
     pub const non_list_len =
               2 // opcode and string_length
@@ -1133,7 +1187,7 @@ pub const image_text8 = struct {
         y: i16,
         text: Slice(u8, [*]const u8),
     };
-    pub const text_offset = 16;
+    pub const text_offset = non_list_len;
     pub fn serialize(buf: [*]u8, args: Args) void {
         serializeNoTextCopy(buf, args);
         @memcpy(buf + text_offset, args.text.ptr, args.text.len);
