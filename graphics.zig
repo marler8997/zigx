@@ -102,6 +102,7 @@ pub fn main() !u8 {
         }, .{
             .background = screen.black_pixel,
             .foreground = 0xffaadd,
+            //.line_width = 10,
         });
         try conn.send(msg_buf[0..len]);
     }
@@ -223,36 +224,53 @@ const FontDims = struct {
 };
 
 fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32, font_dims: FontDims) !void {
-    {
-        var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
-        x.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = drawable_id,
-            .gc_id = bg_gc_id,
-        }, &[_]x.Rectangle {
-            .{ .x = 100, .y = 100, .width = 200, .height = 200 },
-        });
-        try common.send(sock, &msg);
-    }
+//    {
+//        var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
+//        x.poly_fill_rectangle.serialize(&msg, .{
+//            .drawable_id = drawable_id,
+//            .gc_id = bg_gc_id,
+//        }, &[_]x.Rectangle {
+//            .{ .x = 100, .y = 100, .width = 200, .height = 200 },
+//        });
+//        try common.send(sock, &msg);
+    //    }
+    _ = bg_gc_id;
+    _ = fg_gc_id;
     {
         var msg: [x.clear_area.len]u8 = undefined;
         x.clear_area.serialize(&msg, false, drawable_id, .{
-            .x = 150, .y = 150, .width = 100, .height = 100,
+            .x = 0, .y = 0, .width = 0, .height = 0,
         });
         try common.send(sock, &msg);
     }
+    _ = font_dims;
     {
-        const text_literal: []const u8 = "Hello X!";
-        const text = x.Slice(u8, [*]const u8) { .ptr = text_literal.ptr, .len = text_literal.len };
-        var msg: [x.image_text8.getLen(text.len)]u8 = undefined;
-
-        const text_width = font_dims.width * text_literal.len;
-
-        x.image_text8.serialize(&msg, text, .{
+        var msg: [x.poly_line.getLen(3)]u8 = undefined;
+        x.poly_line.serialize(&msg, .{
+            .coordinate_mode = .origin,
             .drawable_id = drawable_id,
             .gc_id = fg_gc_id,
-            .x = @divTrunc((window_width - @intCast(i16, text_width)),  2) + font_dims.font_left,
-            .y = @divTrunc((window_height - @intCast(i16, font_dims.height)), 2) + font_dims.font_ascent,
+        }, &[_]x.Point {
+            .{ .x = 10, .y = 10 },
+            .{ .x = 110, .y = 10 },
+            .{ .x = 55, .y = 55 },
         });
         try common.send(sock, &msg);
     }
+//    {
+//        const text_literal: []const u8 = "Hello X!";
+//        const text = x.Slice(u8, [*]const u8) { .ptr = text_literal.ptr, .len = text_literal.len };
+//        var msg: [x.image_text8.getLen(text.len)]u8 = undefined;
+//
+//        const text_width = font_dims.width * text_literal.len;
+//
+//        x.image_text8.serialize(&msg, .{
+//            .drawable_id = drawable_id,
+//            .gc_id = fg_gc_id,
+//            .x = @divTrunc((window_width - @intCast(i16, text_width)),  2) + font_dims.font_left,
+//            .y = @divTrunc((window_height - @intCast(i16, font_dims.height)), 2) + font_dims.font_ascent,
+//            .text = text,
+//        });
+//        try common.send(sock, &msg);
+//    }
 }

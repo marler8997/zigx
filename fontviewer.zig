@@ -410,12 +410,10 @@ fn renderText(sock: std.os.socket_t, drawable_id: u32, gc_id: u32, x_coord: i16,
     const msg_len = x.image_text8.getLen(str_len);
     const msg = try allocator.alloc(u8, msg_len);
     defer allocator.free(msg);
-    defer allocator.free(msg);
-    x.image_text8.serializeNoTextCopy(msg.ptr, .{
+    x.image_text8.serializeNoTextCopy(msg.ptr, str_len, .{
         .drawable_id = drawable_id,
         .gc_id = gc_id,
         .x = x_coord, .y = y,
-        .text = .{ .ptr = undefined, .len = str_len },
     });
     const final_len = (std.fmt.bufPrint((msg.ptr + x.image_text8.text_offset)[0 .. str_len], fmt, args) catch unreachable).len;
     std.debug.assert(final_len == str_len);

@@ -1144,11 +1144,11 @@ pub const put_image = struct {
         depth: u8,
     };
     pub const data_offset = non_list_len;
-    pub fn serialize(buf: [*]u8, args: Args, data: Slice(u18, [*]const u8)) void {
-        serializeNoDataCopy(buf, args, data.len);
+    pub fn serialize(buf: [*]u8, data: Slice(u18, [*]const u8), args: Args) void {
+        serializeNoDataCopy(buf, data.len, args);
         @memcpy(buf + data_offset, data.ptr, data.len);
     }
-    pub fn serializeNoDataCopy(buf: [*]u8, args: Args, data_len: u18) void {
+    pub fn serializeNoDataCopy(buf: [*]u8, data_len: u18, args: Args) void {
         buf[0] = @enumToInt(Opcode.put_image);
         buf[1] = @enumToInt(args.format);
         const request_len = getLen(data_len);
@@ -1185,17 +1185,16 @@ pub const image_text8 = struct {
         gc_id: u32,
         x: i16,
         y: i16,
-        text: Slice(u8, [*]const u8),
     };
     pub const text_offset = non_list_len;
-    pub fn serialize(buf: [*]u8, args: Args) void {
-        serializeNoTextCopy(buf, args);
-        @memcpy(buf + text_offset, args.text.ptr, args.text.len);
+    pub fn serialize(buf: [*]u8, text: Slice(u8, [*]const u8), args: Args) void {
+        serializeNoTextCopy(buf, text.len, args);
+        @memcpy(buf + text_offset, text.ptr, text.len);
     }
-    pub fn serializeNoTextCopy(buf: [*]u8, args: Args) void {
+    pub fn serializeNoTextCopy(buf: [*]u8, text_len: u8, args: Args) void {
         buf[0] = @enumToInt(Opcode.image_text8);
-        buf[1] = args.text.len;
-        const request_len = getLen(args.text.len);
+        buf[1] = text_len;
+        const request_len = getLen(text_len);
         std.debug.assert(request_len & 0x3 == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
         writeIntNative(u32, buf + 4, args.drawable_id);
@@ -1218,16 +1217,16 @@ pub const query_extension = struct {
     pub const max_len = non_list_len + 0xffff;
     pub const name_offset = 8;
     pub fn serialize(buf: [*]u8, name: Slice(u16, [*]const u8)) void {
-        serializeNoNameCopy(buf, name);
+        serializeNoNameCopy(buf, name.len);
         @memcpy(buf + name_offset, name.ptr, name.len);
     }
-    pub fn serializeNoNameCopy(buf: [*]u8, name: Slice(u16, [*]const u8)) void {
+    pub fn serializeNoNameCopy(buf: [*]u8, name_len: u16) void {
         buf[0] = @enumToInt(Opcode.query_extension);
         buf[1] = 0; // unused
-        const request_len = getLen(name.len);
+        const request_len = getLen(name_len);
         std.debug.assert(request_len & 0x3 == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
-        writeIntNative(u32, buf + 4, name.len);
+        writeIntNative(u32, buf + 4, name_len);
         buf[6] = 0; // unused
         buf[7] = 0; // unused
     }
