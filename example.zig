@@ -177,10 +177,10 @@ pub fn main() !u8 {
                     return error.TodoHandleReplyMessage;
                 },
                 .key_press => |msg| {
-                    std.log.info("key_press: {}", .{msg.detail});
+                    std.log.info("key_press: keycode={}", .{msg.keycode});
                 },
                 .key_release => |msg| {
-                    std.log.info("key_release: {}", .{msg.detail});
+                    std.log.info("key_release: keycode={}", .{msg.keycode});
                 },
                 .button_press => |msg| {
                     std.log.info("button_press: {}", .{msg});

@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+#
+#
+import os
+import sys
+import re
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+spec_file = os.path.join(script_dir, "X11CharacterSets.txt")
+
+if not os.path.exists(spec_file):
+    sys.exit("""
+This script requires the X11CharacterSets.txt file, you can download it with:
+
+curl https://gist.githubusercontent.com/marler8997/4cba4c9eed3c84edeff081d6f4fb2d10/raw/071edd28f3c73d883de6b0c7ddda4ed79e4d90e7/X11CharacterSets.txt > {}
+""".format(spec_file))
+
+with open(spec_file, "r") as f:
+    content = f.read()
+
+class Keysym:
+    def __init__(self, code, desc, name):
+        self.code = code
+        self.desc = desc
+        self.name = name
+        if name.startswith("@\""):
+            self.combined_name = name[2:len(name)-1]
+        else:
+            self.combined_name = name
+    
+class Charset:
+    def __init__(self, name, code, spec_name, combined_prefix):
+        self.name = name
+        self.type_name = name[0].upper() + name[1:]
+        self.code = code
+        self.spec_name = spec_name
+        self.combined_prefix = combined_prefix
+        self.keysyms = []
+
+thai_charset = Charset("thai", 13, "Thai", "thai")
+charsets = (
+    Charset("latin1", 0, "Latin-1", "latin"),
+    Charset("latin2", 1, "Latin-2", "latin"),
+    Charset("latin3", 2, "Latin-3", "latin"),
+    Charset("latin4", 3, "Latin-4", "latin"),
+    Charset("kana", 4, "Kana", "kana"),
+    Charset("arabic", 5, "Arabic", "arabic"),
+    Charset("cyrillic", 6, "Cyrillic", "cyrillic"),
+    Charset("greek", 7, "Greek", "greek"),
+    Charset("technical", 8, "Technical", "tech"),
+    Charset("special", 9, "Special", "special"),
+    Charset("publish", 10, "Publish", "publish"),
+    Charset("apl", 11, "APL", "apl"),
+    Charset("hebrew", 12, "Hebrew", "heb"),
+    thai_charset,
+    Charset("korean", 14, "Korean", "korean"),
+    Charset("latin9", 19, "Latin-9", "latin"),
+    Charset("currency", 32, "Currency", "currency"),
+    Charset("_3270", 253, "3270", "_3170"),
+    Charset("keyboard", 255, "Keyboard", "kbd"),
+)
+    
+def findCharset(spec_name):
+    for charset in charsets:
+        if charset.spec_name == spec_name:
+            return charset
+    return None
+
+def stripLeadingZeros(s):
+    result = s.lstrip("0")
+    if len(result) == 0:
+        return "0"
+    return result
+
+def verifyDesc(desc):
+    if -1 != desc.find("  "):
+        return "contains consecutive spaces"
+    match = re.search("^[-+/, ()‘’a-zA-Z0-9]+", desc)
+    match_string = match[0] if match else ""
+    if len(match_string) != len(desc):
+        return "contains invalid characters, regex only matched {} chars out of {} '{}'".format(
+            len(match_string), len(desc), match_string)
+
+name_transforms = {
+    "union": "@\"union\"",
+    "break": "@\"break\"",
+    "up_move_up_up_arrow": "up",
+    "down_move_down_down_arrow": "down",
+    "left_move_left_left_arrow": "left",
+    "right_move_right_right_arrow": "right",
+    "prior_previous_page_up": "page_up",
+    "next_page_down": "page_down",
+}
+def descToName(desc):
+    name = (
+        desc
+        .replace("(", "")
+        .replace(")", "")
+        .replace("‘", "")
+        .replace("’", "")
+        .replace("-", "_")
+        .replace("+", "_")
+        .replace("/", "_")
+        .replace(", ", "_")
+        .replace(" ", "_")
+        .lower()
+        .replace("parenthesis", "paren")
+        .replace("full_stop", "period")
+        .replace("reverse_solidus", "backslash")
+        .replace("solidus", "slash")
+    )
+
+    CAPITAL = "capital_letter_"
+    cap_index = name.find(CAPITAL)
+    if cap_index != -1:
+        letter_index = cap_index + len(CAPITAL)
+        name = name[:cap_index] + name[letter_index].upper() + name[letter_index + 1:]
+    SMALL = "small_letter_"
+    small_index = name.find(SMALL)
+    if small_index != -1:
+        name = name[:small_index] + name[small_index + len(SMALL):]
+    LATIN = "latin_"
+    if name.startswith(LATIN):
+        name = name[len(LATIN):]
+    if re.search("^[0-9]", name):
+        return "_" + name
+
+    return name_transforms.get(name, name)
+    
+lineno = 0
+for line in content.splitlines():
+    lineno += 1
+    match = re.search("([0-9]+) ([0-9]+) ([0-9]+/[0-9]+) (.*) ([-a-zA-Z0-9]+)", line)
+    if not match:
+        sys.exit("line {} did not match the regex: {}".format(lineno, line))
+    charset_code = int(stripLeadingZeros(match[1]))
+    code = int(stripLeadingZeros(match[2]))
+    desc = match[4]
+    charset_spec_name = match[5]
+    charset = findCharset(charset_spec_name)
+    if not charset:
+        sys.exit("line {} ends with unknown charset '{}'".format(lineno, charset_spec_name))
+    if charset_code != charset.code:
+        sys.exit("line {} charset code {} does not match expected {} for '{}'".format(lineno, charset_code, charset.code, charset_spec_name))
+    desc_error = verifyDesc(desc)
+    if desc_error:
+        sys.exit("line {} name/description '{}' is invalid: {}".format(lineno, desc, desc_error))
+    name = descToName(desc)
+    if -1 != name.find("__"):
+        sys.exit("line {}: description transformed from '{}' to '{}' contains consecutive underscores".format(
+            lineno, desc, name))
+    if name.startswith(charset.combined_prefix + "_"):
+        name = name[len(charset.combined_prefix) + 1:]
+
+    # take care of duplicate
+    if charset == thai_charset and code == 222:
+        assert(name == "maihanakat")
+        name = "maihanakat2"
+
+    charset.keysyms.append(Keysym(code, desc, name))
+
+repo_dir = os.path.dirname(script_dir)
+zig_charset_dir = os.path.join(repo_dir, "charset")
+
+with open(os.path.join(repo_dir, "charset.zig"), "w") as zig_charset_file:
+    for charset in charsets:
+        zig_charset_file.write("pub const {0} = @import(\"charset/{1}.zig\").{0};\n".format(charset.type_name, charset.name))
+        zig_file = os.path.join(zig_charset_dir, charset.name + ".zig")
+        print("generating {}...".format(zig_file))
+        with open(zig_file, "w") as out_file:
+            out_file.write("const Combined = @import(\"combined.zig\").Combined;\n")
+            out_file.write("pub const {} = enum(u8) {{\n".format(charset.type_name))
+            for keysym in charset.keysyms:
+                out_file.write("    {} = {},\n".format(keysym.name, keysym.code))
+            out_file.write(f"""
+    pub fn toCombined(self: {charset.type_name}) Combined {{
+        return @intToEnum(Combined, (@as(u16, {charset.code}) << 8) | @enumToInt(self));
+    }}
+    pub fn next(self: {charset.type_name}) {charset.type_name} {{
+        return @intToEnum({charset.type_name}, @enumToInt(self) + 1);
+    }}
+""")
+            out_file.write("};\n")
+    zig_charset_file.write("pub const Combined = @import(\"charset/combined.zig\").Combined;\n");
+    zig_charset_file.write("\n")
+    zig_charset_file.write("pub const Charset = enum(u8) {\n")
+    for charset in charsets:
+        zig_charset_file.write("    {} = {},\n".format(charset.name, charset.code))
+    zig_charset_file.write("    _,\n")
+#    zig_charset_file.write("""
+#    pub fn name(self: Charset) ?[]const u8 {
+#        return if (@import("../stdext.zig").enums.hasName(self)) @tagName(self) else null;
+#    }
+#""")
+    zig_charset_file.write("};\n")
+    
+with open(os.path.join(zig_charset_dir, "combined.zig"), "w") as out_file:
+    out_file.write("const Charset = @import(\"../charset.zig\").Charset;\n")
+    out_file.write("pub const Combined = enum(u16) {\n")
+    for charset in charsets:
+        for keysym in charset.keysyms:
+            out_file.write("    {}_{} = (@intCast(u16, @enumToInt(Charset.{})) << 8) | {},\n".format(
+                charset.combined_prefix, keysym.combined_name, charset.name, keysym.code))
+    out_file.write("    _,\n")
+    out_file.write("};\n")

@@ -20,14 +20,39 @@ const Ids = struct {
     pub fn gcText(self: Ids) u32 { return self.base + 3; }
 };
 
-const keycode_up_moba = 98;
-const keycode_down_moba = 104;
-const keycode_up_linux = 111;
-const keycode_down_linux = 116;
-
 pub fn main() !u8 {
     const conn = try common.connect(allocator);
     defer std.os.shutdown(conn.sock, .both) catch {};
+
+    const Key = enum {
+        left, right,
+    };
+    var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
+    {
+        const keymap = try x.keymap.request(allocator, conn.sock, conn.setup.fixed().*);
+        defer keymap.deinit(allocator);
+        std.log.info("Keymap: syms_per_code={} total_syms={}", .{keymap.syms_per_code, keymap.syms.len});
+        {
+            var i: usize = 0;
+            var sym_offset: usize = 0;
+            while (i < keymap.keycode_count) : (i += 1) {
+                const keycode = @intCast(u8, conn.setup.fixed().min_keycode + i);
+                var j: usize = 0;
+                while (j < keymap.syms_per_code) : (j += 1) {
+                    const sym = keymap.syms[sym_offset];
+                    if (sym == @enumToInt(x.charset.Combined.kbd_left)) {
+                        std.log.info("keycode {} is left", .{keycode});
+                        try keycode_map.put(allocator, keycode, .left);
+                    } else if (sym == @enumToInt(x.charset.Combined.kbd_right)) {
+                        std.log.info("keycode {} is right", .{keycode});
+                        try keycode_map.put(allocator, keycode, .right);
+                    }
+                    sym_offset += 1;
+                }
+            }
+        }
+    }
+
 
     {
         const pattern_string = "*";
@@ -171,14 +196,14 @@ pub fn main() !u8 {
                     try state.onReply(msg, conn.sock, ids, fonts);
                 },
                 .key_press => |msg| {
-                    //std.log.info("key_press: {}", .{msg.detail});
-                    if (msg.detail == keycode_down_linux
-                            or msg.detail == keycode_up_linux
-                            or msg.detail == keycode_up_moba
-                            or msg.detail == keycode_up_moba
-                        ) {
-                        const diff: usize = if (msg.detail == keycode_down_linux or msg.detail == keycode_down_moba) 1 else fonts.len - 1;
-                        try state.updateDesiredFont(conn.sock, ids, fonts, (state.desired_font_index + diff) % fonts.len);
+                    std.log.info("key_press: {}", .{msg.keycode});
+                    const diff: isize = if (keycode_map.get(msg.keycode)) |key| switch (key) {
+                        .left => @as(isize, -1),
+                        .right => @as(isize, 1),
+                    } else 0;
+                    if (diff != 0) {
+                        const new_font_index = @mod(@intCast(isize, state.desired_font_index) + diff, @intCast(isize, fonts.len));
+                        try state.updateDesiredFont(conn.sock, ids, fonts, @intCast(usize, new_font_index));
                     }
                 },
                 .key_release => {}, // NOTE: still get key_release events even though we didn't ask for them

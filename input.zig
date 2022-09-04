@@ -10,13 +10,9 @@ const allocator = arena.allocator();
 const window_width = 400;
 const window_height = 400;
 
-const Key = enum(u8) {
-    esc = 9,
-    w = 25,
-    i = 31,
-    d = 40,
-    g = 42,
-    c = 54,
+const Key = enum {
+    escape,
+    w, i, d, g, c,
 };
 
 const bg_color = 0x231a20;
@@ -25,6 +21,38 @@ const fg_color = 0xadccfa;
 pub fn main() !u8 {
     const conn = try common.connect(allocator);
     defer std.os.shutdown(conn.sock, .both) catch {};
+
+    var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
+    {
+        var sym_key_map = std.AutoHashMapUnmanaged(u32, Key){};
+        defer sym_key_map.deinit(allocator);
+        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.kbd_escape), Key.escape);
+        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.latin_w), Key.w);
+        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.latin_i), Key.i);
+        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.latin_d), Key.d);
+        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.latin_g), Key.g);
+        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.latin_c), Key.c);
+
+        const keymap = try x.keymap.request(allocator, conn.sock, conn.setup.fixed().*);
+        defer keymap.deinit(allocator);
+        std.log.info("Keymap: syms_per_code={} total_syms={}", .{keymap.syms_per_code, keymap.syms.len});
+        {
+            var i: usize = 0;
+            var sym_offset: usize = 0;
+            while (i < keymap.keycode_count) : (i += 1) {
+                const keycode = @intCast(u8, conn.setup.fixed().min_keycode + i);
+                var j: usize = 0;
+                while (j < keymap.syms_per_code) : (j += 1) {
+                    const sym = keymap.syms[sym_offset];
+                    if (sym_key_map.get(sym)) |key| {
+                        try keycode_map.put(allocator, keycode, key);
+                    }
+                    sym_offset += 1;
+                }
+            }
+            std.debug.assert(sym_offset == keymap.syms.len);
+        }
+    }
 
     const screen = blk: {
         const fixed = conn.setup.fixed();
@@ -205,32 +233,38 @@ pub fn main() !u8 {
                     try render(&msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state);
                 },
                 .key_press => |msg| {
-                    std.log.info("key_press: {}", .{msg.detail});
                     var do_render = true;
-                    if (msg.detail == @enumToInt(Key.g)) {
-                        //try state.toggleGrab(conn.sock, screen.root);
-                        try state.toggleGrab(&msg_sequencer, window_id);
-                    } else if (msg.detail == @enumToInt(Key.w)) {
-                        try warpPointer(&msg_sequencer);
-                    } else if (msg.detail == @enumToInt(Key.c)) {
-                        state.confine_grab = !state.confine_grab;
-                    } else if (msg.detail == @enumToInt(Key.i)) {
-                        try createWindow(&msg_sequencer, screen.root, child_window_id);
-                    } else if (msg.detail == @enumToInt(Key.d)) {
-                        try disableInputDevice(&msg_sequencer, &state);
-                    } else if (msg.detail == @enumToInt(Key.esc)) {
-                        std.log.info("ESC pressed, exiting loop...", .{});
-                        return 0;
+                    if (keycode_map.get(msg.keycode)) |key| switch (key) {
+                        .g => {
+                            //try state.toggleGrab(conn.sock, screen.root);
+                            try state.toggleGrab(&msg_sequencer, window_id);
+                        },
+                        .w => {
+                            try warpPointer(&msg_sequencer);
+                        },
+                        .c => {
+                            state.confine_grab = !state.confine_grab;
+                        },
+                        .i => {
+                            try createWindow(&msg_sequencer, screen.root, child_window_id);
+                        },
+                        .d => {
+                            try disableInputDevice(&msg_sequencer, &state);
+                        },
+                        .escape => {
+                            std.log.info("ESC pressed, exiting loop...", .{});
+                            return 0;
+                        },
                     } else {
+                        std.log.info("key_press: {}", .{msg.keycode});
                         do_render = false;
                     }
-
                     if (do_render) {
                         try render(&msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state);
                     }
                 },
                 .key_release => |msg| {
-                    std.log.info("key_release: {}", .{msg.detail});
+                    std.log.info("key_release: {}", .{msg.keycode});
                 },
                 .button_press => |msg| {
                     std.log.info("button_press: {}", .{msg});

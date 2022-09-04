@@ -26,6 +26,7 @@
 //
 
 const std = @import("std");
+const stdext = @import("stdext.zig");
 const testing = std.testing;
 const builtin = @import("builtin");
 const os = std.os;
@@ -33,9 +34,12 @@ const os = std.os;
 pub const inputext = @import("xinputext.zig");
 
 // Expose some helpful stuff
+pub const charset = @import("charset.zig");
+pub const Charset = charset.Charset;
 pub const Memfd = @import("Memfd.zig");
 pub const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 pub const Slice = @import("x/slice.zig").Slice;
+pub const keymap = @import("keymap.zig");
 
 pub const TcpBasePort = 6000;
 
@@ -501,6 +505,7 @@ pub const Opcode = enum(u8) {
     put_image = 72,
     image_text8 = 76,
     query_extension = 98,
+    get_keyboard_mapping = 101,
     _,
 };
 
@@ -1232,6 +1237,18 @@ pub const query_extension = struct {
     }
 };
 
+pub const get_keyboard_mapping = struct {
+    pub const len = 8;
+    pub fn serialize(buf: [*]u8, first_keycode: u8, count: u8) void {
+        buf[0] = @enumToInt(Opcode.get_keyboard_mapping);
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
+        buf[4] = first_keycode;
+        buf[5] = count;
+        buf[6] = 0; // unused
+        buf[7] = 0; // unused
+    }
+};
 
 pub fn writeIntNative(comptime T: type, buf: [*]u8, value: T) void {
     @ptrCast(*align(1) T, buf).* = value;
@@ -1468,6 +1485,7 @@ pub const ServerMsg = extern union {
     query_text_extents: QueryTextExtents,
     list_fonts: ListFonts,
     get_font_path: GetFontPath,
+    get_keyboard_mapping: GetKeyboardMapping,
 
     // NOTE: can't used packed because of compiler bugs
     pub const Generic = extern struct {
@@ -1596,6 +1614,25 @@ pub const ServerMsg = extern union {
         unused: [4]u8,
     };
 
+    pub const GetKeyboardMapping = extern struct {
+        kind: ReplyKind,
+        syms_per_code: u8,
+        sequence: u16,
+        reply_word_size: u32,
+        unused: [24]u8,
+        sym_list: [0]u32,
+
+        const sym_list_offset = 32;
+        // this isn't working because of a compiler bug
+        //comptime { std.debug.assert(@offsetOf(GetKeyboardMapping, "sym_list") == sym_list_offset); }
+        comptime { std.debug.assert(@sizeOf(GetKeyboardMapping) == sym_list_offset); }
+
+        pub fn syms(self: *const GetKeyboardMapping) []u32 {
+            const ptr = @intToPtr([*]u32, @ptrToInt(self) + sym_list_offset);
+            return ptr[0 .. self.reply_word_size];
+        }
+    };
+
     pub const EventKind = enum(u8) {
         key_press = 2,
         _,
@@ -1611,8 +1648,8 @@ pub const Event = extern union {
     button_release: ButtonRelease,
     exposure: Expose,
 
-    pub const KeyPress = KeyOrButtonOrMotion;
-    pub const KeyRelease = KeyOrButtonOrMotion;
+    pub const KeyPress = Key;
+    pub const KeyRelease = Key;
     pub const ButtonPress = KeyOrButtonOrMotion;
     pub const ButtonRelease = KeyOrButtonOrMotion;
     pub const EnterNotify = Generic; // TODO
@@ -1628,6 +1665,24 @@ pub const Event = extern union {
         data: [28]u8,
     };
     comptime { std.debug.assert(@sizeOf(Generic) == 32); }
+
+    pub const Key = extern struct {
+        code: u8,
+        keycode: u8,
+        sequence: u16,
+        time: u32,
+        root: u32,
+        event: u32,
+        child: u32,
+        root_x: i16,
+        root_y: i16,
+        event_x: i16,
+        event_y: i16,
+        state: u16,
+        same_screen: u8,
+        unused: u8,
+    };
+    comptime { std.debug.assert(@sizeOf(Key) == 32); }
 
     // NOTE: can't used packed because of compiler bugs
     pub const KeyOrButtonOrMotion = extern struct {
@@ -1942,4 +1997,8 @@ pub fn readOneMsgFinish(reader: anytype, buf: []align(4) u8) !void {
     //
     std.debug.assert(buf[0] == @enumToInt(ServerMsgKind.reply));
     try readFull(reader, buf[32..]);
+}
+
+pub fn charsetName(set: Charset) ?[]const u8 {
+    return if (stdext.enums.hasName(set)) @tagName(set) else null;
 }
