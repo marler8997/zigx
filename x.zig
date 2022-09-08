@@ -649,6 +649,7 @@ pub const create_window = struct {
     pub const Args = struct {
         window_id: u32,
         parent_window_id: u32,
+        depth: u8,
         x: u16,
         y: u16,
         width: u16,
@@ -682,7 +683,7 @@ pub const create_window = struct {
 
     pub fn serialize(buf: [*]u8, args: Args, options: Options) u16 {
         buf[0] = @enumToInt(Opcode.create_window);
-        buf[1] = 0; // depth? what is this?
+        buf[1] = args.depth;
 
         // buf[2-3] is the len, set at the end of the function
 

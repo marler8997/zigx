@@ -42,6 +42,7 @@ pub fn main() !u8 {
         const len = x.create_window.serialize(&msg_buf, .{
             .window_id = window_id,
             .parent_window_id = screen.root,
+            .depth = 0, // we don't care, just inherit from the parent
             .x = 0, .y = 0,
             .width = window_width, .height = window_height,
             .border_width = 0, // TODO: what is this?

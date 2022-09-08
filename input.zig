@@ -83,6 +83,7 @@ pub fn main() !u8 {
         const len = x.create_window.serialize(&msg_buf, .{
             .window_id = window_id,
             .parent_window_id = screen.root,
+            .depth = 0, // dont care, inherit from parent
             .x = 0, .y = 0,
             .width = window_width, .height = window_height,
             .border_width = 0, // TODO: what is this?
@@ -498,6 +499,7 @@ fn createWindow(msg_sequencer: *MsgSequencer, parent_window_id: u32, window_id: 
         const len = x.create_window.serialize(&msg_buf, .{
             .window_id = window_id,
             .parent_window_id = parent_window_id,
+            .depth = 0, // dont care, inherit from parent
             .x = 0, .y = 0,
             .width = 500, .height = 500,
             .border_width = 0, // TODO: what is this?
