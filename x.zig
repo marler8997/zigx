@@ -32,6 +32,7 @@ const builtin = @import("builtin");
 const os = std.os;
 
 pub const inputext = @import("xinputext.zig");
+pub const dbe = @import("xdbe.zig");
 
 // Expose some helpful stuff
 pub const charset = @import("charset.zig");
@@ -1486,6 +1487,7 @@ pub const ServerMsg = extern union {
     list_fonts: ListFonts,
     get_font_path: GetFontPath,
     get_keyboard_mapping: GetKeyboardMapping,
+    query_extension: QueryExtension,
 
     // NOTE: can't used packed because of compiler bugs
     pub const Generic = extern struct {
@@ -1631,6 +1633,19 @@ pub const ServerMsg = extern union {
             const ptr = @intToPtr([*]u32, @ptrToInt(self) + sym_list_offset);
             return ptr[0 .. self.reply_word_size];
         }
+    };
+
+    comptime { std.debug.assert(@sizeOf(QueryExtension) == 32); }
+    pub const QueryExtension = extern struct {
+        kind: ReplyKind,
+        unused: u8,
+        sequence: u16,
+        reply_word_size: u32, // should be 0
+        present: u8,
+        major_opcode: u8,
+        first_event: u8,
+        first_error: u8,
+        unused_pad: [20]u8,
     };
 
     pub const EventKind = enum(u8) {

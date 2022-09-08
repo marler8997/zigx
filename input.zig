@@ -341,21 +341,18 @@ fn handleReply(
     switch (state.disable_input_device) {
         .initial, .extension_missing, .no_pointer_to_disable, .disabled => {},
         .query_extension => |sequence| if (msg.sequence == sequence) {
-            const present = msg.reserve_min[0];
-            const ext_opcode = msg.reserve_min[1];
-            //const first_event = msg.reserve_min[2];
-            //const first_error = msg.reserve_min[3];
-            if (present == 0) {
+            const msg_ext = @ptrCast(*const x.ServerMsg.QueryExtension, msg);
+            if (msg_ext.present == 0) {
                 state.disable_input_device = .extension_missing;
             } else {
-                std.debug.assert(present == 1);
+                std.debug.assert(msg_ext.present == 1);
                 const name = comptime x.Slice(u16, [*]const u8).initComptime("XInputExtension");
                 var get_version_msg: [x.inputext.get_extension_version.getLen(name.len)]u8 = undefined;
-                x.inputext.get_extension_version.serialize(&get_version_msg, ext_opcode, name);
+                x.inputext.get_extension_version.serialize(&get_version_msg, msg_ext.major_opcode, name);
                 try msg_sequencer.send(&get_version_msg, 1);
                 state.disable_input_device = .{ .get_version = .{
                     .sequence = msg_sequencer.last_sequence,
-                    .ext_opcode = ext_opcode,
+                    .ext_opcode = msg_ext.major_opcode,
                 }};
             }
             return true; // handled
