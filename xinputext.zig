@@ -182,7 +182,7 @@ pub const InputClassId = enum(u8) {
     valuator = @enumToInt(InputClassIdValuatorKind.id),
 };
 
-pub fn Length(comptime T: type, value: T) type {
+pub fn Length(comptime T: type, comptime value: T) type {
     return enum(T) { value = value };
 }
 

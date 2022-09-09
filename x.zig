@@ -355,7 +355,7 @@ pub fn connectUnix(display_host: ?[]const u8, display_num: u32) !os.socket_t {
 }
 
 
-//pub const ClientHello = packed struct {
+//pub const ClientHello = extern struct {
 //    byte_order : u8 = if (builtin.endian == .Big) BigEndian else LittleEndian,
 //    proto_major_version : u16,
 //    proto_minor_version : u16,
@@ -1478,7 +1478,6 @@ pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
 }
 
 
-// NOTE: can't used packed because of compiler bugs
 pub const ServerMsg = extern union {
     generic: Generic,
     err: Error,
@@ -1490,7 +1489,6 @@ pub const ServerMsg = extern union {
     get_keyboard_mapping: GetKeyboardMapping,
     query_extension: QueryExtension,
 
-    // NOTE: can't used packed because of compiler bugs
     pub const Generic = extern struct {
         kind: ServerMsgKind,
         reserve_min: [31]u8,
@@ -1505,7 +1503,6 @@ pub const ServerMsg = extern union {
     };
     comptime { std.debug.assert(@sizeOf(Reply) == 32); }
 
-    // NOTE: can't used packed struct because of compiler bugs
     comptime { std.debug.assert(@sizeOf(Error) == 32); }
     pub const Error = extern struct {
         reponse_type: ErrorKind,
@@ -1535,7 +1532,6 @@ pub const ServerMsg = extern union {
 
     pub const GetFontPath = StringList;
     pub const ListFonts = StringList;
-    // NOTE: can't used packed because of compiler bugs
     pub const StringList = extern struct {
         kind: ReplyKind,
         unused: u8,
@@ -1551,7 +1547,6 @@ pub const ServerMsg = extern union {
     };
     comptime { std.debug.assert(@sizeOf(StringList) == 32); }
 
-    // NOTE: can't used packed because of compiler bugs
     pub const QueryFont = extern struct {
         kind: ReplyKind,
         unused: u8,
@@ -1600,7 +1595,6 @@ pub const ServerMsg = extern union {
         };
     };
 
-    // NOTE: can't used packed because of compiler bugs
     comptime { std.debug.assert(@sizeOf(QueryTextExtents) == 32); }
     pub const QueryTextExtents = extern struct {
         kind: ReplyKind,
@@ -1655,7 +1649,6 @@ pub const ServerMsg = extern union {
     };
 };
 
-// NOTE: can't used packed because of compiler bugs
 pub const Event = extern union {
     generic: Generic,
     key_press: KeyPress,
@@ -1673,7 +1666,6 @@ pub const Event = extern union {
     pub const MotionNotify = KeyOrButtonOrMotion; // TODO
     pub const KeymapNotify = Generic; // TODO
 
-    // NOTE: can't used packed because of compiler bugs
     pub const Generic = extern struct {
         code: EventCode,
         detail: u8,
@@ -1700,7 +1692,6 @@ pub const Event = extern union {
     };
     comptime { std.debug.assert(@sizeOf(Key) == 32); }
 
-    // NOTE: can't used packed because of compiler bugs
     pub const KeyOrButtonOrMotion = extern struct {
         code: u8,
         detail: u8,
@@ -1719,7 +1710,6 @@ pub const Event = extern union {
     };
     comptime { std.debug.assert(@sizeOf(KeyOrButtonOrMotion) == 32); }
 
-    // NOTE: can't used packed because of compiler bugs
     pub const Expose = extern struct {
         code: u8,
         unused: u8,
@@ -1736,14 +1726,12 @@ pub const Event = extern union {
 };
 comptime { std.debug.assert(@sizeOf(Event) == 32); }
 
-// NOTE: can't used packed because of compiler bugs
 const FontProp = extern struct {
     atom: Atom,
     value: u32,
 };
 comptime { std.debug.assert(@sizeOf(FontProp) == 8); }
 
-// NOTE: can't used packed because of compiler bugs
 const CharInfo = extern struct {
     left_side_bearing: i16,
     right_side_bearing: i16,
@@ -1786,17 +1774,16 @@ pub fn parseMsgLen(buf: []align(4) u8) u32 {
     }
 }
 
-pub const Format = packed struct {
+pub const Format = extern struct {
     depth: u8,
     bits_per_pixel: u8,
     scanline_pad: u8,
-    // can't do [5]u8 because of https://github.com/ziglang/zig/issues/2627
-    _: u8,
-    __: [4]u8,
+    _: [5]u8,
 };
 comptime { if (@sizeOf(Format) != 8) @compileError("Format size is wrong"); }
 
-pub const Screen = packed struct {
+comptime { std.debug.assert(@sizeOf(Screen) == 40); }
+pub const Screen = extern struct {
     root: u32,
     colormap: u32,
     white_pixel: u32,
@@ -1815,14 +1802,16 @@ pub const Screen = packed struct {
     allowed_depth_count: u8,
 };
 
-pub const ScreenDepth = packed struct {
+comptime { std.debug.assert(@sizeOf(ScreenDepth) == 8); }
+pub const ScreenDepth = extern struct {
     depth: u8,
     unused0: u8,
     visual_type_count: u16,
     unused1: u32,
 };
 
-pub const VisualType = packed struct {
+comptime { std.debug.assert(@sizeOf(VisualType) == 24); }
+pub const VisualType = extern struct {
     pub const Class = enum(u8) {
         static_gray = 0,
         gray_scale = 1,
@@ -1892,7 +1881,8 @@ pub const ConnectSetup = struct {
         allocator.free(self.buf);
     }
 
-    pub const Header = packed struct {
+    comptime { std.debug.assert(@sizeOf(Header) == 8); }
+    pub const Header = extern struct {
         pub const Status = enum(u8) {
             failed = 0,
             success = 1,
@@ -1924,8 +1914,9 @@ pub const ConnectSetup = struct {
         }
     };
 
+    comptime { std.debug.assert(@sizeOf(Fixed) == 32); }
     /// All the connect setup fields that are at fixed offsets
-    pub const Fixed = packed struct {
+    pub const Fixed = extern struct {
         release_number: u32,
         resource_id_base: u32,
         resource_id_mask: u32,
