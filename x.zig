@@ -1458,6 +1458,7 @@ pub const ServerMsgTaggedUnion = union(enum) {
     leave_notify: *align(4) Event.LeaveNotify,
     motion_notify: *align(4) Event.MotionNotify,
     keymap_notify: *align(4) Event.KeymapNotify,
+    mapping_notify: *align(4) Event.MappingNotify,
     expose: *align(4) Event.Expose,
 };
 pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
@@ -1472,6 +1473,7 @@ pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
         .leave_notify => return .{ .leave_notify = @ptrCast(*align(4) Event.LeaveNotify, msg_ptr) },
         .motion_notify => return .{ .motion_notify = @ptrCast(*align(4) Event.MotionNotify, msg_ptr) },
         .keymap_notify => return .{ .keymap_notify = @ptrCast(*align(4) Event.KeymapNotify, msg_ptr) },
+        .mapping_notify => return .{ .mapping_notify = @ptrCast(*align(4) Event.MappingNotify, msg_ptr) },
         .expose => return .{ .expose = @ptrCast(*align(4) Event.Expose, msg_ptr) },
         else => return .{ .unhandled = @ptrCast(*align(4) ServerMsg.Generic, msg_ptr) },
     }
@@ -1649,6 +1651,13 @@ pub const ServerMsg = extern union {
     };
 };
 
+pub const MappingNotifyRequest = enum(u8) {
+    modifier = 0,
+    keyboard = 1,
+    pointer = 2,
+    _,
+};
+
 pub const Event = extern union {
     generic: Generic,
     key_press: KeyPress,
@@ -1656,6 +1665,7 @@ pub const Event = extern union {
     button_press: ButtonPress,
     button_release: ButtonRelease,
     exposure: Expose,
+    mapping_notify: MappingNotify,
 
     pub const KeyPress = Key;
     pub const KeyRelease = Key;
@@ -1723,6 +1733,17 @@ pub const Event = extern union {
         unused_pad: [14]u8,
     };
     comptime { std.debug.assert(@sizeOf(Expose) == 32); }
+
+    comptime { std.debug.assert(@sizeOf(MappingNotify) == 32); }
+    pub const MappingNotify = extern struct {
+        code: u8,
+        unused: u8,
+        sequence: u16,
+        request: MappingNotifyRequest,
+        first_keycode: u8,
+        count: u8,
+        _: [25]u8,
+    };
 };
 comptime { std.debug.assert(@sizeOf(Event) == 32); }
 
