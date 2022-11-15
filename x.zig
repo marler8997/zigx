@@ -369,7 +369,7 @@ pub fn ArrayPointer(comptime T: type) type {
                 .One => {
                     switch (@typeInfo(info.child)) {
                         .Array => |array_info| {
-                            return @Type(std.builtin.TypeInfo { .Pointer = .{
+                            return @Type(std.builtin.Type { .Pointer = .{
                                 .size = .Many,
                                 .is_const = true,
                                 .is_volatile = false,
@@ -384,7 +384,7 @@ pub fn ArrayPointer(comptime T: type) type {
                     }
                 },
                 .Slice => {
-                    return @Type(std.builtin.TypeInfo { .Pointer = .{
+                    return @Type(std.builtin.Type { .Pointer = .{
                         .size = .Many,
                         .is_const = info.is_const,
                         .is_volatile = info.is_volatile,
@@ -411,7 +411,7 @@ pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@Ty
                         .Array => |array_info| {
                             _ = array_info;
                             @compileError("here");
-//                            return @Type(std.builtin.TypeInfo { .Pointer = .{
+//                            return @Type(std.builtin.Type { .Pointer = .{
 //                                .size = .Many,
 //                                .is_const = true,
 //                                .is_volatile = false,
@@ -537,8 +537,8 @@ pub const WinGravity = enum(u4) {
     static = 10,
 };
 
-fn isDefaultValue(s: anytype, comptime field: std.builtin.TypeInfo.StructField) bool {
-    const default_value_ptr = @ptrCast(?*const field.field_type, field.default_value) orelse
+fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool {
+    const default_value_ptr = @ptrCast(?*align(1) const field.field_type, field.default_value) orelse
         @compileError("isDefaultValue was called on field '" ++ field.name ++ "' which has no default value");
     switch (@typeInfo(field.field_type)) {
         .Optional => {

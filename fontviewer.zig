@@ -363,7 +363,6 @@ const State = struct {
 };
 
 fn render(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), font_index: usize, font_info: *const x.ServerMsg.QueryFont) !void {
-    _ = font_info;
 
     const font_name = fonts[font_index];
     //std.log.info("rendering font '{s}'", .{font_name});
@@ -399,7 +398,6 @@ fn render(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), fo
 }
 
 fn renderNoFontInfo(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), font_index: usize, still_open: bool) !void {
-    _ = sock; _ = ids; _ = fonts; _ = font_index;
     _ = still_open;
     const font_name = fonts[font_index];
     _ = font_name;

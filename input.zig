@@ -281,7 +281,6 @@ pub fn main() !u8 {
                 },
                 .motion_notify => |msg| {
                     // too much logging
-                    _ = msg;
                     //std.log.info("pointer_motion: {}", .{msg});
                     state.pointer_root_pos.x = msg.root_x;
                     state.pointer_root_pos.y = msg.root_y;
@@ -295,6 +294,9 @@ pub fn main() !u8 {
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
                     try render(&msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                },
+                .mapping_notify => |msg| {
+                    std.log.info("mapping_notify: {}", .{msg});
                 },
                 .unhandled => |msg| {
                     std.log.info("todo: server msg {}", .{msg});

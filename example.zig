@@ -207,6 +207,9 @@ pub fn main() !u8 {
                     std.log.info("expose: {}", .{msg});
                     try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims);
                 },
+                .mapping_notify => |msg| {
+                    std.log.info("mapping_notify: {}", .{msg});
+                },
                 .unhandled => |msg| {
                     std.log.info("todo: server msg {}", .{msg});
                     return error.UnhandledServerMsg;
