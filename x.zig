@@ -502,6 +502,7 @@ pub const Opcode = enum(u8) {
     change_gc = 56,
     clear_area = 61,
     poly_line = 65,
+    poly_rectangle = 67,
     poly_fill_rectangle = 70,
     put_image = 72,
     image_text8 = 76,
@@ -1088,7 +1089,7 @@ pub const Rectangle = struct {
     x: i16, y: i16, width: u16, height: u16,
 };
 
-pub const poly_fill_rectangle = struct {
+const poly_rectangle_common = struct {
     pub const non_list_len =
               2 // opcode and unused
             + 2 // request length
@@ -1102,8 +1103,8 @@ pub const poly_fill_rectangle = struct {
         drawable_id: u32,
         gc_id: u32,
     };
-    pub fn serialize(buf: [*]u8, args: Args, rectangles: []const Rectangle) void {
-        buf[0] = @enumToInt(Opcode.poly_fill_rectangle);
+    pub fn serialize(buf: [*]u8, args: Args, rectangles: []const Rectangle, opcode: u8) void {
+        buf[0] = opcode;
         buf[1] = 0; // unused
         // buf[2-3] is the len, set at the end of the function
         writeIntNative(u32, buf + 4, args.drawable_id);
@@ -1119,6 +1120,24 @@ pub const poly_fill_rectangle = struct {
         std.debug.assert((request_len & 0x3) == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
         std.debug.assert(getLen(@intCast(u16, rectangles.len)) == request_len);
+    }
+};
+
+pub const poly_rectangle = struct {
+    pub const non_list_len = poly_rectangle_common.non_list_len;
+    pub const getLen = poly_rectangle_common.getLen;
+    pub const Args = poly_rectangle_common.Args;
+    pub fn serialize(buf: [*]u8, args: Args, rectangles: []const Rectangle) void {
+        poly_rectangle_common.serialize(buf, args, rectangles, @enumToInt(Opcode.poly_rectangle));
+    }
+};
+
+pub const poly_fill_rectangle = struct {
+    pub const non_list_len = poly_rectangle_common.non_list_len;
+    pub const getLen = poly_rectangle_common.getLen;
+    pub const Args = poly_rectangle_common.Args;
+    pub fn serialize(buf: [*]u8, args: Args, rectangles: []const Rectangle) void {
+        poly_rectangle_common.serialize(buf, args, rectangles, @enumToInt(Opcode.poly_fill_rectangle));
     }
 };
 
