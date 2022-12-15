@@ -142,6 +142,63 @@ pub fn main() !u8 {
         }
     };
 
+
+    {
+        const ext_name = comptime x.Slice(u16, [*]const u8).initComptime("RENDER");
+        var msg: [x.query_extension.getLen(ext_name.len)]u8 = undefined;
+        x.query_extension.serialize(&msg, ext_name);
+        try conn.send(&msg);
+    }
+    _ = try x.readOneMsg(conn.reader(), @alignCast(4, buf.nextReadBuffer()));
+    const opt_render_ext: ?struct { opcode: u8 } = blk: {
+        switch (x.serverMsgTaggedUnion(@alignCast(4, buf.double_buffer_ptr))) {
+            .reply => |msg_reply| {
+                const msg = @ptrCast(*x.ServerMsg.QueryExtension, msg_reply);
+                if (msg.present == 0) {
+                    std.log.info("RENDER extension: not present", .{});
+                    break :blk null;
+                }
+                std.debug.assert(msg.present == 1);
+                std.log.info("RENDER extension: opcode={}", .{msg.major_opcode});
+                break :blk .{ .opcode = msg.major_opcode };
+            },
+            else => |msg| {
+                std.log.err("expected a reply but got {}", .{msg});
+                return 1;
+            },
+
+        }
+    };
+    if (opt_render_ext) |render_ext| {
+        {
+            var msg: [x.render.query_version.len]u8 = undefined;
+            x.render.query_version.serialize(&msg, render_ext.opcode, .{
+                .major_version = 0,
+                .minor_version = 11,
+            });
+            try conn.send(&msg);
+        }
+        _ = try x.readOneMsg(conn.reader(), @alignCast(4, buf.nextReadBuffer()));
+        switch (x.serverMsgTaggedUnion(@alignCast(4, buf.double_buffer_ptr))) {
+            .reply => |msg_reply| {
+                const msg = @ptrCast(*x.render.query_version.Reply, msg_reply);
+                std.log.info("RENDER extension: version {}.{}", .{msg.major_version, msg.minor_version});
+                if (msg.major_version != 0) {
+                    std.log.err("xrender extension major version {} too new", .{msg.major_version});
+                    return 1;
+                }
+                if (msg.minor_version < 11) {
+                    std.log.err("xrender extension minor version {} too old", .{msg.minor_version});
+                    return 1;
+                }
+            },
+            else => |msg| {
+                std.log.err("expected a reply but got {}", .{msg});
+                return 1;
+            },
+        }
+    }
+
     {
         var msg: [x.map_window.len]u8 = undefined;
         x.map_window.serialize(&msg, window_id);

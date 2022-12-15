@@ -32,6 +32,7 @@ const builtin = @import("builtin");
 const os = std.os;
 
 pub const inputext = @import("xinputext.zig");
+pub const render = @import("xrender.zig");
 pub const dbe = @import("xdbe.zig");
 
 // Expose some helpful stuff
