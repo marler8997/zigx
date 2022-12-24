@@ -540,9 +540,9 @@ pub const WinGravity = enum(u4) {
 };
 
 fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool {
-    const default_value_ptr = @ptrCast(?*align(1) const field.field_type, field.default_value) orelse
+    const default_value_ptr = @ptrCast(?*align(1) const field.type, field.default_value) orelse
         @compileError("isDefaultValue was called on field '" ++ field.name ++ "' which has no default value");
-    switch (@typeInfo(field.field_type)) {
+    switch (@typeInfo(field.type)) {
         .Optional => {
             comptime std.debug.assert(default_value_ptr.* == null); // we're assuming all Optionals default to null
             return @field(s, field.name) == null;

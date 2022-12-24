@@ -47,6 +47,7 @@ pub fn main() !u8 {
             .border_width = 0, // TODO: what is this?
             .class = .input_output,
             .visual_id = screen.root_visual,
+            .depth = 24, // sure I guess
         }, .{
 //            .bg_pixmap = .copy_from_parent,
             .bg_pixel = 0xaabbccdd,
@@ -178,10 +179,10 @@ pub fn main() !u8 {
                     return error.TodoHandleReplyMessage;
                 },
                 .key_press => |msg| {
-                    std.log.info("key_press: {}", .{msg.detail});
+                    std.log.info("key_press: {}", .{msg.keycode});
                 },
                 .key_release => |msg| {
-                    std.log.info("key_release: {}", .{msg.detail});
+                    std.log.info("key_release: {}", .{msg.keycode});
                 },
                 .button_press => |msg| {
                     std.log.info("button_press: {}", .{msg});
@@ -206,6 +207,9 @@ pub fn main() !u8 {
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
                     try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims);
+                },
+                .mapping_notify => |msg| {
+                    std.log.info("mapping_notify: {}", .{msg});
                 },
                 .unhandled => |msg| {
                     std.log.info("todo: server msg {}", .{msg});
@@ -235,7 +239,6 @@ fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32,
 //        try common.send(sock, &msg);
     //    }
     _ = bg_gc_id;
-    _ = fg_gc_id;
     {
         var msg: [x.clear_area.len]u8 = undefined;
         x.clear_area.serialize(&msg, false, drawable_id, .{
