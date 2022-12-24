@@ -15,7 +15,8 @@ pub fn main() !void {
         if ((i % 1000000) == 0) {
             try stdout.print("i={}\n", .{i});
         }
-        const b = try x.DoubleBuffer.init(std.mem.page_size * 1000, .{});
+        //const b = try x.DoubleBuffer.init(std.mem.page_size * 1000, .{});
+        const b = try x.DoubleBuffer.init(std.mem.page_size, .{});
         defer b.deinit();
         b.ptr[0] = 0;
         try std.testing.expectEqual(@as(u8, 0), b.ptr[b.half_len]);
