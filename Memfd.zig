@@ -5,7 +5,7 @@ const Memfd = @This();
 
 fd: os.fd_t,
 
-pub fn init(name: [:0]const u8) !Memfd {
+pub fn init(name: [*:0]const u8) !Memfd {
     return Memfd{ .fd = try os.memfd_createZ(name, 0) };
 }
 
@@ -13,7 +13,7 @@ pub fn deinit(self: Memfd) void {
     os.close(self.fd);
 }
 
-pub fn toDoubleBuffer(self: Memfd, half_size: usize) ![*]u8 {
+pub fn toDoubleBuffer(self: Memfd, half_size: usize) ![*]align(std.mem.page_size) u8 {
     std.debug.assert((half_size % std.mem.page_size) == 0);
 
     if (builtin.os.tag == .windows)

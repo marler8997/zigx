@@ -1,8 +1,6 @@
 const std = @import("std");
 const x = @import("x.zig");
 const common = @import("common.zig");
-const Memfd = @import("Memfd.zig");
-const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 
 pub const log_level = std.log.Level.info;
 
@@ -137,18 +135,20 @@ pub fn main() !u8 {
 
     var state = State{ .desired_font_index = 0, .exposed = .no };
 
-    const buf_memfd = try Memfd.init("CircularBuffer");
-    // no need to deinit
-    // some of the QueryFont replies are huge!
-    const buffer_capacity = std.mem.alignForward(1024 * 1024, std.mem.page_size);
-    std.log.info("buffer capacity is {}", .{buffer_capacity});
+    const double_buf = try x.DoubleBuffer.init(
+        // some of the QueryFont replies are huge!
+        std.mem.alignForward(1024 * 1024, std.mem.page_size),
+        .{ .memfd_name = "ZigX11DoubleBuffer" },
+    );
+    // double_buf.deinit() (not necessary)
+    std.log.info("read buffer capacity is {}", .{double_buf.half_len});
+    var buf = double_buf.contiguousReadBuffer();
 
-    var buf = ContiguousReadBuffer { .double_buffer_ptr = try buf_memfd.toDoubleBuffer(buffer_capacity), .half_size = buffer_capacity };
     while (true) {
         {
             const recv_buf = buf.nextReadBuffer();
             if (recv_buf.len == 0) {
-                std.log.err("buffer size {} not big enough!", .{buf.half_size});
+                std.log.err("buffer size {} not big enough!", .{buf.half_len});
                 return 1;
             }
             const len = try std.os.recv(conn.sock, recv_buf, 0);

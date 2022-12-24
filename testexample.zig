@@ -2,8 +2,6 @@
 const std = @import("std");
 const x = @import("./x.zig");
 const common = @import("common.zig");
-const Memfd = x.Memfd;
-const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
@@ -117,11 +115,13 @@ pub fn main() !u8 {
         try conn.send(&msg);
     }
 
-    const buf_memfd = try Memfd.init("ZigX11DoubleBuffer");
-    // no need to deinit
-    const buffer_capacity = std.mem.alignForward(1000, std.mem.page_size);
-    std.log.info("buffer capacity is {}", .{buffer_capacity});
-    var buf = ContiguousReadBuffer { .double_buffer_ptr = try buf_memfd.toDoubleBuffer(buffer_capacity), .half_size = buffer_capacity };
+    const double_buf = try x.DoubleBuffer.init(
+        std.mem.alignForward(1000, std.mem.page_size),
+        .{ .memfd_name = "ZigX11DoubleBuffer" },
+    );
+    defer double_buf.deinit(); // not necessary but good to test
+    std.log.info("read buffer capacity is {}", .{double_buf.half_len});
+    var buf = double_buf.contiguousReadBuffer();
 
     const font_dims: FontDims = blk: {
         _ = try x.readOneMsg(conn.reader(), @alignCast(4, buf.nextReadBuffer()));
@@ -209,7 +209,7 @@ pub fn main() !u8 {
         {
             const recv_buf = buf.nextReadBuffer();
             if (recv_buf.len == 0) {
-                std.log.err("buffer size {} not big enough!", .{buf.half_size});
+                std.log.err("buffer size {} not big enough!", .{buf.half_len});
                 return 1;
             }
             const len = try std.os.recv(conn.sock, recv_buf, 0);

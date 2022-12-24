@@ -8,29 +8,29 @@ const std = @import("std");
 const ContiguousReadBuffer = @This();
 
 double_buffer_ptr: [*]u8,
-half_size: usize,
+half_len: usize,
 
-// reserved_limit is always < buf.half_size
+// reserved_limit is always < buf.half_len
 reserved_limit: usize = 0,
 
-// reserved_len is always <= buf.half_size
+// reserved_len is always <= buf.half_len
 reserved_len: usize = 0,
 
 pub fn nextReadBuffer(self: ContiguousReadBuffer) []u8 {
-    return self.double_buffer_ptr[self.reserved_limit .. self.reserved_limit + self.half_size - self.reserved_len];
+    return self.double_buffer_ptr[self.reserved_limit .. self.reserved_limit + self.half_len - self.reserved_len];
 }
 
 pub fn nextReservedBuffer(self: ContiguousReadBuffer) []u8 {
-    const limit = self.reserved_limit + self.half_size;
+    const limit = self.reserved_limit + self.half_len;
     return self.double_buffer_ptr[limit - self.reserved_len .. limit];
 }
 
 pub fn reserve(self: *ContiguousReadBuffer, len: usize) void {
     const new_len = self.reserved_len + len;
-    std.debug.assert(new_len <= self.half_size);
+    std.debug.assert(new_len <= self.half_len);
     var new_reserved_limit = self.reserved_limit + len;
-    if (new_reserved_limit >= self.half_size) {
-        new_reserved_limit -= self.half_size;
+    if (new_reserved_limit >= self.half_len) {
+        new_reserved_limit -= self.half_len;
     }
     self.reserved_limit = new_reserved_limit;
     self.reserved_len = new_len;
