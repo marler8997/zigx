@@ -38,7 +38,6 @@ pub const dbe = @import("xdbe.zig");
 // Expose some helpful stuff
 pub const charset = @import("charset.zig");
 pub const Charset = charset.Charset;
-pub const Memfd = @import("Memfd.zig");
 pub const DoubleBuffer = @import("DoubleBuffer.zig");
 pub const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 pub const Slice = @import("x/slice.zig").Slice;
