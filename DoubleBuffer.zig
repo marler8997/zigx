@@ -12,9 +12,10 @@ const std = @import("std");
 const os = std.os;
 const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 
-const impl: enum { memfd, shm } = switch (builtin.os.tag) {
+const impl: enum { memfd, shm, windows } = switch (builtin.os.tag) {
     .linux, .freebsd => .memfd,
     .macos => .shm,
+    .windows => .windows,
     else => @compileError("DoubleBuffer not implemented for OS " ++ @tagName(builtin.os.tag)),
 };
 
@@ -23,6 +24,7 @@ half_len: usize,
 data: switch (impl) {
     .memfd => os.fd_t,
     .shm => os.fd_t,
+    .windows => win32.HANDLE,
 },
 
 pub const InitOptions = struct {
@@ -82,6 +84,84 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
                 .data = fd,
             };
         },
+        .windows => {
+            const full_len = half_len * 2;
+            var ptr = @alignCast(std.mem.page_size, @ptrCast([*]u8, win32.VirtualAlloc2FromApp(
+                null, null,
+                full_len,
+                win32.MEM_RESERVE | win32.MEM_RESERVE_PLACEHOLDER,
+                win32.PAGE_NOACCESS,
+                null, 0,
+            ) orelse switch (win32.GetLastError()) {
+                else => |err| return std.os.windows.unexpectedError(err),
+            }));
+
+            var free_ptr = true;
+            defer if (free_ptr) {
+                std.os.windows.VirtualFree(ptr, 0, win32.MEM_RELEASE);
+            };
+
+            std.os.windows.VirtualFree(
+                ptr,
+                half_len,
+                win32.MEM_RELEASE | win32.MEM_PRESERVE_PLACEHOLDER,
+            );
+
+            const back_ptr = ptr + half_len;
+            var free_back_ptr = true;
+            defer if (free_back_ptr) {
+                std.os.windows.VirtualFree(back_ptr, 0, win32.MEM_RELEASE);
+            };
+
+            const map = win32.CreateFileMappingW(
+                std.os.windows.INVALID_HANDLE_VALUE,
+                null,
+                win32.PAGE_READWRITE,
+                @intCast(u32, (half_len >> 32)),
+                @intCast(u32, (half_len >>  0) & std.math.maxInt(u32)),
+                null,
+            ) orelse switch (win32.GetLastError()) {
+                else => |err| return std.os.windows.unexpectedError(err),
+            };
+            errdefer os.close(map);
+
+            const ptr_again = win32.MapViewOfFile3FromApp(
+                map,
+                null,
+                ptr,
+                0,
+                half_len,
+                win32.MEM_REPLACE_PLACEHOLDER,
+                win32.PAGE_READWRITE,
+                null, 0,
+            ) orelse switch (win32.GetLastError()) {
+                else => |err| return std.os.windows.unexpectedError(err),
+            };
+            errdefer std.debug.assert(0 != win32.UnmapViewOfFile(ptr_again));
+            std.debug.assert(ptr_again == ptr);
+            free_ptr = false; // ownership transferred
+
+            const back_ptr_again = win32.MapViewOfFile3FromApp(
+                map,
+                null,
+                back_ptr,
+                0,
+                half_len,
+                win32.MEM_REPLACE_PLACEHOLDER,
+                win32.PAGE_READWRITE,
+                null, 0,
+            ) orelse switch (win32.GetLastError()) {
+                else => |err| return std.os.windows.unexpectedError(err),
+            };
+            errdefer std.debug.assert(0 != win32.UnmapViewOfFile(back_ptr_again));
+            std.debug.assert(back_ptr == back_ptr_again);
+            free_back_ptr = false; // ownership transferred
+            return .{
+                .ptr = ptr,
+                .half_len = half_len,
+                .data = map,
+            };
+        },
     }
 }
 
@@ -90,6 +170,11 @@ pub fn deinit(self: DoubleBuffer) void {
         .memfd, .shm => {
             os.munmap(self.ptr[0 .. self.half_len * 2]);
             os.close(self.data);
+        },
+        .windows => {
+            std.debug.assert(0 != win32.UnmapViewOfFile(self.ptr + self.half_len));
+            std.debug.assert(0 != win32.UnmapViewOfFile(self.ptr));
+            errdefer os.close(self.data);
         },
     }
 }
@@ -112,3 +197,50 @@ pub fn mapFdDouble(fd: os.fd_t, half_size: usize) ![*]align(std.mem.page_size) u
         half_size, os.PROT.READ | os.PROT.WRITE, os.MAP.SHARED | os.MAP.FIXED, fd, 0);
     return ptr;
 }
+
+const win32 = struct {
+    pub const BOOL = i32;
+    pub const HANDLE = std.os.windows.HANDLE;
+    pub const GetLastError = std.os.windows.kernel32.GetLastError;
+    pub const PAGE_NOACCESS = 1;
+    pub const PAGE_READWRITE = 4;
+    pub extern "kernel32" fn CreateFileMappingW(
+        hFile: ?HANDLE,
+        lpFileMappingAttributes: ?*anyopaque,
+        flProtect: u32,
+        dwMaximumSizeHigh: u32,
+        dwMaximumSizeLow: u32,
+        lpName: ?[*:0]const u16,
+    ) callconv(@import("std").os.windows.WINAPI) ?HANDLE;
+    pub const MEM_PRESERVE_PLACEHOLDER = 0x00002;
+    pub const MEM_COMMIT               = 0x01000;
+    pub const MEM_RESERVE              = 0x02000;
+    pub const MEM_REPLACE_PLACEHOLDER  = 0x04000;
+    pub const MEM_RELEASE              = 0x08000;
+    pub const MEM_FREE                 = 0x10000;
+    pub const MEM_RESERVE_PLACEHOLDER  = 0x40000;
+    pub const MEM_RESET                = 0x80000;
+    pub extern "api-ms-win-core-memory-l1-1-6" fn VirtualAlloc2FromApp(
+        Process: ?HANDLE,
+        BaseAddress: ?*anyopaque,
+        Size: usize,
+        AllocationType: u32,
+        PageProtection: u32,
+        ExtendedParameters: ?*anyopaque,
+        ParameterCount: u32,
+    ) callconv(@import("std").os.windows.WINAPI) ?*anyopaque;
+    pub extern "api-ms-win-core-memory-l1-1-6" fn MapViewOfFile3FromApp(
+        FileMapping: ?HANDLE,
+        Process: ?HANDLE,
+        BaseAddress: ?*anyopaque,
+        Offset: u64,
+        ViewSize: usize,
+        AllocationType: u32,
+        PageProtection: u32,
+        ExtendedParameters: ?*anyopaque,
+        ParameterCount: u32,
+    ) callconv(@import("std").os.windows.WINAPI) ?[*]u8;
+    pub extern "kernel32" fn UnmapViewOfFile(
+        lpBaseAddress: ?[*]const u8,
+    ) callconv(@import("std").os.windows.WINAPI) BOOL;
+};

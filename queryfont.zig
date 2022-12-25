@@ -20,6 +20,7 @@ pub fn main() !u8 {
     }
     const font_name = cmd_args[0];
 
+    try x.wsaStartup();
     const conn = try common.connect(allocator);
     defer std.os.shutdown(conn.sock, .both) catch {};
 

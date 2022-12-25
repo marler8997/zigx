@@ -87,6 +87,16 @@ const ParsedDisplay = struct {
 // I think I can get away without an allocator here and without
 // freeing it and without error.
 pub fn getDisplay() []const u8 {
+    if (builtin.os.tag == .windows) {
+        // we'll just make an allocator and never free it, no
+        // big deal
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        return std.process.getEnvVarOwned(arena.allocator(), "DISPLAY") catch |err| switch (err) {
+            error.EnvironmentVariableNotFound => return ":0",
+            error.OutOfMemory => @panic("Out of memory"),
+            error.InvalidUtf8 => @panic("Environment Variables are invalid utf8?"),
+        };
+    }
     return os.getenv("DISPLAY") orelse ":0";
 }
 
@@ -2049,4 +2059,36 @@ pub fn readOneMsgFinish(reader: anytype, buf: []align(4) u8) !void {
 
 pub fn charsetName(set: Charset) ?[]const u8 {
     return if (stdext.enums.hasName(set)) @tagName(set) else null;
+}
+
+// any application that supports windows can call this at
+// the start of their program to setup WSA on Windows
+pub fn wsaStartup() !void {
+    if (builtin.os.tag == .windows) {
+        _ = try os.windows.WSAStartup(2, 2);
+    }
+}
+
+pub fn readSock(sock: os.socket_t, buf: []u8, flags: u32) !usize {
+    if (builtin.os.tag == .windows) {
+        const result = os.windows.recvfrom(sock, buf.ptr, buf.len, flags, null, null);
+        if (result != os.windows.ws2_32.SOCKET_ERROR)
+            return @intCast(usize, result);
+        switch (os.windows.ws2_32.WSAGetLastError()) {
+            else => |err| return os.windows.unexpectedWSAError(err),
+        }
+    }
+    return os.recv(sock, buf, flags);
+}
+
+pub fn writeSock(sock: os.socket_t, buf: []const u8, flags: u32) !usize {
+    if (builtin.os.tag == .windows) {
+        const result = os.windows.sendto(sock, buf.ptr, buf.len, flags, null, 0);
+        if (result != os.windows.ws2_32.SOCKET_ERROR)
+            return @intCast(usize, result);
+        switch (os.windows.ws2_32.WSAGetLastError()) {
+            else => |err| return os.windows.unexpectedWSAError(err),
+        }
+    }
+    return os.send(sock, buf, flags);
 }

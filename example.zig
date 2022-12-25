@@ -9,6 +9,7 @@ const window_width = 400;
 const window_height = 400;
 
 pub fn main() !u8 {
+    try x.wsaStartup();
     const conn = try common.connect(allocator);
     defer std.os.shutdown(conn.sock, .both) catch {};
 
@@ -154,7 +155,7 @@ pub fn main() !u8 {
                 std.log.err("buffer size {} not big enough!", .{buf.half_len});
                 return 1;
             }
-            const len = try std.os.recv(conn.sock, recv_buf, 0);
+            const len = try x.readSock(conn.sock, recv_buf, 0);
             if (len == 0) {
                 std.log.info("X server connection closed", .{});
                 return 0;

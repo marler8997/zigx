@@ -17,6 +17,7 @@ const bg_color = 0x231a20;
 const fg_color = 0xadccfa;
 
 pub fn main() !u8 {
+    try x.wsaStartup();
     const conn = try common.connect(allocator);
     defer std.os.shutdown(conn.sock, .both) catch {};
 

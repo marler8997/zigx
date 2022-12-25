@@ -3,14 +3,14 @@ const os = std.os;
 const x = @import("x.zig");
 
 pub fn send(sock: std.os.socket_t, data: []const u8) !void {
-    const sent = try std.os.send(sock, data, 0);
+    const sent = try x.writeSock(sock, data, 0);
     if (sent != data.len) {
         std.log.err("send {} only sent {}\n", .{data.len, sent});
         return error.DidNotSendAllData;
     }
 }
 fn readSocket(sock: os.socket_t, buffer: []u8) !usize {
-    return os.recv(sock, buffer, 0);
+    return x.readSock(sock, buffer, 0);
 }
 pub const SocketReader = std.io.Reader(os.socket_t, os.RecvFromError, readSocket);
 

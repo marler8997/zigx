@@ -5,7 +5,7 @@ const common = @This();
 pub const SocketReader = std.io.Reader(std.os.socket_t, std.os.RecvFromError, readSocket);
 
 pub fn send(sock: std.os.socket_t, data: []const u8) !void {
-    const sent = try std.os.send(sock, data, 0);
+    const sent = try x.writeSock(sock, data, 0);
     if (sent != data.len) {
         std.log.err("send {} only sent {}\n", .{data.len, sent});
         return error.DidNotSendAllData;
@@ -82,5 +82,5 @@ pub fn asReply(comptime T: type, msg_bytes: []align(4) u8) !*T {
 }
 
 fn readSocket(sock: std.os.socket_t, buffer: []u8) !usize {
-    return std.os.recv(sock, buffer, 0);
+    return x.readSock(sock, buffer, 0);
 }
