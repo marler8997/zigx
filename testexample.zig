@@ -444,14 +444,6 @@ fn render(
             scanline_len_unaligned,
             image_format.scanline_pad / 8,
         );
-        std.log.info("format={} bytes_per_pixel={} width={} scanline_len={} (unaligned={}) height={}", .{
-            image_format,
-            bytes_per_pixel,
-            width,
-            scanline_len,
-            scanline_len_unaligned,
-            height,
-        });
         const data_len = @intCast(u18, height * scanline_len);
         std.debug.assert(data_len <= max_data_len);
         {
