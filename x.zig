@@ -67,6 +67,10 @@ const ParsedDisplay = struct {
     display_num: u32, // TODO: is there a maximum display number?
     preferredScreen: ?u32,
 
+    pub fn asFilePath(self: @This(), ptr: [*]const u8) ?[]const u8 {
+        if (ptr[0] != '/') return null;
+        return ptr[0 .. self.hostLimit];
+    }
     pub fn protoSlice(self: @This(), ptr: [*]const u8) []const u8 {
         return ptr[0..self.protoLen];
     }
@@ -114,7 +118,6 @@ pub fn getDisplay() []const u8 {
 pub const ParseDisplayError = error {
     EmptyDisplay, // TODO: is this an error?
     MultipleProtocols,
-    EmptyProtocol,
     DisplayStringTooLarge,
     NoDisplayNumber,
     BadDisplayNumber,
@@ -144,10 +147,16 @@ pub fn parseDisplay(display: []const u8) ParseDisplayError!ParsedDisplay {
             break;
         }
         if (c == '/') {
+            // I guess a DISPLAY that starts with '/' is a file path?
+            // This is the case on my M1 macos laptop.
+            if (index == 0) return .{
+                .protoLen = 0,
+                .hostLimit = @intCast(u16, display.len),
+                .display_num = 0,
+                .preferredScreen = null,
+            };
             if (parsed.protoLen > 0)
                 return ParseDisplayError.MultipleProtocols;
-            if (index == 0)
-                return ParseDisplayError.EmptyProtocol;
             parsed.protoLen = index;
         }
         index += 1;
@@ -193,7 +202,6 @@ fn testParseDisplay(display: []const u8, proto: []const u8, host: []const u8, di
 test "parseDisplay" {
     // no need to test the empty string case, it triggers an assert and a client passing
     // one is a bug that needs to be fixed
-    try testing.expectError(ParseDisplayError.EmptyProtocol, parseDisplay("/"));
     try testing.expectError(ParseDisplayError.MultipleProtocols, parseDisplay("a//"));
     try testing.expectError(ParseDisplayError.NoDisplayNumber, parseDisplay("0"));
     try testing.expectError(ParseDisplayError.NoDisplayNumber, parseDisplay("0/"));
@@ -218,6 +226,8 @@ test "parseDisplay" {
     try testParseDisplay(":123.456", "", "", 123, 456);
     try testParseDisplay(":123", "", "", 123, null);
     try testParseDisplay("a/:43", "a", "", 43, null);
+    try testParseDisplay("/", "", "/", 0, null);
+    try testParseDisplay("/some/file/path/x0", "", "/some/file/path/x0", 0, null);
 }
 
 const ConnectError = error {
@@ -267,8 +277,11 @@ fn displayToTcpPort(display_num: u32) error{DisplayNumberOutOfRange}!u16 {
 pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u8, display_num: u32) !os.socket_t {
 
     if (optional_protocol) |proto| {
-        if (std.mem.eql(u8, proto, "unix"))
-            return connectUnix(optional_host, display_num);
+        if (std.mem.eql(u8, proto, "unix")) {
+            if (optional_host) |_|
+                @panic("TODO: DISPLAY is unix protocol with a host? Is this possible?");
+            return connectUnixDisplayNum(display_num);
+        }
         if (std.mem.eql(u8, proto, "tcp") or std.mem.eql(u8, proto, "inet"))
             return connectTcp(defaultTcpHost(optional_host), try displayToTcpPort(display_num), .{});
         if (std.mem.eql(u8, proto, "inet6"))
@@ -282,11 +295,13 @@ pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u
             std.log.err("host is 'unix' this might mean 'unix domain socket' but not sure, giving up for now", .{});
             return error.NotSureIWantToSupportAmbiguousUnixHost;
         }
+        if (host[0] == '/')
+            return connectUnixPath(host);
         return connectTcp(host, try displayToTcpPort(display_num), .{});
     } else {
         // otherwise, strategy is to try connecting to a unix domain socket first
         // and fall back to tcp localhost otherwise
-        return connectUnix(null, display_num) catch |err| switch (err) {
+        return connectUnixDisplayNum(display_num) catch |err| switch (err) {
             else => |e| return e,
         };
 
@@ -338,21 +353,34 @@ pub fn disconnect(sock: os.socket_t) void {
     os.close(sock);
 }
 
-pub fn connectUnix(display_host: ?[]const u8, display_num: u32) !os.socket_t {
-    if (display_host) |_| return error.ConnectUnixWithDisplayHostNotImplemented;
-
+pub fn connectUnixDisplayNum(display_num: u32) !os.socket_t {
     const path_prefix = "/tmp/.X11-unix/X";
-
     var addr = os.sockaddr.un { .family = os.AF.UNIX, .path = undefined };
+    const path = std.fmt.bufPrintZ(
+        &addr.path,
+        "{s}{}",
+        .{path_prefix, display_num},
+    ) catch unreachable;
+    return connectUnixAddr(&addr, path.len);
+}
 
-    const path_len = (std.fmt.bufPrintZ(&addr.path, "{s}{}", .{path_prefix, display_num}) catch unreachable).len;
+pub fn connectUnixPath(socket_path: []const u8) !os.socket_t {
+    var addr = os.sockaddr.un { .family = os.AF.UNIX, .path = undefined };
+    const path = std.fmt.bufPrintZ(
+        &addr.path,
+        "{s}",
+        .{socket_path},
+    ) catch unreachable;
+    return connectUnixAddr(&addr, path.len);
+}
 
+pub fn connectUnixAddr(addr: *const os.sockaddr.un, path_len: usize) !os.socket_t {
     const sock = try os.socket(os.AF.UNIX, os.SOCK.STREAM, 0);
     errdefer os.close(sock);
 
     // TODO: should we set any socket options?
     const addr_len = @intCast(os.socklen_t, @offsetOf(os.sockaddr.un, "path") + path_len + 1);
-    os.connect(sock, @ptrCast(*os.sockaddr, &addr), addr_len) catch |err| switch (err) {
+    os.connect(sock, @ptrCast(*const os.sockaddr, addr), addr_len) catch |err| switch (err) {
         // TODO: handle some of these errors and translate them so we can "fall back" to tcp
         //       for example, we might handle error.FileNotFound, but I would probably
         //       translate most errors to custom ones so we only fallback when we get
