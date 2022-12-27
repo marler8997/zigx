@@ -16,8 +16,17 @@ pub const Ids = struct {
     pub fn window(self: Ids) u32 { return self.base; }
     pub fn bg_gc(self: Ids) u32 { return self.base + 1; }
     pub fn fg_gc(self: Ids) u32 { return self.base + 2; }
+    pub fn pixmap(self: Ids) u32 { return self.base + 3; }
 };
 
+// ZFormat
+// depth:
+//     bits-per-pixel: 1, 4, 8, 16, 24, 32
+//         bpp can be larger than depth, when it is, the
+//         least significant bits hold the pixmap data
+//         when bpp is 4, order of nibbles in the bytes is the
+//         same as the image "byte-order"
+//     scanline-pad: 8, 16, 32
 const ImageFormat = struct {
     endian: Endian,
     depth: u8,
@@ -158,6 +167,8 @@ pub fn main() !u8 {
         }, .{
             .background = screen.black_pixel,
             .foreground = x.rgb24To(0xffaadd, screen.root_depth),
+            // prevent NoExposure events when we send CopyArea
+            .graphics_exposures = false,
         });
         try conn.send(msg_buf[0..len]);
     }
@@ -330,6 +341,7 @@ pub fn main() !u8 {
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
                 },
+                .no_exposure => |msg| std.debug.panic("unexpected no_exposure {}", .{msg}),
                 .unhandled => |msg| {
                     std.log.info("todo: server msg {}", .{msg});
                     return error.UnhandledServerMsg;
@@ -415,87 +427,100 @@ fn render(
         try common.send(sock, &msg);
     }
 
-    // send a 15x15 test image
-    {
-        const width = 15;
-        const height = 15;
+    const test_image = struct {
+        pub const width = 15;
+        pub const height = 15;
 
-        const max_bytes_per_pixel = 4;
-        const max_scanline_len_unaligned = max_bytes_per_pixel * width;
-        const max_scanline_len = comptime std.mem.alignForward(
-            max_scanline_len_unaligned,
-            32 / 8, // max scanline pad
+        pub const max_bytes_per_pixel = 4;
+        const max_scanline_pad = 32;
+        pub const max_scanline_len = std.mem.alignForward(
+            max_bytes_per_pixel * width,
+            max_scanline_pad / 8, // max scanline pad
         );
         const max_data_len = height * max_scanline_len;
-        var msg: [x.put_image.getLen(max_data_len)]u8 = undefined;
+    };
 
-        // ZFormat
-        // depth:
-        //     bits-per-pixel: 1, 4, 8, 16, 24, 32
-        //         bpp can be larger than depth, when it is, the
-        //         least significant bits hold the pixmap data
-        //         when bpp is 4, order of nibbles in the bytes is the
-        //         same as the image "byte-order"
-        //     scanline-pad: 8, 16, 32
+    const test_image_scanline_len = blk: {
         const bytes_per_pixel = image_format.bits_per_pixel / 8;
-        std.debug.assert(bytes_per_pixel <= max_bytes_per_pixel);
-        const scanline_len_unaligned = bytes_per_pixel * width;
-        const scanline_len = std.mem.alignForward(
-            scanline_len_unaligned,
+        std.debug.assert(bytes_per_pixel <= test_image.max_bytes_per_pixel);
+        break :blk std.mem.alignForward(
+            bytes_per_pixel * test_image.width,
             image_format.scanline_pad / 8,
         );
-        const data_len = @intCast(u18, height * scanline_len);
-        std.debug.assert(data_len <= max_data_len);
-        {
-            var row: usize = 0;
-            while (row < height) : (row += 1) {
-                var data_off: usize = x.put_image.data_offset + row * @intCast(usize, scanline_len);
+    };
+    const test_image_data_len = @intCast(u18, test_image.height * test_image_scanline_len);
+    std.debug.assert(test_image_data_len <= test_image.max_data_len);
 
-                var color: u24 = 0;
-                if (row < 5) { color |= 0xff0000; }
-                else if (row < 10) { color |= 0xff00; }
-                else { color |= 0xff; }
-
-                var col: usize = 0;
-                while (col < width) : (col += 1) {
-                    switch (image_format.depth) {
-                        16 => std.mem.writeInt(
-                            u16,
-                            msg[data_off..][0 .. 2],
-                            x.rgb24To16(color),
-                            image_format.endian,
-                        ),
-                        24 => std.mem.writeInt(
-                            u24,
-                            msg[data_off..][0 .. 3],
-                            color,
-                            image_format.endian,
-                        ),
-                        32 => std.mem.writeInt(
-                            u32,
-                            msg[data_off..][0 .. 4],
-                            color,
-                            image_format.endian,
-                        ),
-                        else => std.debug.panic("TODO: implement image depth {}", .{image_format.depth}),
-                    }
-                    data_off += bytes_per_pixel;
-                }
-            }
-        }
-        x.put_image.serializeNoDataCopy(&msg, data_len, .{
+    {
+        var put_image_msg: [x.put_image.getLen(test_image.max_data_len)]u8 = undefined;
+        populateTestImage(
+            image_format,
+            test_image.width,
+            test_image.height,
+            test_image_scanline_len,
+            put_image_msg[x.put_image.data_offset..],
+        );
+        x.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
             .format = .z_pixmap,
             .drawable_id = ids.window(),
             .gc_id = ids.fg_gc(),
-            .width = width,
-            .height = height,
+            .width = test_image.width,
+            .height = test_image.height,
             .x = 100,
             .y = 20,
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.send(sock, msg[0 .. x.put_image.getLen(data_len)]);
+        try common.send(sock, put_image_msg[0 .. x.put_image.getLen(test_image_data_len)]);
+
+        // test a pixmap
+        {
+            var msg: [x.create_pixmap.len]u8 = undefined;
+            x.create_pixmap.serialize(&msg, .{
+                .id = ids.pixmap(),
+                .drawable_id = ids.window(),
+                .depth = image_format.depth,
+                .width = test_image.width,
+                .height = test_image.height,
+            });
+            try common.send(sock, &msg);
+        }
+        x.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
+            .format = .z_pixmap,
+            .drawable_id = ids.pixmap(),
+            .gc_id = ids.fg_gc(),
+            .width = test_image.width,
+            .height = test_image.height,
+            .x = 0,
+            .y = 0,
+            .left_pad = 0,
+            .depth = image_format.depth,
+        });
+        try common.send(sock, put_image_msg[0 .. x.put_image.getLen(test_image_data_len)]);
+
+        {
+            var msg: [x.copy_area.len]u8 = undefined;
+            x.copy_area.serialize(&msg, .{
+                .src_drawable_id = ids.pixmap(),
+                .dst_drawable_id = ids.window(),
+                .gc_id = ids.fg_gc(),
+                .src_x = 0,
+                .src_y = 0,
+                .dst_x = 120,
+                .dst_y = 20,
+                .width = test_image.width,
+                .height = test_image.height,
+            });
+            try common.send(sock, &msg);
+        }
+
+        {
+            var msg: [x.free_pixmap.len]u8 = undefined;
+            x.free_pixmap.serialize(&msg, ids.pixmap());
+            try common.send(sock, &msg);
+        }
     }
+
 }
 
 fn changeGcColor(sock: std.os.socket_t, gc_id: u32, color: u32) !void {
@@ -504,4 +529,48 @@ fn changeGcColor(sock: std.os.socket_t, gc_id: u32, color: u32) !void {
         .foreground = color,
     });
     try common.send(sock, msg_buf[0..len]);
+}
+
+fn populateTestImage(
+    image_format: ImageFormat,
+    width: u16,
+    height: u16,
+    stride: usize,
+    data: []u8,
+) void {
+    var row: usize = 0;
+    while (row < height) : (row += 1) {
+        var data_off: usize = row * stride;
+
+        var color: u24 = 0;
+        if (row < 5) { color |= 0xff0000; }
+        else if (row < 10) { color |= 0xff00; }
+        else { color |= 0xff; }
+
+        var col: usize = 0;
+        while (col < width) : (col += 1) {
+            switch (image_format.depth) {
+                16 => std.mem.writeInt(
+                    u16,
+                    data[data_off..][0 .. 2],
+                    x.rgb24To16(color),
+                    image_format.endian,
+                ),
+                24 => std.mem.writeInt(
+                    u24,
+                    data[data_off..][0 .. 3],
+                    color,
+                    image_format.endian,
+                ),
+                32 => std.mem.writeInt(
+                    u32,
+                    data[data_off..][0 .. 4],
+                    color,
+                    image_format.endian,
+                ),
+                else => std.debug.panic("TODO: implement image depth {}", .{image_format.depth}),
+            }
+            data_off += (image_format.bits_per_pixel / 8);
+        }
+    }
 }

@@ -537,9 +537,12 @@ pub const Opcode = enum(u8) {
     query_text_extents = 48,
     list_fonts = 49,
     get_font_path = 52,
+    create_pixmap = 53,
+    free_pixmap = 54,
     create_gc = 55,
     change_gc = 56,
     clear_area = 61,
+    copy_area = 62,
     poly_line = 65,
     poly_rectangle = 67,
     poly_fill_rectangle = 70,
@@ -1001,7 +1004,7 @@ pub const GcOptions = struct {
     font: ?u32 = null,
     // font <server dependent>
     // subwindow_mode clip_by_children
-    // graphics_exposures true
+    graphics_exposures: bool = true,
     // clip_x_origin 0
     // clip_y_origin 0
     // clip_mask none
@@ -1045,6 +1048,36 @@ pub fn createOrChangeGcSerialize(buf: [*]u8, gc_id: u32, variant: GcVariant, opt
     return request_len;
 }
 
+pub const create_pixmap = struct {
+    pub const len = 16;
+    pub const Args = struct {
+        id: u32,
+        drawable_id: u32,
+        depth: u8,
+        width: u16,
+        height: u16,
+    };
+    pub fn serialize(buf: [*]u8, args: Args) void {
+        buf[0] = @enumToInt(Opcode.create_pixmap);
+        buf[1] = args.depth;
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, args.id);
+        writeIntNative(u32, buf + 8, args.drawable_id);
+        writeIntNative(u16, buf + 12, args.width);
+        writeIntNative(u16, buf + 14, args.height);
+    }
+};
+
+pub const free_pixmap = struct {
+    pub const len = 8;
+    pub fn serialize(buf: [*]u8, id: u32) void {
+        buf[0] = @enumToInt(Opcode.free_pixmap);
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, id);
+    }
+};
+
 pub const create_gc = struct {
     pub const non_option_len =
               2 // opcode and unused
@@ -1084,6 +1117,35 @@ pub const clear_area = struct {
         writeIntNative(i16, buf + 10, area.y);
         writeIntNative(u16, buf + 12, area.width);
         writeIntNative(u16, buf + 14, area.height);
+    }
+};
+
+pub const copy_area = struct {
+    pub const len = 28;
+    pub const Args = struct {
+        src_drawable_id: u32,
+        dst_drawable_id: u32,
+        gc_id: u32,
+        src_x: i16,
+        src_y: i16,
+        dst_x: i16,
+        dst_y: i16,
+        width: u16,
+        height: u16,
+    };
+    pub fn serialize(buf: [*]u8, args: Args) void {
+        buf[0] = @enumToInt(Opcode.copy_area);
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, args.src_drawable_id);
+        writeIntNative(u32, buf + 8, args.dst_drawable_id);
+        writeIntNative(u32, buf + 12, args.gc_id);
+        writeIntNative(i16, buf + 16, args.src_x);
+        writeIntNative(i16, buf + 18, args.src_y);
+        writeIntNative(i16, buf + 20, args.dst_x);
+        writeIntNative(i16, buf + 22, args.dst_y);
+        writeIntNative(u16, buf + 24, args.width);
+        writeIntNative(u16, buf + 26, args.height);
     }
 };
 
@@ -1518,6 +1580,7 @@ pub const ServerMsgTaggedUnion = union(enum) {
     keymap_notify: *align(4) Event.KeymapNotify,
     mapping_notify: *align(4) Event.MappingNotify,
     expose: *align(4) Event.Expose,
+    no_exposure: *align(4) Event.NoExposure,
 };
 pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
     switch (@intToEnum(ServerMsgKind, msg_ptr[0])) {
@@ -1533,6 +1596,7 @@ pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
         .keymap_notify => return .{ .keymap_notify = @ptrCast(*align(4) Event.KeymapNotify, msg_ptr) },
         .mapping_notify => return .{ .mapping_notify = @ptrCast(*align(4) Event.MappingNotify, msg_ptr) },
         .expose => return .{ .expose = @ptrCast(*align(4) Event.Expose, msg_ptr) },
+        .no_exposure => return .{ .no_exposure = @ptrCast(*align(4) Event.NoExposure, msg_ptr) },
         else => return .{ .unhandled = @ptrCast(*align(4) ServerMsg.Generic, msg_ptr) },
     }
 }
@@ -1724,6 +1788,7 @@ pub const Event = extern union {
     button_release: ButtonRelease,
     exposure: Expose,
     mapping_notify: MappingNotify,
+    no_exposure: Generic,
 
     pub const KeyPress = Key;
     pub const KeyRelease = Key;
@@ -1801,6 +1866,17 @@ pub const Event = extern union {
         first_keycode: u8,
         count: u8,
         _: [25]u8,
+    };
+
+    comptime { std.debug.assert(@sizeOf(NoExposure) == 32); }
+    pub const NoExposure = extern struct {
+        code: u8,
+        unused: u8,
+        sequence: u16,
+        drawable: u32,
+        minor_opcode: u16,
+        major_opcode: u8,
+        _: [21]u8,
     };
 };
 comptime { std.debug.assert(@sizeOf(Event) == 32); }
