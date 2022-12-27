@@ -107,7 +107,7 @@ pub fn main() !u8 {
             .visual_id = screen.root_visual,
         }, .{
 //            .bg_pixmap = .copy_from_parent,
-            .bg_pixel = rgb24To(0xbbccdd, screen.root_depth),
+            .bg_pixel = x.rgb24To(0xbbccdd, screen.root_depth),
 //            //.border_pixmap =
 //            .border_pixel = 0x01fa8ec9,
 //            .bit_gravity = .north_west,
@@ -157,7 +157,7 @@ pub fn main() !u8 {
             .drawable_id = screen.root,
         }, .{
             .background = screen.black_pixel,
-            .foreground = rgb24To(0xffaadd, screen.root_depth),
+            .foreground = x.rgb24To(0xffaadd, screen.root_depth),
         });
         try conn.send(msg_buf[0..len]);
     }
@@ -371,7 +371,7 @@ fn render(
         try common.send(sock, &msg);
     }
 
-    try changeGcColor(sock, ids.fg_gc(), rgb24To(0xffaadd, depth));
+    try changeGcColor(sock, ids.fg_gc(), x.rgb24To(0xffaadd, depth));
     {
         const text_literal: []const u8 = "Hello X!";
         const text = x.Slice(u8, [*]const u8) { .ptr = text_literal.ptr, .len = text_literal.len };
@@ -388,7 +388,7 @@ fn render(
         try common.send(sock, &msg);
     }
 
-    try changeGcColor(sock, ids.fg_gc(), rgb24To(0x00ff00, depth));
+    try changeGcColor(sock, ids.fg_gc(), x.rgb24To(0x00ff00, depth));
     {
         const rectangles = [_]x.Rectangle{
             .{ .x = 20, .y = 20, .width = 15, .height = 15 },
@@ -401,7 +401,7 @@ fn render(
         }, &rectangles);
         try common.send(sock, &msg);
     }
-    try changeGcColor(sock, ids.fg_gc(), rgb24To(0x0000ff, depth));
+    try changeGcColor(sock, ids.fg_gc(), x.rgb24To(0x0000ff, depth));
     {
         const rectangles = [_]x.Rectangle{
             .{ .x = 60, .y = 20, .width = 15, .height = 15 },
@@ -470,7 +470,7 @@ fn render(
                         16 => std.mem.writeInt(
                             u16,
                             msg[data_off..][0 .. 2],
-                            rgb24To16(color),
+                            x.rgb24To16(color),
                             image_format.endian,
                         ),
                         24 => std.mem.writeInt(
@@ -512,18 +512,4 @@ fn changeGcColor(sock: std.os.socket_t, gc_id: u32, color: u32) !void {
         .foreground = color,
     });
     try common.send(sock, msg_buf[0..len]);
-}
-
-fn rgb24To16(color: u24) u16 {
-    const r = @intCast(u16, (color >> 19) & 0x1f);
-    const g = @intCast(u16, (color >> 11) & 0x1f);
-    const b = @intCast(u16, (color >> 3) & 0x1f);
-    return (r << 11) | (g << 6) | b;
-}
-
-fn rgb24To(color: u24, depth_bits: u8) u32 {
-    return switch (depth_bits) {
-        16 => rgb24To16(color),
-        else => color,
-    };
 }

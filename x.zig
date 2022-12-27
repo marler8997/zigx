@@ -2034,6 +2034,23 @@ pub const ConnectSetup = struct {
     }
 };
 
+pub fn rgb24To16(color: u24) u16 {
+    const r = @intCast(u16, (color >> 19) & 0x1f);
+    const g = @intCast(u16, (color >> 11) & 0x1f);
+    const b = @intCast(u16, (color >> 3) & 0x1f);
+    return (r << 11) | (g << 6) | b;
+}
+
+pub fn rgb24To(color: u24, depth_bits: u8) u32 {
+    return switch (depth_bits) {
+        16 => rgb24To16(color),
+        24 => color,
+        32 => color,
+        else => @panic("todo"),
+    };
+}
+
+
 pub fn readOneMsgAlloc(allocator: std.mem.Allocator, reader: anytype) ![]align(4) u8 {
     var buf = try allocator.allocWithOptions(u8, 32, 4, null);
     errdefer allocator.free(buf);
