@@ -1922,6 +1922,24 @@ pub const FailReason = struct {
     }
 };
 
+pub fn NonExhaustive(comptime T: type) type {
+    const info = switch (@typeInfo(T)) {
+        .Enum => |info| info,
+        else => |info| @compileError("expected an Enum type but got a(n) " ++ @tagName(info)),
+    };
+    std.debug.assert(info.is_exhaustive);
+    return @Type(std.builtin.Type{ .Enum = .{
+        .tag_type = info.tag_type,
+        .fields = info.fields,
+        .decls = info.decls,
+        .is_exhaustive = false,
+    }});
+}
+pub const ImageByteOrder = enum(u8) {
+    lsb_first = 0,
+    msb_first = 1,
+};
+
 pub const ConnectSetup = struct {
     // because X makes an effort to align things to 4-byte bounaries, we
     // should get some better codegen by ensuring that our buffer is aligned
@@ -1976,7 +1994,7 @@ pub const ConnectSetup = struct {
         max_request_len: u16,
         root_screen_count: u8,
         format_count: u8,
-        image_byte_order: u8,
+        image_byte_order: NonExhaustive(ImageByteOrder),
         bitmap_format_bit_order: u8,
         bitmap_format_scanline_unit: u8,
         bitmap_format_scanline_pad: u8,

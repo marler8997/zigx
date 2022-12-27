@@ -3,22 +3,68 @@ const std = @import("std");
 const x = @import("./x.zig");
 const common = @import("common.zig");
 
+const Endian = std.builtin.Endian;
+
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
 const window_width = 400;
 const window_height = 400;
 
+pub const Ids = struct {
+    base: u32,
+    pub fn window(self: Ids) u32 { return self.base; }
+    pub fn bg_gc(self: Ids) u32 { return self.base + 1; }
+    pub fn fg_gc(self: Ids) u32 { return self.base + 2; }
+};
+
+const ImageFormat = struct {
+    endian: Endian,
+    depth: u8,
+    bits_per_pixel: u8,
+    scanline_pad: u8,
+};
+fn getImageFormat(
+    endian: Endian,
+    formats: []const align(4) x.Format,
+    root_depth: u8,
+) !ImageFormat {
+    var opt_match_index: ?usize = null;
+    for (formats) |format, i| {
+        if (format.depth == root_depth) {
+            if (opt_match_index) |_|
+                return error.MultiplePixmapFormatsSameDepth;
+            opt_match_index = i;
+        }
+    }
+    const match_index = opt_match_index orelse
+        return error.MissingPixmapFormat;
+    return ImageFormat {
+        .endian = endian,
+        .depth = root_depth,
+        .bits_per_pixel = formats[match_index].bits_per_pixel,
+        .scanline_pad = formats[match_index].scanline_pad,
+    };
+}
+
 pub fn main() !u8 {
     try x.wsaStartup();
     const conn = try common.connect(allocator);
     defer std.os.shutdown(conn.sock, .both) catch {};
 
-    const screen = blk: {
+    const conn_setup_result = blk: {
         const fixed = conn.setup.fixed();
         inline for (@typeInfo(@TypeOf(fixed.*)).Struct.fields) |field| {
             std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
         }
+        const image_endian: Endian = switch (fixed.image_byte_order) {
+            .lsb_first => .Little,
+            .msb_first => .Big,
+            else => |order| {
+                std.log.err("unknown image-byte-order {}", .{order});
+                return 0xff;
+            },
+        };
         std.log.debug("vendor: {s}", .{try conn.setup.getVendorSlice(fixed.vendor_len)});
         const format_list_offset = x.ConnectSetup.getFormatListOffset(fixed.vendor_len);
         const format_list_limit = x.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
@@ -31,16 +77,27 @@ pub fn main() !u8 {
         inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
             std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
         }
-        break :blk screen;
+        break :blk .{
+            .screen = screen,
+            .image_format = getImageFormat(
+                image_endian,
+                formats,
+                screen.root_depth,
+            ) catch |err| {
+                std.log.err("can't resolve root depth {} format: {s}", .{screen.root_depth, @errorName(err)});
+                return 0xff;
+            },
+        };
     };
+    const screen = conn_setup_result.screen;
 
     // TODO: maybe need to call conn.setup.verify or something?
 
-    const window_id = conn.setup.fixed().resource_id_base;
+    const ids = Ids{ .base = conn.setup.fixed().resource_id_base };
     {
         var msg_buf: [x.create_window.max_len]u8 = undefined;
         const len = x.create_window.serialize(&msg_buf, .{
-            .window_id = window_id,
+            .window_id = ids.window(),
             .parent_window_id = screen.root,
             .depth = 0, // we don't care, just inherit from the parent
             .x = 0, .y = 0,
@@ -83,22 +140,20 @@ pub fn main() !u8 {
         try conn.send(msg_buf[0..len]);
     }
 
-    const bg_gc_id = window_id + 1;
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
-            .gc_id = bg_gc_id,
+            .gc_id = ids.bg_gc(),
             .drawable_id = screen.root,
         }, .{
             .foreground = screen.black_pixel,
         });
         try conn.send(msg_buf[0..len]);
     }
-    const fg_gc_id = window_id + 2;
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
-            .gc_id = fg_gc_id,
+            .gc_id = ids.fg_gc(),
             .drawable_id = screen.root,
         }, .{
             .background = screen.black_pixel,
@@ -112,7 +167,7 @@ pub fn main() !u8 {
         const text_literal = [_]u16 { 'm' };
         const text = x.Slice(u16, [*]const u16) { .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
-        x.query_text_extents.serialize(&msg, fg_gc_id, text);
+        x.query_text_extents.serialize(&msg, ids.fg_gc(), text);
         try conn.send(&msg);
     }
 
@@ -202,7 +257,7 @@ pub fn main() !u8 {
 
     {
         var msg: [x.map_window.len]u8 = undefined;
-        x.map_window.serialize(&msg, window_id);
+        x.map_window.serialize(&msg, ids.window());
         try conn.send(&msg);
     }
 
@@ -264,7 +319,7 @@ pub fn main() !u8 {
                 },
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
-                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims);
+                    try render(conn.sock, conn_setup_result.image_format, ids, font_dims);
                 },
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
@@ -285,12 +340,17 @@ const FontDims = struct {
     font_ascent: i16, // pixels up from the text basepoint to the top of the text
 };
 
-fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32, font_dims: FontDims) !void {
+fn render(
+    sock: std.os.socket_t,
+    image_format: ImageFormat,
+    ids: Ids,
+    font_dims: FontDims,
+) !void {
     {
         var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
         x.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = drawable_id,
-            .gc_id = bg_gc_id,
+            .drawable_id = ids.window(),
+            .gc_id = ids.bg_gc(),
         }, &[_]x.Rectangle {
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
         });
@@ -298,14 +358,13 @@ fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32,
     }
     {
         var msg: [x.clear_area.len]u8 = undefined;
-        x.clear_area.serialize(&msg, false, drawable_id, .{
+        x.clear_area.serialize(&msg, false, ids.window(), .{
             .x = 150, .y = 150, .width = 100, .height = 100,
         });
         try common.send(sock, &msg);
     }
 
-
-    try changeGcColor(sock, fg_gc_id, 0xffaadd);
+    try changeGcColor(sock, ids.fg_gc(), 0xffaadd);
     {
         const text_literal: []const u8 = "Hello X!";
         const text = x.Slice(u8, [*]const u8) { .ptr = text_literal.ptr, .len = text_literal.len };
@@ -314,15 +373,15 @@ fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32,
         const text_width = font_dims.width * text_literal.len;
 
         x.image_text8.serialize(&msg, text, .{
-            .drawable_id = drawable_id,
-            .gc_id = fg_gc_id,
+            .drawable_id = ids.window(),
+            .gc_id = ids.fg_gc(),
             .x = @divTrunc((window_width - @intCast(i16, text_width)),  2) + font_dims.font_left,
             .y = @divTrunc((window_height - @intCast(i16, font_dims.height)), 2) + font_dims.font_ascent,
         });
         try common.send(sock, &msg);
     }
 
-    try changeGcColor(sock, fg_gc_id, 0x00ff00);
+    try changeGcColor(sock, ids.fg_gc(), 0x00ff00);
     {
         const rectangles = [_]x.Rectangle{
             .{ .x = 20, .y = 20, .width = 15, .height = 15 },
@@ -330,12 +389,12 @@ fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32,
         };
         var msg: [x.poly_fill_rectangle.getLen(rectangles.len)]u8 = undefined;
         x.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = drawable_id,
-            .gc_id = fg_gc_id,
+            .drawable_id = ids.window(),
+            .gc_id = ids.fg_gc(),
         }, &rectangles);
         try common.send(sock, &msg);
     }
-    try changeGcColor(sock, fg_gc_id, 0x0000ff);
+    try changeGcColor(sock, ids.fg_gc(), 0x0000ff);
     {
         const rectangles = [_]x.Rectangle{
             .{ .x = 60, .y = 20, .width = 15, .height = 15 },
@@ -343,10 +402,100 @@ fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32,
         };
         var msg: [x.poly_rectangle.getLen(rectangles.len)]u8 = undefined;
         x.poly_rectangle.serialize(&msg, .{
-            .drawable_id = drawable_id,
-            .gc_id = fg_gc_id,
+            .drawable_id = ids.window(),
+            .gc_id = ids.fg_gc(),
         }, &rectangles);
         try common.send(sock, &msg);
+    }
+
+    // send a 15x15 test image
+    {
+        const width = 15;
+        const height = 15;
+
+        const max_bytes_per_pixel = 4;
+        const max_scanline_len_unaligned = max_bytes_per_pixel * width;
+        const max_scanline_len = comptime std.mem.alignForward(
+            max_scanline_len_unaligned,
+            32 / 8, // max scanline pad
+        );
+        const max_data_len = height * max_scanline_len;
+        var msg: [x.put_image.getLen(max_data_len)]u8 = undefined;
+
+        // ZFormat
+        // depth:
+        //     bits-per-pixel: 1, 4, 8, 16, 24, 32
+        //         bpp can be larger than depth, when it is, the
+        //         least significant bits hold the pixmap data
+        //         when bpp is 4, order of nibbles in the bytes is the
+        //         same as the image "byte-order"
+        //     scanline-pad: 8, 16, 32
+        const bytes_per_pixel = image_format.bits_per_pixel / 8;
+        std.debug.assert(bytes_per_pixel <= max_bytes_per_pixel);
+        const scanline_len_unaligned = bytes_per_pixel * width;
+        const scanline_len = std.mem.alignForward(
+            scanline_len_unaligned,
+            image_format.scanline_pad / 8,
+        );
+        std.log.info("format={} bytes_per_pixel={} width={} scanline_len={} (unaligned={}) height={}", .{
+            image_format,
+            bytes_per_pixel,
+            width,
+            scanline_len,
+            scanline_len_unaligned,
+            height,
+        });
+        const data_len = @intCast(u18, height * scanline_len);
+        std.debug.assert(data_len <= max_data_len);
+        {
+            var row: usize = 0;
+            while (row < height) : (row += 1) {
+                var data_off: usize = x.put_image.data_offset + row * @intCast(usize, scanline_len);
+
+                var color: u24 = 0;
+                if (row < 5) { color |= 0xff0000; }
+                else if (row < 10) { color |= 0xff00; }
+                else { color |= 0xff; }
+
+                var col: usize = 0;
+                while (col < width) : (col += 1) {
+                    switch (image_format.depth) {
+                        16 => std.mem.writeInt(
+                            u16,
+                            msg[data_off..][0 .. 2],
+                            rgb24To16(color),
+                            image_format.endian,
+                        ),
+                        24 => std.mem.writeInt(
+                            u24,
+                            msg[data_off..][0 .. 3],
+                            color,
+                            image_format.endian,
+                        ),
+                        32 => std.mem.writeInt(
+                            u32,
+                            msg[data_off..][0 .. 4],
+                            color,
+                            image_format.endian,
+                        ),
+                        else => std.debug.panic("TODO: implement image depth {}", .{image_format.depth}),
+                    }
+                    data_off += bytes_per_pixel;
+                }
+            }
+        }
+        x.put_image.serializeNoDataCopy(&msg, data_len, .{
+            .format = .z_pixmap,
+            .drawable_id = ids.window(),
+            .gc_id = ids.fg_gc(),
+            .width = width,
+            .height = height,
+            .x = 100,
+            .y = 20,
+            .left_pad = 0,
+            .depth = image_format.depth,
+        });
+        try common.send(sock, msg[0 .. x.put_image.getLen(data_len)]);
     }
 }
 
@@ -356,4 +505,11 @@ fn changeGcColor(sock: std.os.socket_t, gc_id: u32, color: u32) !void {
         .foreground = color,
     });
     try common.send(sock, msg_buf[0..len]);
+}
+
+fn rgb24To16(color: u24) u16 {
+    const r = @intCast(u16, (color >> 19) & 0x1f);
+    const g = @intCast(u16, (color >> 11) & 0x1f);
+    const b = @intCast(u16, (color >> 3) & 0x1f);
+    return (r << 11) | (g << 6) | b;
 }
