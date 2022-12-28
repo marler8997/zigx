@@ -299,6 +299,7 @@ pub fn main() !u8 {
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
                 },
+                .no_exposure => |msg| std.debug.panic("unexpected no_exposure {}", .{msg}),
                 .unhandled => |msg| {
                     std.log.info("todo: server msg {}", .{msg});
                     return error.UnhandledServerMsg;
