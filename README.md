@@ -53,3 +53,17 @@ xtrace -n -- command
 # i.e.
 xtrace -n -- zig run example.zig
 ```
+
+# Authentication
+
+https://en.wikipedia.org/wiki/X_Window_authorization
+
+I have yet to implement "cookie-based access".  To do so, I need to read the
+cookie from `$HOME/.Xauthority` (or the file from environment variable
+`XAUTHORITY` if it exists).  According to the wiki there are 2 methods
+to sending the cookie, `MIT-MAGIC-COOKIE-1` and `XDM-AUTHORIZATION-1`.
+In the first method the client simply sends the cookie when requested
+to authenticate, in the second method a secret key is also stored in the
+`.Xauthority` file, the client creates a string by concatenating the
+current time, a transport identifier and the cookie, then encrypts
+the resulting string and sends it to the server.
