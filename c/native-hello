@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -ex
+if [ "$CC" = "" ]; then
+    CC=gcc
+fi
+mkdir -p bin
+$CC -o bin/hellox11 example/hellox11.c -lX11
+./bin/hellox11

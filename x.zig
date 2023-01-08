@@ -526,6 +526,7 @@ test "ConnectSetupMessage" {
 
 pub const Opcode = enum(u8) {
     create_window = 1,
+    change_window_attributes = 2,
     map_window = 8,
     intern_atom = 16,
     grab_pointer = 26,
@@ -653,8 +654,8 @@ pub const pointer_event = struct {
     pub const unused_mask: u32   = 0xFFFF8003;
 };
 
-pub const create_window = struct {
-    pub const option_flag = struct {
+pub const window = struct {
+    pub const option_flags = struct {
         pub const bg_pixmap         : u32 = (1 <<  0);
         pub const bg_pixel          : u32 = (1 <<  1);
         pub const border_pixmap     : u32 = (1 <<  2);
@@ -672,35 +673,6 @@ pub const create_window = struct {
         pub const cursor            : u32 = (1 << 14);
     };
 
-    pub const non_option_len =
-              2 // opcode and depth
-            + 2 // request length
-            + 4 // window id
-            + 4 // parent window id
-            + 10 // 2 bytes each for x, y, width, height and border-width
-            + 2 // window class
-            + 4 // visual id
-            + 4 // window option mask
-            ;
-    pub const max_len = non_option_len + (14 * 4);  // 14 possible 4-byte options
-
-    pub const Class = enum(u8) {
-        copy_from_parent = 0,
-        input_output = 1,
-        input_only = 2,
-    };
-    pub const Args = struct {
-        window_id: u32,
-        parent_window_id: u32,
-        depth: u8,
-        x: u16,
-        y: u16,
-        width: u16,
-        height: u16,
-        border_width: u16,
-        class: Class,
-        visual_id: u32,
-    };
     pub const BgPixmap = enum(u32) { none = 0, copy_from_parent = 1 };
     pub const BorderPixmap = enum(u32) { copy_from_parent = 0 };
     pub const BackingStore = enum(u32) { not_useful = 0, when_mapped = 1, always = 2 };
@@ -723,8 +695,40 @@ pub const create_window = struct {
         colormap: Colormap = .copy_from_parent,
         cursor: Cursor = .none,
     };
+};
 
-    pub fn serialize(buf: [*]u8, args: Args, options: Options) u16 {
+pub const create_window = struct {
+    pub const non_option_len =
+              2 // opcode and depth
+            + 2 // request length
+            + 4 // window id
+            + 4 // parent window id
+            + 10 // 2 bytes each for x, y, width, height and border-width
+            + 2 // window class
+            + 4 // visual id
+            + 4 // window options value-mask
+            ;
+    pub const max_len = non_option_len + (15 * 4);  // 15 possible 4-byte options
+
+    pub const Class = enum(u8) {
+        copy_from_parent = 0,
+        input_output = 1,
+        input_only = 2,
+    };
+    pub const Args = struct {
+        window_id: u32,
+        parent_window_id: u32,
+        depth: u8,
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        border_width: u16,
+        class: Class,
+        visual_id: u32,
+    };
+
+    pub fn serialize(buf: [*]u8, args: Args, options: window.Options) u16 {
         buf[0] = @enumToInt(Opcode.create_window);
         buf[1] = args.depth;
 
@@ -743,15 +747,48 @@ pub const create_window = struct {
         var request_len: u16 = non_option_len;
         var option_mask: u32 = 0;
 
-        inline for (std.meta.fields(Options)) |field| {
+        inline for (std.meta.fields(window.Options)) |field| {
             if (!isDefaultValue(options, field)) {
                 writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
-                option_mask |= @field(create_window.option_flag, field.name);
+                option_mask |= @field(window.option_flags, field.name);
                 request_len += 4;
             }
         }
 
         writeIntNative(u32, buf + 28, option_mask);
+        std.debug.assert((request_len & 0x3) == 0);
+        writeIntNative(u16, buf + 2, request_len >> 2);
+        return request_len;
+    }
+};
+
+pub const change_window_attributes = struct {
+    pub const non_option_len =
+              2 // opcode and unused
+            + 2 // request length
+            + 4 // window id
+            + 4 // window options value-mask
+            ;
+    pub const max_len = non_option_len + (15 * 4);  // 15 possible 4-byte options
+    pub fn serialize(buf: [*]u8, window_id: u32, options: window.Options) u16 {
+        buf[0] = @enumToInt(Opcode.change_window_attributes);
+        buf[1] = 0; // unused
+
+        // buf[2-3] is the len, set at the end of the function
+
+        writeIntNative(u32, buf + 4, window_id);
+        var request_len: u16 = non_option_len;
+        var option_mask: u32 = 0;
+
+        inline for (std.meta.fields(window.Options)) |field| {
+            if (!isDefaultValue(options, field)) {
+                writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
+                option_mask |= @field(window.option_flags, field.name);
+                request_len += 4;
+            }
+        }
+
+        writeIntNative(u32, buf + 8, option_mask);
         std.debug.assert((request_len & 0x3) == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
         return request_len;
@@ -1583,7 +1620,7 @@ pub const ServerMsgTaggedUnion = union(enum) {
     no_exposure: *align(4) Event.NoExposure,
 };
 pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
-    switch (@intToEnum(ServerMsgKind, msg_ptr[0])) {
+    switch (@intToEnum(ServerMsgKind, 0x7f & msg_ptr[0])) {
         .err => return .{ .err = @ptrCast(*align(4) ServerMsg.Error, msg_ptr) },
         .reply => return .{ .reply = @ptrCast(*align(4) ServerMsg.Reply, msg_ptr) },
         .key_press => return .{ .key_press = @ptrCast(*align(4) Event.KeyPress, msg_ptr) },
@@ -2135,6 +2172,9 @@ pub const ConnectSetup = struct {
 
     pub fn getFirstScreenPtr(self: @This(), format_list_limit: u32) *align(4) Screen {
         return @ptrCast(*align(4) Screen, @alignCast(4, self.buf.ptr + format_list_limit));
+    }
+    pub fn getScreensPtr(self: @This(), format_list_limit: u32) [*]align(4) Screen {
+        return @ptrCast([*]align(4) Screen, @alignCast(4, self.buf.ptr + format_list_limit));
     }
 };
 
