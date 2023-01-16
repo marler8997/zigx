@@ -161,8 +161,10 @@ pub fn main() !u8 {
         }
         while (true) {
             const data = buf.nextReservedBuffer();
-            const msg_len = x.parseMsgLen(@alignCast(4, data));
-            if (msg_len == 0)
+            if (data.len < 32)
+                break;
+            const msg_len = x.parseMsgLen(data[0..32].*);
+            if (data.len < msg_len)
                 break;
             buf.release(msg_len);
             switch (x.serverMsgTaggedUnion(@alignCast(4, data.ptr))) {

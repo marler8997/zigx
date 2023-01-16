@@ -207,8 +207,10 @@ pub fn main() !u8 {
         }
         while (true) {
             const data = buf.nextReservedBuffer();
-            const msg_len = x.parseMsgLen(@alignCast(4, data));
-            if (msg_len == 0)
+            if (data.len < 32)
+                break;
+            const msg_len = x.parseMsgLen(data[0..32].*);
+            if (data.len < msg_len)
                 break;
             buf.release(msg_len);
             //buf.resetIfEmpty();
@@ -304,6 +306,10 @@ pub fn main() !u8 {
                     std.log.info("todo: server msg {}", .{msg});
                     return error.UnhandledServerMsg;
                 },
+                .map_notify,
+                .reparent_notify,
+                .configure_notify,
+                => unreachable, // did not register for these
             }
         }
     }

@@ -1615,9 +1615,12 @@ pub const ServerMsgTaggedUnion = union(enum) {
     leave_notify: *align(4) Event.LeaveNotify,
     motion_notify: *align(4) Event.MotionNotify,
     keymap_notify: *align(4) Event.KeymapNotify,
-    mapping_notify: *align(4) Event.MappingNotify,
     expose: *align(4) Event.Expose,
     no_exposure: *align(4) Event.NoExposure,
+    map_notify: *align(4) Event.MapNotify,
+    reparent_notify: *align(4) Event.ReparentNotify,
+    configure_notify: *align(4) Event.ConfigureNotify,
+    mapping_notify: *align(4) Event.MappingNotify,
 };
 pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
     switch (@intToEnum(ServerMsgKind, 0x7f & msg_ptr[0])) {
@@ -1631,9 +1634,12 @@ pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
         .leave_notify => return .{ .leave_notify = @ptrCast(*align(4) Event.LeaveNotify, msg_ptr) },
         .motion_notify => return .{ .motion_notify = @ptrCast(*align(4) Event.MotionNotify, msg_ptr) },
         .keymap_notify => return .{ .keymap_notify = @ptrCast(*align(4) Event.KeymapNotify, msg_ptr) },
-        .mapping_notify => return .{ .mapping_notify = @ptrCast(*align(4) Event.MappingNotify, msg_ptr) },
         .expose => return .{ .expose = @ptrCast(*align(4) Event.Expose, msg_ptr) },
         .no_exposure => return .{ .no_exposure = @ptrCast(*align(4) Event.NoExposure, msg_ptr) },
+        .map_notify => return .{ .map_notify = @ptrCast(*align(4) Event.MapNotify, msg_ptr) },
+        .reparent_notify => return .{ .reparent_notify = @ptrCast(*align(4) Event.ReparentNotify, msg_ptr) },
+        .configure_notify => return .{ .configure_notify = @ptrCast(*align(4) Event.ConfigureNotify, msg_ptr) },
+        .mapping_notify => return .{ .mapping_notify = @ptrCast(*align(4) Event.MappingNotify, msg_ptr) },
         else => return .{ .unhandled = @ptrCast(*align(4) ServerMsg.Generic, msg_ptr) },
     }
 }
@@ -1915,6 +1921,47 @@ pub const Event = extern union {
         major_opcode: u8,
         _: [21]u8,
     };
+
+    comptime { std.debug.assert(@sizeOf(MapNotify) == 32); }
+    pub const MapNotify = extern struct {
+        code: u8,
+        unused: u8,
+        sequence: u16,
+        parent: u32,
+        window: u32,
+        _: [20]u8,
+    };
+
+    comptime { std.debug.assert(@sizeOf(ReparentNotify) == 32); }
+    pub const ReparentNotify = extern struct {
+        code: u8,
+        unused: u8,
+        sequence: u16,
+        event: u32,
+        window: u32,
+        parent: u32,
+        x: i16,
+        y: i16,
+        override_redirect: u8,
+        _: [11]u8,
+    };
+
+    comptime { std.debug.assert(@sizeOf(ConfigureNotify) == 32); }
+    pub const ConfigureNotify = extern struct {
+        code: u8,
+        unused: u8,
+        sequence: u16,
+        event: u32,
+        window: u32,
+        above_sibling: u32,
+        x: i16,
+        y: i16,
+        width: u16,
+        height: u16,
+        border_width: u16,
+        override_redirect: u8,
+        _: [5]u8,
+    };
 };
 comptime { std.debug.assert(@sizeOf(Event) == 32); }
 
@@ -1951,16 +1998,11 @@ pub const StringListIterator = struct {
     }
 };
 
-pub fn parseMsgLen(buf: []align(4) u8) u32 {
-    if (buf.len < 32)
-        return 0;
-
-    switch (buf[0]) {
+pub fn parseMsgLen(buf: [32]u8) u32 {
+    switch (buf[0] & 0x7f) {
         @enumToInt(ServerMsgKind.err) => return 32,
-        @enumToInt(ServerMsgKind.reply) => {
-            const len = 32 + (4 * readIntNative(u32, buf.ptr + 4));
-            return if (buf.len < len) 0 else len;
-        },
+        @enumToInt(ServerMsgKind.reply) =>
+            return 32 + (4 * readIntNative(u32, buf[4..8])),
         2 ... 34 => return 32,
         else => |t| std.debug.panic("handle reply type {}", .{t}),
     }
