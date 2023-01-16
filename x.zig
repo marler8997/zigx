@@ -2255,18 +2255,11 @@ pub fn readOneMsgAlloc(allocator: std.mem.Allocator, reader: anytype) ![]align(4
 pub fn readOneMsg(reader: anytype, buf: []align(4) u8) !u32 {
     std.debug.assert(buf.len >= 32);
     try readFull(reader, buf[0 .. 32]);
-    switch (buf[0]) {
-        @enumToInt(ServerMsgKind.err) => return 32,
-        @enumToInt(ServerMsgKind.reply) => {
-            const len = 32 + (4 * readIntNative(u32, buf.ptr + 4));
-            if (len > 32 and len <= buf.len) {
-                try readOneMsgFinish(reader, buf[0 .. len]);
-            }
-            return len;
-        },
-        2 ... 34 => return 32,
-        else => std.debug.panic("message kind {} not implemented", .{buf[0]}),
+    const msg_len = parseMsgLen(buf[0 .. 32].*);
+    if (msg_len > 32 and msg_len < buf.len) {
+        try readOneMsgFinish(reader, buf[0 .. msg_len]);
     }
+    return msg_len;
 }
 
 pub fn readOneMsgFinish(reader: anytype, buf: []align(4) u8) !void {
