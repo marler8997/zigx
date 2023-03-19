@@ -1,3 +1,8 @@
+# zigx
+
+An x11 client library for Zig applications.
+
+Currently tested with zig version `0.11.0-dev.1862+e7f128c20`.
 
 # What you should know about X
 

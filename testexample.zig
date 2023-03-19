@@ -39,7 +39,7 @@ fn getImageFormat(
     root_depth: u8,
 ) !ImageFormat {
     var opt_match_index: ?usize = null;
-    for (formats) |format, i| {
+    for (formats, 0..) |format, i| {
         if (format.depth == root_depth) {
             if (opt_match_index) |_|
                 return error.MultiplePixmapFormatsSameDepth;
@@ -79,7 +79,7 @@ pub fn main() !u8 {
         const format_list_limit = x.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
         std.log.debug("fmt list off={} limit={}", .{format_list_offset, format_list_limit});
         const formats = try conn.setup.getFormatList(format_list_offset, format_list_limit);
-        for (formats) |format, i| {
+        for (formats, 0..) |format, i| {
             std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
         }
         var screen = conn.setup.getFirstScreenPtr(format_list_limit);
