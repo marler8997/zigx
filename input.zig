@@ -21,6 +21,8 @@ pub fn main() !u8 {
     const conn = try common.connect(allocator);
     defer std.os.shutdown(conn.sock, .both) catch {};
 
+    var msg_sequencer = MsgSequencer { .sock = conn.sock };
+
     var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
     {
         var sym_key_map = std.AutoHashMapUnmanaged(u32, Key){};
@@ -34,6 +36,8 @@ pub fn main() !u8 {
 
         const keymap = try x.keymap.request(allocator, conn.sock, conn.setup.fixed().*);
         defer keymap.deinit(allocator);
+        // NOTE: this is brittle, keymap.request doesn't necessarilly guarantee it sends 1 message
+        msg_sequencer.addSequence(1);
         std.log.info("Keymap: syms_per_code={} total_syms={}", .{keymap.syms_per_code, keymap.syms.len});
         {
             var i: usize = 0;
@@ -74,8 +78,6 @@ pub fn main() !u8 {
     };
 
     // TODO: maybe need to call conn.setup.verify or something?
-    var msg_sequencer = MsgSequencer { .sock = conn.sock };
-
     const window_id = conn.setup.fixed().resource_id_base;
     {
         var msg_buf: [x.create_window.max_len]u8 = undefined;
@@ -481,9 +483,12 @@ fn handleReply(
 const MsgSequencer = struct {
     sock: std.os.socket_t,
     last_sequence: u16 = 0,
+    pub fn addSequence(self: *MsgSequencer, msg_count: u16) void {
+        self.last_sequence = self.last_sequence +% msg_count;
+    }
     pub fn send(self: *MsgSequencer, data: []const u8, msg_count: u16) !void {
         try common.send(self.sock, data);
-        self.last_sequence = self.last_sequence +% msg_count;
+        self.addSequence(msg_count);
     }
 };
 
