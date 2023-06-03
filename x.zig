@@ -505,10 +505,10 @@ pub const connect_setup = struct {
         writeIntNative(u16, buf + 6, auth_proto_name.len);
         writeIntNative(u16, buf + 8, auth_proto_data.len);
         writeIntNative(u16, buf + 10, 0); // unused
-        @memcpy(buf + 12, auth_proto_name.ptr, auth_proto_name.len);
+        @memcpy(buf[12..][0..auth_proto_name.len], auth_proto_name.nativeSlice());
         //const off = 12 + pad4(u16, auth_proto_name.len);
         const off : u16 = 12 + @intCast(u16, std.mem.alignForward(auth_proto_name.len, 4));
-        @memcpy(buf + off, auth_proto_data.ptr, auth_proto_data.len);
+        @memcpy(buf[off..][0..auth_proto_data.len], auth_proto_data.nativeSlice());
         std.debug.assert(
             getLen(auth_proto_name.len, auth_proto_data.len) ==
             off + @intCast(u16, std.mem.alignForward(auth_proto_data.len, 4))
@@ -825,7 +825,7 @@ pub const intern_atom = struct {
         const len = getLen(args.name.len);
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u16, buf + 4, args.name.len);
-        @memcpy(buf + 8, args.name.ptr, args.name.len);
+        @memcpy(buf[8..][0..args.name.len], args.name.nativeSlice());
     }
 };
 
@@ -916,7 +916,7 @@ pub const open_font = struct {
         writeIntNative(u16, buf + 8, name.len);
         buf[10] = 0; // unused
         buf[11] = 0; // unused
-        @memcpy(buf + 12, name.ptr, name.len);
+        @memcpy(buf[12..][0..name.len], name.nativeSlice());
     }
 };
 
@@ -981,7 +981,7 @@ pub const list_fonts = struct {
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u16, buf + 4, max_names);
         writeIntNative(u16, buf + 6, pattern.len);
-        @memcpy(buf + 8, pattern.ptr, pattern.len);
+        @memcpy(buf[8..][0..pattern.len], pattern.nativeSlice());
     }
 };
 
@@ -1310,7 +1310,7 @@ pub const put_image = struct {
     pub const data_offset = non_list_len;
     pub fn serialize(buf: [*]u8, data: Slice(u18, [*]const u8), args: Args) void {
         serializeNoDataCopy(buf, data.len, args);
-        @memcpy(buf + data_offset, data.ptr, data.len);
+        @memcpy(buf[data_offset..], data);
     }
     pub fn serializeNoDataCopy(buf: [*]u8, data_len: u18, args: Args) void {
         buf[0] = @enumToInt(Opcode.put_image);
@@ -1353,7 +1353,7 @@ pub const image_text8 = struct {
     pub const text_offset = non_list_len;
     pub fn serialize(buf: [*]u8, text: Slice(u8, [*]const u8), args: Args) void {
         serializeNoTextCopy(buf, text.len, args);
-        @memcpy(buf + text_offset, text.ptr, text.len);
+        @memcpy(buf[text_offset..][0..text.len], text.nativeSlice());
     }
     pub fn serializeNoTextCopy(buf: [*]u8, text_len: u8, args: Args) void {
         buf[0] = @enumToInt(Opcode.image_text8);
@@ -1382,7 +1382,7 @@ pub const query_extension = struct {
     pub const name_offset = 8;
     pub fn serialize(buf: [*]u8, name: Slice(u16, [*]const u8)) void {
         serializeNoNameCopy(buf, name.len);
-        @memcpy(buf + name_offset, name.ptr, name.len);
+        @memcpy(buf[name_offset..][0..name.len], name.nativeSlice());
     }
     pub fn serializeNoNameCopy(buf: [*]u8, name_len: u16) void {
         buf[0] = @enumToInt(Opcode.query_extension);

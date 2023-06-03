@@ -49,7 +49,7 @@ pub const get_extension_version = struct {
     pub const name_offset = 8;
     pub fn serialize(buf: [*]u8, input_ext_opcode: u8, name: x.Slice(u16, [*]const u8)) void {
         serializeNoNameCopy(buf, input_ext_opcode, name);
-        @memcpy(buf + name_offset, name.ptr, name.len);
+        @memcpy(buf[name_offset..][0..name.len], name.nativeSlice());
     }
     pub fn serializeNoNameCopy(buf: [*]u8, input_ext_opcode: u8, name: x.Slice(u16, [*]const u8)) void {
         buf[0] = input_ext_opcode;
@@ -112,7 +112,7 @@ pub const change_property = struct {
                 x.writeIntNative(u32, buf + 8, args.property);
                 x.writeIntNative(u32, buf + 12, args.@"type");
                 x.writeIntNative(u32, buf + 16, args.values.len);
-                @memcpy(buf + 20, args.values.ptr, args.values.len * @sizeOf(T));
+                @memcpy(@ptrCast([*]align(1) T, buf + 20)[0..args.values.len], args.values.nativeSlice());
             }
         };
     }
