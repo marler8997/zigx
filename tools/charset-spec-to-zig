@@ -57,6 +57,7 @@ charsets = (
     Charset("latin9", 19, "Latin-9", "latin"),
     Charset("currency", 32, "Currency", "currency"),
     Charset("_3270", 253, "3270", "_3170"),
+    Charset("keyboard_xkb", 254, "", "kbdxkb"),
     Charset("keyboard", 255, "Keyboard", "kbd"),
 )
     

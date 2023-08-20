@@ -16,6 +16,7 @@ pub const Korean = @import("charset/korean.zig").Korean;
 pub const Latin9 = @import("charset/latin9.zig").Latin9;
 pub const Currency = @import("charset/currency.zig").Currency;
 pub const _3270 = @import("charset/_3270.zig")._3270;
+pub const Keyboard_xkb = @import("charset/keyboard_xkb.zig").Keyboard_xkb;
 pub const Keyboard = @import("charset/keyboard.zig").Keyboard;
 pub const Combined = @import("charset/combined.zig").Combined;
 
@@ -38,6 +39,7 @@ pub const Charset = enum(u8) {
     latin9 = 19,
     currency = 32,
     _3270 = 253,
+    keyboard_xkb = 254,
     keyboard = 255,
     _,
 };
