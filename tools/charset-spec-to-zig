@@ -57,7 +57,7 @@ charsets = (
     Charset("latin9", 19, "Latin-9", "latin"),
     Charset("currency", 32, "Currency", "currency"),
     Charset("_3270", 253, "3270", "_3170"),
-    Charset("keyboard_xkb", 254, "", "kbdxkb"),
+    Charset("keyboardxkb", 254, "", "kbdxkb"),
     Charset("keyboard", 255, "Keyboard", "kbd"),
 )
     
@@ -187,7 +187,20 @@ with open(os.path.join(repo_dir, "charset.zig"), "w") as zig_charset_file:
     zig_charset_file.write("pub const Charset = enum(u8) {\n")
     for charset in charsets:
         zig_charset_file.write("    {} = {},\n".format(charset.name, charset.code))
-    zig_charset_file.write("    _,\n")
+    zig_charset_file.write("""
+    pub fn fromInt(value_int: u8) ?Charset {
+        return inline for (@typeInfo(Charset).Enum.fields) |f| {
+            if (value_int == f.value) break @enumFromInt(f.value);
+        } else null;
+    }
+""")
+    zig_charset_file.write("\n")
+    zig_charset_file.write("    pub fn Enum(comptime self: Charset) type {\n")
+    zig_charset_file.write("        return switch (self) {\n")
+    for charset in charsets:
+        zig_charset_file.write("            .{} => {},\n".format(charset.name, charset.type_name))
+    zig_charset_file.write("        };\n")
+    zig_charset_file.write("    }\n")
 #    zig_charset_file.write("""
 #    pub fn name(self: Charset) ?[]const u8 {
 #        return if (@import("../stdext.zig").enums.hasName(self)) @tagName(self) else null;

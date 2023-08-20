@@ -16,7 +16,7 @@ pub const Korean = @import("charset/korean.zig").Korean;
 pub const Latin9 = @import("charset/latin9.zig").Latin9;
 pub const Currency = @import("charset/currency.zig").Currency;
 pub const _3270 = @import("charset/_3270.zig")._3270;
-pub const Keyboard_xkb = @import("charset/keyboard_xkb.zig").Keyboard_xkb;
+pub const Keyboardxkb = @import("charset/keyboardxkb.zig").Keyboardxkb;
 pub const Keyboard = @import("charset/keyboard.zig").Keyboard;
 pub const Combined = @import("charset/combined.zig").Combined;
 
@@ -39,7 +39,37 @@ pub const Charset = enum(u8) {
     latin9 = 19,
     currency = 32,
     _3270 = 253,
-    keyboard_xkb = 254,
+    keyboardxkb = 254,
     keyboard = 255,
-    _,
+
+    pub fn fromInt(value_int: u8) ?Charset {
+        return inline for (@typeInfo(Charset).Enum.fields) |f| {
+            if (value_int == f.value) break @enumFromInt(f.value);
+        } else null;
+    }
+
+    pub fn Enum(comptime self: Charset) type {
+        return switch (self) {
+            .latin1 => Latin1,
+            .latin2 => Latin2,
+            .latin3 => Latin3,
+            .latin4 => Latin4,
+            .kana => Kana,
+            .arabic => Arabic,
+            .cyrillic => Cyrillic,
+            .greek => Greek,
+            .technical => Technical,
+            .special => Special,
+            .publish => Publish,
+            .apl => Apl,
+            .hebrew => Hebrew,
+            .thai => Thai,
+            .korean => Korean,
+            .latin9 => Latin9,
+            .currency => Currency,
+            ._3270 => _3270,
+            .keyboardxkb => Keyboardxkb,
+            .keyboard => Keyboard,
+        };
+    }
 };
