@@ -151,7 +151,7 @@ pub fn parseDisplay(display: []const u8) ParseDisplayError!ParsedDisplay {
             // This is the case on my M1 macos laptop.
             if (index == 0) return .{
                 .protoLen = 0,
-                .hostLimit = @intCast(u16, display.len),
+                .hostLimit = @intCast(display.len),
                 .display_num = 0,
                 .preferredScreen = null,
             };
@@ -271,7 +271,7 @@ fn displayToTcpPort(display_num: u32) error{DisplayNumberOutOfRange}!u16 {
     const port = TcpBasePort + display_num;
     if (port > std.math.maxInt(u16))
         return error.DisplayNumberOutOfRange;
-    return @intCast(u16, port);
+    return @intCast(port);
 }
 
 pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u8, display_num: u32) !os.socket_t {
@@ -379,8 +379,8 @@ pub fn connectUnixAddr(addr: *const os.sockaddr.un, path_len: usize) !os.socket_
     errdefer os.close(sock);
 
     // TODO: should we set any socket options?
-    const addr_len = @intCast(os.socklen_t, @offsetOf(os.sockaddr.un, "path") + path_len + 1);
-    os.connect(sock, @ptrCast(*const os.sockaddr, addr), addr_len) catch |err| switch (err) {
+    const addr_len: os.socklen_t = @intCast(@offsetOf(os.sockaddr.un, "path") + path_len + 1);
+    os.connect(sock, @ptrCast(addr), addr_len) catch |err| switch (err) {
         // TODO: handle some of these errors and translate them so we can "fall back" to tcp
         //       for example, we might handle error.FileNotFound, but I would probably
         //       translate most errors to custom ones so we only fallback when we get
@@ -463,7 +463,7 @@ pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@Ty
                         else => @compileError("here"),
                     }
                 },
-                .Slice => return .{ .ptr = s.ptr, .len = @intCast(LenType, s.len) },
+                .Slice => return .{ .ptr = s.ptr, .len = @intCast(s.len) },
                 else => @compileError("cannot slice"),
             }
         },
@@ -491,10 +491,10 @@ pub const connect_setup = struct {
             + 2 // unused
             //+ auth_proto_name_len
             //+ pad4(u16, auth_proto_name_len)
-            + @intCast(u16, std.mem.alignForward(auth_proto_name_len, 4))
+            + std.mem.alignForward(u16, auth_proto_name_len, 4)
             //+ auth_proto_data_len
             //+ pad4(u16, auth_proto_data_len)
-            + @intCast(u16, std.mem.alignForward(auth_proto_data_len, 4))
+            + std.mem.alignForward(u16, auth_proto_data_len, 4)
             ;
     }
     pub fn serialize(buf: [*]u8, proto_major_ver: u16, proto_minor_ver: u16, auth_proto_name: Slice(u16, [*]const u8), auth_proto_data: Slice(u16, [*]const u8)) void {
@@ -507,11 +507,11 @@ pub const connect_setup = struct {
         writeIntNative(u16, buf + 10, 0); // unused
         @memcpy(buf[12..][0..auth_proto_name.len], auth_proto_name.nativeSlice());
         //const off = 12 + pad4(u16, auth_proto_name.len);
-        const off : u16 = 12 + @intCast(u16, std.mem.alignForward(auth_proto_name.len, 4));
+        const off : u16 = 12 + std.mem.alignForward(u16, auth_proto_name.len, 4);
         @memcpy(buf[off..][0..auth_proto_data.len], auth_proto_data.nativeSlice());
         std.debug.assert(
             getLen(auth_proto_name.len, auth_proto_data.len) ==
-            off + @intCast(u16, std.mem.alignForward(auth_proto_data.len, 4))
+            off + std.mem.alignForward(u16, auth_proto_data.len, 4)
         );
     }
 };
@@ -582,7 +582,7 @@ pub const WinGravity = enum(u4) {
 };
 
 fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool {
-    const default_value_ptr = @ptrCast(?*align(1) const field.type, field.default_value) orelse
+    const default_value_ptr = @as(?*align(1) const field.type, @ptrCast(field.default_value)) orelse
         @compileError("isDefaultValue was called on field '" ++ field.name ++ "' which has no default value");
     switch (@typeInfo(field.type)) {
         .Optional => {
@@ -598,13 +598,13 @@ fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool
 fn optionToU32(value: anytype) u32 {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
-        .Bool => return @boolToInt(value),
-        .Enum => return @enumToInt(value),
+        .Bool => return @intFromBool(value),
+        .Enum => return @intFromEnum(value),
         else => {},
     }
     if (T == u32) return value;
     if (T == ?u32) return value.?;
-    if (T == u16) return @intCast(u32, value);
+    if (T == u16) return @intCast(value);
     @compileError("TODO: implement optionToU32 for type: " ++ @typeName(T));
 }
 
@@ -729,7 +729,7 @@ pub const create_window = struct {
     };
 
     pub fn serialize(buf: [*]u8, args: Args, options: window.Options) u16 {
-        buf[0] = @enumToInt(Opcode.create_window);
+        buf[0] = @intFromEnum(Opcode.create_window);
         buf[1] = args.depth;
 
         // buf[2-3] is the len, set at the end of the function
@@ -741,7 +741,7 @@ pub const create_window = struct {
         writeIntNative(u16, buf + 16, args.width);
         writeIntNative(u16, buf + 18, args.height);
         writeIntNative(u16, buf + 20, args.border_width);
-        writeIntNative(u16, buf + 22, @enumToInt(args.class));
+        writeIntNative(u16, buf + 22, @intFromEnum(args.class));
         writeIntNative(u32, buf + 24, args.visual_id);
 
         var request_len: u16 = non_option_len;
@@ -771,7 +771,7 @@ pub const change_window_attributes = struct {
             ;
     pub const max_len = non_option_len + (15 * 4);  // 15 possible 4-byte options
     pub fn serialize(buf: [*]u8, window_id: u32, options: window.Options) u16 {
-        buf[0] = @enumToInt(Opcode.change_window_attributes);
+        buf[0] = @intFromEnum(Opcode.change_window_attributes);
         buf[1] = 0; // unused
 
         // buf[2-3] is the len, set at the end of the function
@@ -798,7 +798,7 @@ pub const change_window_attributes = struct {
 pub const map_window = struct {
     pub const len = 8;
     pub fn serialize(buf: [*]u8, window_id: u32) void {
-        buf[0] = @enumToInt(Opcode.map_window);
+        buf[0] = @intFromEnum(Opcode.map_window);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, window_id);
@@ -813,15 +813,15 @@ pub const intern_atom = struct {
         + 2 // unused
         ;
     pub fn getLen(name_len: u16) u16 {
-        return non_list_len + @intCast(u16, std.mem.alignForward(name_len, 4));
+        return non_list_len + std.mem.alignForward(u16, name_len, 4);
     }
     pub const Args = struct {
         only_if_exists: bool,
         name: Slice(u16, [*]const u8),
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = @enumToInt(Opcode.intern_atom);
-        buf[1] = @boolToInt(args.only_if_exists);
+        buf[0] = @intFromEnum(Opcode.intern_atom);
+        buf[1] = @intFromBool(args.only_if_exists);
         const len = getLen(args.name.len);
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u16, buf + 4, args.name.len);
@@ -844,13 +844,13 @@ pub const grab_pointer = struct {
         time: u32, // 0 is CurrentTime
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = @enumToInt(Opcode.grab_pointer);
+        buf[0] = @intFromEnum(Opcode.grab_pointer);
         buf[1] = if (args.owner_events) 1 else 0;
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, args.grab_window);
         writeIntNative(u16, buf + 8, args.event_mask);
-        buf[10] = @enumToInt(args.pointer_mode);
-        buf[11] = @enumToInt(args.keyboard_mode);
+        buf[10] = @intFromEnum(args.pointer_mode);
+        buf[11] = @intFromEnum(args.keyboard_mode);
         writeIntNative(u32, buf + 12, args.confine_to);
         writeIntNative(u32, buf + 16, args.cursor);
         writeIntNative(u32, buf + 20, args.time);
@@ -863,7 +863,7 @@ pub const ungrab_pointer = struct {
         time: u32, // 0 is CurrentTime
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = @enumToInt(Opcode.ungrab_pointer);
+        buf[0] = @intFromEnum(Opcode.ungrab_pointer);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, args.time);
@@ -883,7 +883,7 @@ pub const warp_pointer = struct {
         dst_y: i16,
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = @enumToInt(Opcode.warp_pointer);
+        buf[0] = @intFromEnum(Opcode.warp_pointer);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, args.src_window);
@@ -905,10 +905,10 @@ pub const open_font = struct {
             + 4 // name length (2 bytes) and 2 unused bytes
             ;
     pub fn getLen(name_len: u16) u16 {
-        return non_list_len + @intCast(u16, std.mem.alignForward(name_len, 4));
+        return non_list_len + std.mem.alignForward(u16, name_len, 4);
     }
     pub fn serialize(buf: [*]u8, font_id: u32, name: Slice(u16, [*]const u8)) void {
-        buf[0] = @enumToInt(Opcode.open_font);
+        buf[0] = @intFromEnum(Opcode.open_font);
         buf[1] = 0; // unused
         const len = getLen(name.len);
         writeIntNative(u16, buf + 2, len >> 2);
@@ -923,7 +923,7 @@ pub const open_font = struct {
 pub const close_font = struct {
     pub const len = 8;
     pub fn serialize(buf: [*]u8, font_id: u32) void {
-        buf[0] = @enumToInt(Opcode.close_font);
+        buf[0] = @intFromEnum(Opcode.close_font);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, font_id);
@@ -933,7 +933,7 @@ pub const close_font = struct {
 pub const query_font = struct {
     pub const len = 8;
     pub fn serialize(buf: [*]u8, font: u32) void {
-        buf[0] = @enumToInt(Opcode.query_font);
+        buf[0] = @intFromEnum(Opcode.query_font);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, font);
@@ -947,11 +947,11 @@ pub const query_text_extents = struct {
             + 4 // font_id
             ;
     pub fn getLen(u16_char_count: u16) u16 {
-        return @intCast(u16, non_list_len + std.mem.alignForward(u16_char_count * 2, 4));
+        return non_list_len + std.mem.alignForward(u16, u16_char_count * 2, 4);
     }
     pub fn serialize(buf: [*]u8, font_id: u32, text: Slice(u16, [*]const u16)) void {
-        buf[0] = @enumToInt(Opcode.query_text_extents);
-        buf[1] = @intCast(u8, text.len % 2); // odd_length
+        buf[0] = @intFromEnum(Opcode.query_text_extents);
+        buf[1] = @intCast(text.len % 2); // odd_length
         const len = getLen(text.len);
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, font_id);
@@ -960,7 +960,7 @@ pub const query_text_extents = struct {
             std.mem.writeIntSliceBig(u16, (buf + off)[0..2], c);
             off += 2;
         }
-        std.debug.assert(len == std.mem.alignForward(off, 4));
+        std.debug.assert(len == std.mem.alignForward(usize, off, 4));
     }
 };
 
@@ -972,10 +972,10 @@ pub const list_fonts = struct {
             + 2 // pattern length
             ;
     pub fn getLen(pattern_len: u16) u16 {
-        return @intCast(u16, non_list_len + std.mem.alignForward(pattern_len, 4));
+        return non_list_len + std.mem.alignForward(u16, pattern_len, 4);
     }
     pub fn serialize(buf: [*]u8, max_names: u16, pattern: Slice(u16, [*]const u8)) void {
-        buf[0] = @enumToInt(Opcode.list_fonts);
+        buf[0] = @intFromEnum(Opcode.list_fonts);
         buf[1] = 0; // unused
         const len = getLen(pattern.len);
         writeIntNative(u16, buf + 2, len >> 2);
@@ -988,7 +988,7 @@ pub const list_fonts = struct {
 pub const get_font_path = struct {
     pub const len = 4;
     pub fn serialize(buf: [*]u8) void {
-        buf[0] = @enumToInt(Opcode.get_font_path);
+        buf[0] = @intFromEnum(Opcode.get_font_path);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
     }
@@ -1054,7 +1054,7 @@ const GcVariant = union(enum) {
     change: void,
 };
 pub fn createOrChangeGcSerialize(buf: [*]u8, gc_id: u32, variant: GcVariant, options: GcOptions) u16 {
-    buf[0] = switch (variant) { .create => @enumToInt(Opcode.create_gc), .change => @enumToInt(Opcode.change_gc) };
+    buf[0] = switch (variant) { .create => @intFromEnum(Opcode.create_gc), .change => @intFromEnum(Opcode.change_gc) };
     buf[1] = 0; // unused
     // buf[2-3] is the len, set at the end of the function
 
@@ -1095,7 +1095,7 @@ pub const create_pixmap = struct {
         height: u16,
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = @enumToInt(Opcode.create_pixmap);
+        buf[0] = @intFromEnum(Opcode.create_pixmap);
         buf[1] = args.depth;
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, args.id);
@@ -1108,7 +1108,7 @@ pub const create_pixmap = struct {
 pub const free_pixmap = struct {
     pub const len = 8;
     pub fn serialize(buf: [*]u8, id: u32) void {
-        buf[0] = @enumToInt(Opcode.free_pixmap);
+        buf[0] = @intFromEnum(Opcode.free_pixmap);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, id);
@@ -1146,7 +1146,7 @@ pub const change_gc = struct {
 pub const clear_area = struct {
     pub const len = 16;
     pub fn serialize(buf: [*]u8, exposures: bool, window_id: u32, area: Rectangle) void {
-        buf[0] = @enumToInt(Opcode.clear_area);
+        buf[0] = @intFromEnum(Opcode.clear_area);
         buf[1] = if (exposures) 1 else 0;
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, window_id);
@@ -1171,7 +1171,7 @@ pub const copy_area = struct {
         height: u16,
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = @enumToInt(Opcode.copy_area);
+        buf[0] = @intFromEnum(Opcode.copy_area);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, args.src_drawable_id);
@@ -1206,8 +1206,8 @@ pub const poly_line = struct {
         gc_id: u32,
     };
     pub fn serialize(buf: [*]u8, args: Args, points: []const Point) void {
-        buf[0] = @enumToInt(Opcode.poly_line);
-        buf[1] = @enumToInt(args.coordinate_mode);
+        buf[0] = @intFromEnum(Opcode.poly_line);
+        buf[1] = @intFromEnum(args.coordinate_mode);
         // buf[2-3] is the len, set at the end of the function
         writeIntNative(u32, buf + 4, args.drawable_id);
         writeIntNative(u32, buf + 8, args.gc_id);
@@ -1219,7 +1219,7 @@ pub const poly_line = struct {
         }
         std.debug.assert((request_len & 0x3) == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
-        std.debug.assert(getLen(@intCast(u16, points.len)) == request_len);
+        std.debug.assert(getLen(@intCast(points.len)) == request_len);
     }
 };
 
@@ -1257,7 +1257,7 @@ const poly_rectangle_common = struct {
         }
         std.debug.assert((request_len & 0x3) == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
-        std.debug.assert(getLen(@intCast(u16, rectangles.len)) == request_len);
+        std.debug.assert(getLen(@intCast(rectangles.len)) == request_len);
     }
 };
 
@@ -1266,7 +1266,7 @@ pub const poly_rectangle = struct {
     pub const getLen = poly_rectangle_common.getLen;
     pub const Args = poly_rectangle_common.Args;
     pub fn serialize(buf: [*]u8, args: Args, rectangles: []const Rectangle) void {
-        poly_rectangle_common.serialize(buf, args, rectangles, @enumToInt(Opcode.poly_rectangle));
+        poly_rectangle_common.serialize(buf, args, rectangles, @intFromEnum(Opcode.poly_rectangle));
     }
 };
 
@@ -1275,7 +1275,7 @@ pub const poly_fill_rectangle = struct {
     pub const getLen = poly_rectangle_common.getLen;
     pub const Args = poly_rectangle_common.Args;
     pub fn serialize(buf: [*]u8, args: Args, rectangles: []const Rectangle) void {
-        poly_rectangle_common.serialize(buf, args, rectangles, @enumToInt(Opcode.poly_fill_rectangle));
+        poly_rectangle_common.serialize(buf, args, rectangles, @intFromEnum(Opcode.poly_fill_rectangle));
     }
 };
 
@@ -1290,7 +1290,7 @@ pub const put_image = struct {
         + 4 // left-pad, depth and 2 unused bytes
         ;
     pub fn getLen(data_len: u18) u18 {
-        return @intCast(u18, non_list_len + std.mem.alignForward(data_len, 4));
+        return non_list_len + std.mem.alignForward(u18, data_len, 4);
     }
     pub const Args = struct {
         format: enum(u8) {
@@ -1313,11 +1313,11 @@ pub const put_image = struct {
         @memcpy(buf[data_offset..], data);
     }
     pub fn serializeNoDataCopy(buf: [*]u8, data_len: u18, args: Args) void {
-        buf[0] = @enumToInt(Opcode.put_image);
-        buf[1] = @enumToInt(args.format);
+        buf[0] = @intFromEnum(Opcode.put_image);
+        buf[1] = @intFromEnum(args.format);
         const request_len = getLen(data_len);
         std.debug.assert((request_len & 0x3) == 0);
-        writeIntNative(u16, buf + 2, @intCast(u16, request_len >> 2));
+        writeIntNative(u16, buf + 2, @as(u16, @intCast(request_len >> 2)));
         writeIntNative(u32, buf + 4, args.drawable_id);
         writeIntNative(u32, buf + 8, args.gc_id);
         writeIntNative(u16, buf + 12, args.width);
@@ -1341,7 +1341,7 @@ pub const image_text8 = struct {
             + 4 // x, y coordinates
             ;
     pub fn getLen(text_len: u8) u16 {
-        return @intCast(u16, non_list_len + std.mem.alignForward(text_len, 4));
+        return non_list_len + std.mem.alignForward(u16, text_len, 4);
     }
     pub const max_len = non_list_len + 255;
     pub const Args = struct {
@@ -1356,7 +1356,7 @@ pub const image_text8 = struct {
         @memcpy(buf[text_offset..][0..text.len], text.nativeSlice());
     }
     pub fn serializeNoTextCopy(buf: [*]u8, text_len: u8, args: Args) void {
-        buf[0] = @enumToInt(Opcode.image_text8);
+        buf[0] = @intFromEnum(Opcode.image_text8);
         buf[1] = text_len;
         const request_len = getLen(text_len);
         std.debug.assert(request_len & 0x3 == 0);
@@ -1376,7 +1376,7 @@ pub const query_extension = struct {
             + 2 // unused
             ;
     pub fn getLen(name_len: u16) u16 {
-        return @intCast(u16, non_list_len + std.mem.alignForward(name_len, 4));
+        return non_list_len + std.mem.alignForward(u16, name_len, 4);
     }
     pub const max_len = non_list_len + 0xffff;
     pub const name_offset = 8;
@@ -1385,7 +1385,7 @@ pub const query_extension = struct {
         @memcpy(buf[name_offset..][0..name.len], name.nativeSlice());
     }
     pub fn serializeNoNameCopy(buf: [*]u8, name_len: u16) void {
-        buf[0] = @enumToInt(Opcode.query_extension);
+        buf[0] = @intFromEnum(Opcode.query_extension);
         buf[1] = 0; // unused
         const request_len = getLen(name_len);
         std.debug.assert(request_len & 0x3 == 0);
@@ -1399,7 +1399,7 @@ pub const query_extension = struct {
 pub const get_keyboard_mapping = struct {
     pub const len = 8;
     pub fn serialize(buf: [*]u8, first_keycode: u8, count: u8) void {
-        buf[0] = @enumToInt(Opcode.get_keyboard_mapping);
+        buf[0] = @intFromEnum(Opcode.get_keyboard_mapping);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         buf[4] = first_keycode;
@@ -1410,10 +1410,10 @@ pub const get_keyboard_mapping = struct {
 };
 
 pub fn writeIntNative(comptime T: type, buf: [*]u8, value: T) void {
-    @ptrCast(*align(1) T, buf).* = value;
+    @as(*align(1) T, @ptrCast(buf)).* = value;
 }
 pub fn readIntNative(comptime T: type, buf: [*]const u8) T {
-    return @ptrCast(*const align(1) T, buf).*;
+    return @as(*const align(1) T, @ptrCast(buf)).*;
 }
 
 
@@ -1512,7 +1512,7 @@ pub const ErrorCode = enum(u8) {
     pixmap = 4,
     atom = 5,
     cursor = 6,
-    font = @enumToInt(ErrorCodeFont.font),
+    font = @intFromEnum(ErrorCodeFont.font),
     match = 8,
     drawable = 9,
     access = 10,
@@ -1520,8 +1520,8 @@ pub const ErrorCode = enum(u8) {
     colormap = 12,
     gcontext = 13,
     id_choice = 14,
-    name = @enumToInt(ErrorCodeOpcode.name),
-    length = @enumToInt(ErrorCodeOpcode.length),
+    name = @intFromEnum(ErrorCodeOpcode.name),
+    length = @intFromEnum(ErrorCodeOpcode.length),
     implementation = 17,
     _, // allow unknown errors
 };
@@ -1565,41 +1565,41 @@ pub const EventCode = enum(u8) {
 pub const ErrorKind = enum(u8) { err = 0 };
 pub const ReplyKind = enum(u8) { reply = 1 };
 pub const ServerMsgKind = enum(u8) {
-    err = @enumToInt(ErrorKind.err),
-    reply = @enumToInt(ReplyKind.reply),
-    key_press         = @enumToInt(EventCode.key_press),
-    key_release       = @enumToInt(EventCode.key_release),
-    button_press      = @enumToInt(EventCode.button_press),
-    button_release    = @enumToInt(EventCode.button_release),
-    motion_notify     = @enumToInt(EventCode.motion_notify),
-    enter_notify      = @enumToInt(EventCode.enter_notify),
-    leave_notify      = @enumToInt(EventCode.leave_notify),
-    focus_in          = @enumToInt(EventCode.focus_in),
-    focus_out         = @enumToInt(EventCode.focus_out),
-    keymap_notify     = @enumToInt(EventCode.keymap_notify),
-    expose            = @enumToInt(EventCode.expose),
-    graphics_exposure = @enumToInt(EventCode.graphics_exposure),
-    no_exposure       = @enumToInt(EventCode.no_exposure),
-    visibility_notify = @enumToInt(EventCode.visibility_notify),
-    create_notify     = @enumToInt(EventCode.create_notify),
-    destroy_notify    = @enumToInt(EventCode.destroy_notify),
-    unmap_notify      = @enumToInt(EventCode.unmap_notify),
-    map_notify        = @enumToInt(EventCode.map_notify),
-    map_request       = @enumToInt(EventCode.map_request),
-    reparent_notify   = @enumToInt(EventCode.reparent_notify),
-    configure_notify  = @enumToInt(EventCode.configure_notify),
-    configure_request = @enumToInt(EventCode.configure_request),
-    gravity_notify    = @enumToInt(EventCode.gravity_notify),
-    resize_request    = @enumToInt(EventCode.resize_request),
-    circulate_notify  = @enumToInt(EventCode.circulate_notify),
-    ciculate_request  = @enumToInt(EventCode.ciculate_request),
-    property_notify   = @enumToInt(EventCode.property_notify),
-    selection_clear   = @enumToInt(EventCode.selection_clear),
-    selection_request = @enumToInt(EventCode.selection_request),
-    selection_notify  = @enumToInt(EventCode.selection_notify),
-    colormap_notify   = @enumToInt(EventCode.colormap_notify),
-    client_message    = @enumToInt(EventCode.client_message),
-    mapping_notify    = @enumToInt(EventCode.mapping_notify),
+    err = @intFromEnum(ErrorKind.err),
+    reply = @intFromEnum(ReplyKind.reply),
+    key_press         = @intFromEnum(EventCode.key_press),
+    key_release       = @intFromEnum(EventCode.key_release),
+    button_press      = @intFromEnum(EventCode.button_press),
+    button_release    = @intFromEnum(EventCode.button_release),
+    motion_notify     = @intFromEnum(EventCode.motion_notify),
+    enter_notify      = @intFromEnum(EventCode.enter_notify),
+    leave_notify      = @intFromEnum(EventCode.leave_notify),
+    focus_in          = @intFromEnum(EventCode.focus_in),
+    focus_out         = @intFromEnum(EventCode.focus_out),
+    keymap_notify     = @intFromEnum(EventCode.keymap_notify),
+    expose            = @intFromEnum(EventCode.expose),
+    graphics_exposure = @intFromEnum(EventCode.graphics_exposure),
+    no_exposure       = @intFromEnum(EventCode.no_exposure),
+    visibility_notify = @intFromEnum(EventCode.visibility_notify),
+    create_notify     = @intFromEnum(EventCode.create_notify),
+    destroy_notify    = @intFromEnum(EventCode.destroy_notify),
+    unmap_notify      = @intFromEnum(EventCode.unmap_notify),
+    map_notify        = @intFromEnum(EventCode.map_notify),
+    map_request       = @intFromEnum(EventCode.map_request),
+    reparent_notify   = @intFromEnum(EventCode.reparent_notify),
+    configure_notify  = @intFromEnum(EventCode.configure_notify),
+    configure_request = @intFromEnum(EventCode.configure_request),
+    gravity_notify    = @intFromEnum(EventCode.gravity_notify),
+    resize_request    = @intFromEnum(EventCode.resize_request),
+    circulate_notify  = @intFromEnum(EventCode.circulate_notify),
+    ciculate_request  = @intFromEnum(EventCode.ciculate_request),
+    property_notify   = @intFromEnum(EventCode.property_notify),
+    selection_clear   = @intFromEnum(EventCode.selection_clear),
+    selection_request = @intFromEnum(EventCode.selection_request),
+    selection_notify  = @intFromEnum(EventCode.selection_notify),
+    colormap_notify   = @intFromEnum(EventCode.colormap_notify),
+    client_message    = @intFromEnum(EventCode.client_message),
+    mapping_notify    = @intFromEnum(EventCode.mapping_notify),
     _,
 };
 
@@ -1623,24 +1623,24 @@ pub const ServerMsgTaggedUnion = union(enum) {
     mapping_notify: *align(4) Event.MappingNotify,
 };
 pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
-    switch (@intToEnum(ServerMsgKind, 0x7f & msg_ptr[0])) {
-        .err => return .{ .err = @ptrCast(*align(4) ServerMsg.Error, msg_ptr) },
-        .reply => return .{ .reply = @ptrCast(*align(4) ServerMsg.Reply, msg_ptr) },
-        .key_press => return .{ .key_press = @ptrCast(*align(4) Event.KeyPress, msg_ptr) },
-        .key_release => return .{ .key_release = @ptrCast(*align(4) Event.KeyRelease, msg_ptr) },
-        .button_press => return .{ .button_press = @ptrCast(*align(4) Event.ButtonPress, msg_ptr) },
-        .button_release => return .{ .button_release = @ptrCast(*align(4) Event.ButtonRelease, msg_ptr) },
-        .enter_notify => return .{ .enter_notify = @ptrCast(*align(4) Event.EnterNotify, msg_ptr) },
-        .leave_notify => return .{ .leave_notify = @ptrCast(*align(4) Event.LeaveNotify, msg_ptr) },
-        .motion_notify => return .{ .motion_notify = @ptrCast(*align(4) Event.MotionNotify, msg_ptr) },
-        .keymap_notify => return .{ .keymap_notify = @ptrCast(*align(4) Event.KeymapNotify, msg_ptr) },
-        .expose => return .{ .expose = @ptrCast(*align(4) Event.Expose, msg_ptr) },
-        .no_exposure => return .{ .no_exposure = @ptrCast(*align(4) Event.NoExposure, msg_ptr) },
-        .map_notify => return .{ .map_notify = @ptrCast(*align(4) Event.MapNotify, msg_ptr) },
-        .reparent_notify => return .{ .reparent_notify = @ptrCast(*align(4) Event.ReparentNotify, msg_ptr) },
-        .configure_notify => return .{ .configure_notify = @ptrCast(*align(4) Event.ConfigureNotify, msg_ptr) },
-        .mapping_notify => return .{ .mapping_notify = @ptrCast(*align(4) Event.MappingNotify, msg_ptr) },
-        else => return .{ .unhandled = @ptrCast(*align(4) ServerMsg.Generic, msg_ptr) },
+    switch (@as(ServerMsgKind, @enumFromInt(0x7f & msg_ptr[0]))) {
+        .err => return .{ .err = @ptrCast(msg_ptr) },
+        .reply => return .{ .reply = @ptrCast(msg_ptr) },
+        .key_press => return .{ .key_press = @ptrCast(msg_ptr) },
+        .key_release => return .{ .key_release = @ptrCast(msg_ptr) },
+        .button_press => return .{ .button_press = @ptrCast(msg_ptr) },
+        .button_release => return .{ .button_release = @ptrCast(msg_ptr) },
+        .enter_notify => return .{ .enter_notify = @ptrCast(msg_ptr) },
+        .leave_notify => return .{ .leave_notify = @ptrCast(msg_ptr) },
+        .motion_notify => return .{ .motion_notify = @ptrCast(msg_ptr) },
+        .keymap_notify => return .{ .keymap_notify = @ptrCast(msg_ptr) },
+        .expose => return .{ .expose = @ptrCast(msg_ptr) },
+        .no_exposure => return .{ .no_exposure = @ptrCast(msg_ptr) },
+        .map_notify => return .{ .map_notify = @ptrCast(msg_ptr) },
+        .reparent_notify => return .{ .reparent_notify = @ptrCast(msg_ptr) },
+        .configure_notify => return .{ .configure_notify = @ptrCast(msg_ptr) },
+        .mapping_notify => return .{ .mapping_notify = @ptrCast(msg_ptr) },
+        else => return .{ .unhandled = @ptrCast(msg_ptr) },
     }
 }
 
@@ -1708,7 +1708,7 @@ pub const ServerMsg = extern union {
         unused_pad: [22]u8,
         string_list: [0]u8,
         pub fn iterator(self: *const StringList) StringListIterator {
-            const ptr = @intToPtr([*]u8, @ptrToInt(self) + 32);
+            const ptr: [*]u8 = @ptrFromInt(@intFromPtr(self) + 32);
             return StringListIterator { .mem = ptr[0 .. self.string_list_word_size * 4], .left = self.string_count, .offset = 0 };
         }
     };
@@ -1741,7 +1741,7 @@ pub const ServerMsg = extern union {
         const property_list_offset = 60;
 
         pub fn properties(self: *const QueryFont) []FontProp {
-            const ptr = @intToPtr([*]FontProp, @ptrToInt(self) + property_list_offset);
+            const ptr: [*]FontProp = @ptrFromInt(@intFromPtr(self) + property_list_offset);
             return ptr[0 .. self.property_count];
         }
         pub fn lists(self: QueryFont) Lists {
@@ -1756,7 +1756,7 @@ pub const ServerMsg = extern union {
                 return actual_list_len <= msg_list_capacity;
             }
             pub fn charInfos(self: Lists, msg: *const QueryFont) []CharInfo {
-                const ptr = @intToPtr([*]CharInfo, @ptrToInt(msg) + property_list_offset + self.property_list_byte_len);
+                const ptr: [*]CharInfo = @ptrFromInt(@intFromPtr(msg) + property_list_offset + self.property_list_byte_len);
                 return ptr[0 .. msg.info_count];
             }
         };
@@ -1792,7 +1792,7 @@ pub const ServerMsg = extern union {
         comptime { std.debug.assert(@sizeOf(GetKeyboardMapping) == sym_list_offset); }
 
         pub fn syms(self: *const GetKeyboardMapping) []u32 {
-            const ptr = @intToPtr([*]u32, @ptrToInt(self) + sym_list_offset);
+            const ptr: [*]u32 = @ptrFromInt(@intFromPtr(self) + sym_list_offset);
             return ptr[0 .. self.reply_word_size];
         }
     };
@@ -2000,8 +2000,8 @@ pub const StringListIterator = struct {
 
 pub fn parseMsgLen(buf: [32]u8) u32 {
     switch (buf[0] & 0x7f) {
-        @enumToInt(ServerMsgKind.err) => return 32,
-        @enumToInt(ServerMsgKind.reply) =>
+        @intFromEnum(ServerMsgKind.err) => return 32,
+        @intFromEnum(ServerMsgKind.reply) =>
             return 32 + (4 * readIntNative(u32, buf[4..8])),
         2 ... 34 => return 32,
         else => |t| std.debug.panic("handle reply type {}", .{t}),
@@ -2149,7 +2149,7 @@ pub const ConnectSetup = struct {
         reply_u32_len: u16,
 
         pub fn asBuf(self: *@This()) []u8 {
-            return @ptrCast([*]u8, self)[0..@sizeOf(@This())];
+            return @as([*]u8, @ptrCast(self))[0..@sizeOf(@This())];
         }
 
         pub fn getReplyLen(self: @This()) u16 {
@@ -2158,7 +2158,7 @@ pub const ConnectSetup = struct {
 
         pub fn readFailReason(self: @This(), reader: anytype) FailReason {
             var result: FailReason = undefined;
-            result.len = @intCast(u8, reader.readAll(result.buf[0 .. self.status_opt]) catch |read_err|
+            result.len = @intCast(reader.readAll(result.buf[0 .. self.status_opt]) catch |read_err|
                 (std.fmt.bufPrint(&result.buf, "failed to read failure reason: {s}", .{@errorName(read_err)}) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 }).len);
@@ -2186,7 +2186,7 @@ pub const ConnectSetup = struct {
         unused: u32,
     };
     pub fn fixed(self: @This()) *Fixed {
-        return @ptrCast(*Fixed, self.buf.ptr);
+        return @ptrCast(self.buf.ptr);
     }
 
     pub const VendorOffset = 32;
@@ -2198,13 +2198,13 @@ pub const ConnectSetup = struct {
     }
 
     pub fn getFormatListOffset(vendor_len: u16) u32 {
-        return VendorOffset + @intCast(u32, std.mem.alignForward(vendor_len, 4));
+        return VendorOffset + std.mem.alignForward(u32, vendor_len, 4);
     }
     pub fn getFormatListLimit(format_list_offset: u32, format_count: u32) u32 {
         return format_list_offset + (@sizeOf(Format) * format_count);
     }
     pub fn getFormatListPtr(self: @This(), format_list_offset: u32) [*]align(4) Format {
-        return @ptrCast([*]align(4) Format, @alignCast(4, self.buf.ptr + format_list_offset));
+        return @alignCast(@ptrCast(self.buf.ptr + format_list_offset));
     }
     pub fn getFormatList(self: @This(), format_list_offset: u32, format_list_limit: u32) ![]align(4) Format {
         if (format_list_limit > self.buf.len)
@@ -2213,17 +2213,17 @@ pub const ConnectSetup = struct {
     }
 
     pub fn getFirstScreenPtr(self: @This(), format_list_limit: u32) *align(4) Screen {
-        return @ptrCast(*align(4) Screen, @alignCast(4, self.buf.ptr + format_list_limit));
+        return @alignCast(@ptrCast(self.buf.ptr + format_list_limit));
     }
     pub fn getScreensPtr(self: @This(), format_list_limit: u32) [*]align(4) Screen {
-        return @ptrCast([*]align(4) Screen, @alignCast(4, self.buf.ptr + format_list_limit));
+        return @alignCast(@ptrCast(self.buf.ptr + format_list_limit));
     }
 };
 
 pub fn rgb24To16(color: u24) u16 {
-    const r = @intCast(u16, (color >> 19) & 0x1f);
-    const g = @intCast(u16, (color >> 11) & 0x1f);
-    const b = @intCast(u16, (color >> 3) & 0x1f);
+    const r: u16 = @intCast((color >> 19) & 0x1f);
+    const g: u16 = @intCast((color >> 11) & 0x1f);
+    const b: u16 = @intCast((color >> 3) & 0x1f);
     return (r << 11) | (g << 6) | b;
 }
 
@@ -2267,7 +2267,7 @@ pub fn readOneMsgFinish(reader: anytype, buf: []align(4) u8) !void {
     // for now this is the only case where this should happen
     // I've added this check to audit the code again if this every changes
     //
-    std.debug.assert(buf[0] == @enumToInt(ServerMsgKind.reply));
+    std.debug.assert(buf[0] == @intFromEnum(ServerMsgKind.reply));
     try readFull(reader, buf[32..]);
 }
 
@@ -2287,7 +2287,7 @@ pub fn readSock(sock: os.socket_t, buf: []u8, flags: u32) !usize {
     if (builtin.os.tag == .windows) {
         const result = os.windows.recvfrom(sock, buf.ptr, buf.len, flags, null, null);
         if (result != os.windows.ws2_32.SOCKET_ERROR)
-            return @intCast(usize, result);
+            return @intCast(result);
         switch (os.windows.ws2_32.WSAGetLastError()) {
             else => |err| return os.windows.unexpectedWSAError(err),
         }
@@ -2299,7 +2299,7 @@ pub fn writeSock(sock: os.socket_t, buf: []const u8, flags: u32) !usize {
     if (builtin.os.tag == .windows) {
         const result = os.windows.sendto(sock, buf.ptr, buf.len, flags, null, 0);
         if (result != os.windows.ws2_32.SOCKET_ERROR)
-            return @intCast(usize, result);
+            return @intCast(result);
         switch (os.windows.ws2_32.WSAGetLastError()) {
             else => |err| return os.windows.unexpectedWSAError(err),
         }

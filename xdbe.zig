@@ -24,7 +24,7 @@ pub const get_version = struct {
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
         buf[0] = args.ext_opcode;
-        buf[1] = @enumToInt(ExtOpcode.get_version);
+        buf[1] = @intFromEnum(ExtOpcode.get_version);
         comptime { std.debug.assert(len & 0x3 == 0); }
         x.writeIntNative(u16, buf + 2, len >> 2);
         buf[4] = args.wanted_major_version;
@@ -70,12 +70,12 @@ pub const allocate = struct {
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
         buf[0] = args.ext_opcode;
-        buf[1] = @enumToInt(ExtOpcode.allocate);
+        buf[1] = @intFromEnum(ExtOpcode.allocate);
         comptime { std.debug.assert(len & 0x3 == 0); }
         x.writeIntNative(u16, buf + 2, len >> 2);
         x.writeIntNative(u32, buf + 4, args.window);
         x.writeIntNative(u32, buf + 8, args.backbuffer);
-        buf[12] = @enumToInt(args.swapaction);
+        buf[12] = @intFromEnum(args.swapaction);
         buf[13] = 0; // unused
         buf[14] = 0; // unused
         buf[15] = 0; // unused
@@ -94,20 +94,20 @@ pub const swap = struct {
         + 4 // swap info count
         ;
     pub fn getLen(swap_info_count: u32) u18 {
-        return @intCast(u18, non_list_len + (swap_info_count * 8));
+        return @intCast(non_list_len + (swap_info_count * 8));
     }
     pub const Args = struct {
         ext_opcode: u8,
     };
     pub fn serialize(buf: [*]u8, swap_infos: x.Slice(u32, [*]const SwapInfo), args: Args) void {
         buf[0] = args.ext_opcode;
-        buf[1] = @enumToInt(ExtOpcode.swap);
+        buf[1] = @intFromEnum(ExtOpcode.swap);
         x.writeIntNative(u32, buf + 4, swap_infos.len);
 
         var i : usize = non_list_len;
         for (swap_infos.nativeSlice()) |info| {
             x.writeIntNative(u32, buf + i + 0, info.window);
-            buf[i + 4] = @enumToInt(info.action);
+            buf[i + 4] = @intFromEnum(info.action);
             buf[i + 5] = 0; // unused
             buf[i + 6] = 0; // unused
             buf[i + 7] = 0; // unused
@@ -115,6 +115,6 @@ pub const swap = struct {
         }
         std.debug.assert(i == getLen(swap_infos.len));
         std.debug.assert((i & 0x3) == 0);
-        x.writeIntNative(u16, buf + 2, @intCast(u16, i >> 2));
+        x.writeIntNative(u16, buf + 2, @intCast(i >> 2));
     }
 };

@@ -30,9 +30,9 @@ pub const Hebrew = enum(u8) {
     hebrew_taw = 250,
 
     pub fn toCombined(self: Hebrew) Combined {
-        return @intToEnum(Combined, (@as(u16, 12) << 8) | @enumToInt(self));
+        return @enumFromInt((@as(u16, 12) << 8) | @intFromEnum(self));
     }
     pub fn next(self: Hebrew) Hebrew {
-        return @intToEnum(Hebrew, @enumToInt(self) + 1);
+        return @enumFromInt(@intFromEnum(self) + 1);
     }
 };

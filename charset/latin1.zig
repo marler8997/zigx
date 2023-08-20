@@ -193,9 +193,9 @@ pub const Latin1 = enum(u8) {
     y_with_diaeresis = 255,
 
     pub fn toCombined(self: Latin1) Combined {
-        return @intToEnum(Combined, (@as(u16, 0) << 8) | @enumToInt(self));
+        return @enumFromInt((@as(u16, 0) << 8) | @intFromEnum(self));
     }
     pub fn next(self: Latin1) Latin1 {
-        return @intToEnum(Latin1, @enumToInt(self) + 1);
+        return @enumFromInt(@intFromEnum(self) + 1);
     }
 };

@@ -24,9 +24,9 @@ pub const Latin3 = enum(u8) {
     s_with_circumflex_accent = 254,
 
     pub fn toCombined(self: Latin3) Combined {
-        return @intToEnum(Combined, (@as(u16, 2) << 8) | @enumToInt(self));
+        return @enumFromInt((@as(u16, 2) << 8) | @intFromEnum(self));
     }
     pub fn next(self: Latin3) Latin3 {
-        return @intToEnum(Latin3, @enumToInt(self) + 1);
+        return @enumFromInt(@intFromEnum(self) + 1);
     }
 };

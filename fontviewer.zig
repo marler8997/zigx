@@ -35,14 +35,14 @@ pub fn main() !u8 {
             var i: usize = 0;
             var sym_offset: usize = 0;
             while (i < keymap.keycode_count) : (i += 1) {
-                const keycode = @intCast(u8, conn.setup.fixed().min_keycode + i);
+                const keycode: u8 = @intCast(conn.setup.fixed().min_keycode + i);
                 var j: usize = 0;
                 while (j < keymap.syms_per_code) : (j += 1) {
                     const sym = keymap.syms[sym_offset];
-                    if (sym == @enumToInt(x.charset.Combined.kbd_left)) {
+                    if (sym == @intFromEnum(x.charset.Combined.kbd_left)) {
                         std.log.info("keycode {} is left", .{keycode});
                         try keycode_map.put(allocator, keycode, .left);
-                    } else if (sym == @enumToInt(x.charset.Combined.kbd_right)) {
+                    } else if (sym == @intFromEnum(x.charset.Combined.kbd_right)) {
                         std.log.info("keycode {} is right", .{keycode});
                         try keycode_map.put(allocator, keycode, .right);
                     }
@@ -138,7 +138,7 @@ pub fn main() !u8 {
 
     const double_buf = try x.DoubleBuffer.init(
         // some of the QueryFont replies are huge!
-        std.mem.alignForward(1024 * 1024, std.mem.page_size),
+        std.mem.alignForward(usize, 1024 * 1024, std.mem.page_size),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
     // double_buf.deinit() (not necessary)
@@ -167,19 +167,19 @@ pub fn main() !u8 {
             if (data.len < msg_len)
                 break;
             buf.release(msg_len);
-            switch (x.serverMsgTaggedUnion(@alignCast(4, data.ptr))) {
+            switch (x.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |generic_msg| {
                     var error_handled = false;
                     switch (generic_msg.code) {
                         .name => {
-                            const msg = @ptrCast(*x.ServerMsg.Error.Name, generic_msg);
+                            const msg: *x.ServerMsg.Error.Name = @ptrCast(generic_msg);
                             if (msg.major_opcode == .open_font) {
                                 try state.onOpenFontError(msg);
                                 error_handled = true;
                             }
                         },
                         .font => {
-                            const msg = @ptrCast(*x.ServerMsg.Error.Font, generic_msg);
+                            const msg: *x.ServerMsg.Error.Font = @ptrCast(generic_msg);
                             if (msg.major_opcode == .query_font) {
                                 try state.onQueryFontError(msg, conn.sock, ids, fonts);
                                 error_handled = true;
@@ -206,14 +206,14 @@ pub fn main() !u8 {
                         .right => @as(isize, 1),
                     } else 0;
                     if (diff != 0) {
-                        const new_font_index = @mod(@intCast(isize, state.desired_font_index) + diff, @intCast(isize, fonts.len));
-                        try state.updateDesiredFont(conn.sock, ids, fonts, @intCast(usize, new_font_index));
+                        const new_font_index = @mod(@as(isize, @intCast(state.desired_font_index)) + diff, @as(isize, @intCast(fonts.len)));
+                        try state.updateDesiredFont(conn.sock, ids, fonts, @intCast(new_font_index));
                     }
                 },
                 .key_release => {}, // NOTE: still get key_release events even though we didn't ask for them
                 .expose => |msg| try state.onExpose(msg, conn.sock, ids, fonts),
                 else => {
-                    const msg = @ptrCast(*x.ServerMsg.Generic, data.ptr);
+                    const msg: *x.ServerMsg.Generic = @ptrCast(data.ptr);
                     std.log.info("todo: server msg {}", .{msg});
                     return error.UnhandledServerMsg;
                 },
@@ -319,7 +319,7 @@ const State = struct {
         ids: Ids,
         fonts: []x.Slice(u8, [*]const u8),
     ) !void {
-        const msg = @ptrCast(*x.ServerMsg.QueryFont, reply_msg);
+        const msg: *x.ServerMsg.QueryFont = @ptrCast(reply_msg);
         //std.log.info("{}", .{msg});
         switch (self.exposed) {
             .no => @panic("codebug"),

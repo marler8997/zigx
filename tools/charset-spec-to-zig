@@ -174,10 +174,10 @@ with open(os.path.join(repo_dir, "charset.zig"), "w") as zig_charset_file:
                 out_file.write("    {} = {},\n".format(keysym.name, keysym.code))
             out_file.write(f"""
     pub fn toCombined(self: {charset.type_name}) Combined {{
-        return @intToEnum(Combined, (@as(u16, {charset.code}) << 8) | @enumToInt(self));
+        return @enumFromInt((@as(u16, {charset.code}) << 8) | @intFromEnum(self));
     }}
     pub fn next(self: {charset.type_name}) {charset.type_name} {{
-        return @intToEnum({charset.type_name}, @enumToInt(self) + 1);
+        return @enumFromInt(@intFromEnum(self) + 1);
     }}
 """)
             out_file.write("};\n")
@@ -199,7 +199,7 @@ with open(os.path.join(zig_charset_dir, "combined.zig"), "w") as out_file:
     out_file.write("pub const Combined = enum(u16) {\n")
     for charset in charsets:
         for keysym in charset.keysyms:
-            out_file.write("    {}_{} = (@intCast(u16, @enumToInt(Charset.{})) << 8) | {},\n".format(
+            out_file.write("    {}_{} = (@as(u16, @intCast(@intFromEnum(Charset.{}))) << 8) | {},\n".format(
                 charset.combined_prefix, keysym.combined_name, charset.name, keysym.code))
     out_file.write("    _,\n")
     out_file.write("};\n")

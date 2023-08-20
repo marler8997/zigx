@@ -27,7 +27,7 @@ pub fn main() !u8 {
     const font_id = conn.setup.fixed().resource_id_base;
 
     {
-        const font_name_slice = x.Slice(u16, [*]const u8) { .ptr = font_name.ptr, .len = @intCast(u16, font_name.len) };
+        const font_name_slice = x.Slice(u16, [*]const u8) { .ptr = font_name.ptr, .len = @intCast(font_name.len) };
         const msg = try allocator.alloc(u8, x.open_font.getLen(font_name_slice.len));
         defer allocator.free(msg);
         x.open_font.serialize(msg.ptr, font_id, font_name_slice);

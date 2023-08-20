@@ -66,9 +66,9 @@ pub const Kana = enum(u8) {
     semivoiced_sound_symbol = 223,
 
     pub fn toCombined(self: Kana) Combined {
-        return @intToEnum(Combined, (@as(u16, 4) << 8) | @enumToInt(self));
+        return @enumFromInt((@as(u16, 4) << 8) | @intFromEnum(self));
     }
     pub fn next(self: Kana) Kana {
-        return @intToEnum(Kana, @enumToInt(self) + 1);
+        return @enumFromInt(@intFromEnum(self) + 1);
     }
 };

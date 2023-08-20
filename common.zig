@@ -73,12 +73,12 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
 }
 
 pub fn asReply(comptime T: type, msg_bytes: []align(4) u8) !*T {
-    const generic_msg = @ptrCast(*x.ServerMsg.Generic, msg_bytes.ptr);
+    const generic_msg: *x.ServerMsg.Generic = @ptrCast(msg_bytes.ptr);
     if (generic_msg.kind != .reply) {
         std.log.err("expected reply but got {}", .{generic_msg});
         return error.UnexpectedReply;
     }
-    return @ptrCast(*T, generic_msg);
+    return @alignCast(@ptrCast(generic_msg));
 }
 
 fn readSocket(sock: std.os.socket_t, buffer: []u8) !usize {

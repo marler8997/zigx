@@ -24,11 +24,11 @@ pub fn Slice(comptime LenType: type, comptime Ptr: type) type { return struct {
     }
 
     pub fn initComptime(comptime ct_slice: NativeSlice) @This() {
-        return .{ .ptr = ct_slice.ptr, .len = @intCast(LenType, ct_slice.len) };
+        return .{ .ptr = ct_slice.ptr, .len = @intCast(ct_slice.len) };
     }
 
     pub fn lenCast(self: @This(), comptime NewLenType: type) Slice(NewLenType, Ptr) {
-        return .{ .ptr = self.ptr, .len = @intCast(NewLenType, self.len) };
+        return .{ .ptr = self.ptr, .len = @intCast(self.len) };
     }
 
     pub usingnamespace switch (@typeInfo(Ptr).Pointer.child) {

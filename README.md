@@ -2,7 +2,7 @@
 
 An x11 client library for Zig applications.
 
-Currently tested with zig version `0.11.0-dev.3132+465272921`.
+Currently tested with zig version `0.11.0`.
 
 # What you should know about X
 

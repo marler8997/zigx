@@ -14,7 +14,7 @@ pub const enums = struct {
 
         @setEvalBranchQuota(3 * enum_info.fields.len);
         inline for (enum_info.fields) |enum_field| {
-            if (@enumToInt(enum_value) == enum_field.value)
+            if (@intFromEnum(enum_value) == enum_field.value)
                 return true;
         }
 

@@ -116,7 +116,7 @@ pub fn main() !u8 {
     }
 
     const double_buf = try x.DoubleBuffer.init(
-        std.mem.alignForward(1000, std.mem.page_size),
+        std.mem.alignForward(usize, 1000, std.mem.page_size),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
     // double_buf.deinit() (not necessary)
@@ -124,14 +124,14 @@ pub fn main() !u8 {
     var buf = double_buf.contiguousReadBuffer();
 
     const font_dims: FontDims = blk: {
-        _ = try x.readOneMsg(conn.reader(), @alignCast(4, buf.nextReadBuffer()));
-        switch (x.serverMsgTaggedUnion(@alignCast(4, buf.double_buffer_ptr))) {
+        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
-                const msg = @ptrCast(*x.ServerMsg.QueryTextExtents, msg_reply);
+                const msg: *x.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
                 break :blk .{
-                    .width = @intCast(u8, msg.overall_width),
-                    .height = @intCast(u8, msg.font_ascent + msg.font_descent),
-                    .font_left = @intCast(i16, msg.overall_left),
+                    .width = @intCast(msg.overall_width),
+                    .height = @intCast(msg.font_ascent + msg.font_descent),
+                    .font_left = @intCast(msg.overall_left),
                     .font_ascent = msg.font_ascent,
                 };
             },
@@ -171,7 +171,7 @@ pub fn main() !u8 {
                 break;
             buf.release(msg_len);
             //buf.resetIfEmpty();
-            switch (x.serverMsgTaggedUnion(@alignCast(4, data.ptr))) {
+            switch (x.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
                     std.log.err("{}", .{msg});
                     return 1;
@@ -262,8 +262,8 @@ fn render(sock: std.os.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32,
         x.image_text8.serialize(&msg, text, .{
             .drawable_id = drawable_id,
             .gc_id = fg_gc_id,
-            .x = @divTrunc((window_width - @intCast(i16, text_width)),  2) + font_dims.font_left,
-            .y = @divTrunc((window_height - @intCast(i16, font_dims.height)), 2) + font_dims.font_ascent,
+            .x = @divTrunc((window_width - @as(i16, @intCast(text_width))),  2) + font_dims.font_left,
+            .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
         });
         try common.send(sock, &msg);
     }

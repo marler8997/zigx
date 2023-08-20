@@ -5,9 +5,9 @@ pub const Latin9 = enum(u8) {
     Y_with_diaeresis = 190,
 
     pub fn toCombined(self: Latin9) Combined {
-        return @intToEnum(Combined, (@as(u16, 19) << 8) | @enumToInt(self));
+        return @enumFromInt((@as(u16, 19) << 8) | @intFromEnum(self));
     }
     pub fn next(self: Latin9) Latin9 {
-        return @intToEnum(Latin9, @enumToInt(self) + 1);
+        return @enumFromInt(@intFromEnum(self) + 1);
     }
 };

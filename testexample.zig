@@ -184,7 +184,7 @@ pub fn main() !u8 {
     }
 
     const double_buf = try x.DoubleBuffer.init(
-        std.mem.alignForward(1000, std.mem.page_size),
+        std.mem.alignForward(usize, 1000, std.mem.page_size),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
     defer double_buf.deinit(); // not necessary but good to test
@@ -192,14 +192,14 @@ pub fn main() !u8 {
     var buf = double_buf.contiguousReadBuffer();
 
     const font_dims: FontDims = blk: {
-        _ = try x.readOneMsg(conn.reader(), @alignCast(4, buf.nextReadBuffer()));
-        switch (x.serverMsgTaggedUnion(@alignCast(4, buf.double_buffer_ptr))) {
+        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
-                const msg = @ptrCast(*x.ServerMsg.QueryTextExtents, msg_reply);
+                const msg: *x.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
                 break :blk .{
-                    .width = @intCast(u8, msg.overall_width),
-                    .height = @intCast(u8, msg.font_ascent + msg.font_descent),
-                    .font_left = @intCast(i16, msg.overall_left),
+                    .width = @intCast(msg.overall_width),
+                    .height = @intCast(msg.font_ascent + msg.font_descent),
+                    .font_left = @intCast(msg.overall_left),
                     .font_ascent = msg.font_ascent,
                 };
             },
@@ -217,11 +217,11 @@ pub fn main() !u8 {
         x.query_extension.serialize(&msg, ext_name);
         try conn.send(&msg);
     }
-    _ = try x.readOneMsg(conn.reader(), @alignCast(4, buf.nextReadBuffer()));
+    _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
     const opt_render_ext: ?struct { opcode: u8 } = blk: {
-        switch (x.serverMsgTaggedUnion(@alignCast(4, buf.double_buffer_ptr))) {
+        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
-                const msg = @ptrCast(*x.ServerMsg.QueryExtension, msg_reply);
+                const msg: *x.ServerMsg.QueryExtension = @ptrCast(msg_reply);
                 if (msg.present == 0) {
                     std.log.info("RENDER extension: not present", .{});
                     break :blk null;
@@ -246,10 +246,10 @@ pub fn main() !u8 {
             });
             try conn.send(&msg);
         }
-        _ = try x.readOneMsg(conn.reader(), @alignCast(4, buf.nextReadBuffer()));
-        switch (x.serverMsgTaggedUnion(@alignCast(4, buf.double_buffer_ptr))) {
+        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
-                const msg = @ptrCast(*x.render.query_version.Reply, msg_reply);
+                const msg: *x.render.query_version.Reply = @ptrCast(msg_reply);
                 std.log.info("RENDER extension: version {}.{}", .{msg.major_version, msg.minor_version});
                 if (msg.major_version != 0) {
                     std.log.err("xrender extension major version {} too new", .{msg.major_version});
@@ -296,7 +296,7 @@ pub fn main() !u8 {
                 break;
             buf.release(msg_len);
             //buf.resetIfEmpty();
-            switch (x.serverMsgTaggedUnion(@alignCast(4, data.ptr))) {
+            switch (x.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
                     std.log.err("{}", .{msg});
                     return 1;
@@ -400,8 +400,8 @@ fn render(
         x.image_text8.serialize(&msg, text, .{
             .drawable_id = ids.window(),
             .gc_id = ids.fg_gc(),
-            .x = @divTrunc((window_width - @intCast(i16, text_width)),  2) + font_dims.font_left,
-            .y = @divTrunc((window_height - @intCast(i16, font_dims.height)), 2) + font_dims.font_ascent,
+            .x = @divTrunc((window_width - @as(i16, @intCast(text_width))),  2) + font_dims.font_left,
+            .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
         });
         try common.send(sock, &msg);
     }
@@ -440,6 +440,7 @@ fn render(
         pub const max_bytes_per_pixel = 4;
         const max_scanline_pad = 32;
         pub const max_scanline_len = std.mem.alignForward(
+            u16,
             max_bytes_per_pixel * width,
             max_scanline_pad / 8, // max scanline pad
         );
@@ -450,11 +451,12 @@ fn render(
         const bytes_per_pixel = image_format.bits_per_pixel / 8;
         std.debug.assert(bytes_per_pixel <= test_image.max_bytes_per_pixel);
         break :blk std.mem.alignForward(
+            u16,
             bytes_per_pixel * test_image.width,
             image_format.scanline_pad / 8,
         );
     };
-    const test_image_data_len = @intCast(u18, test_image.height * test_image_scanline_len);
+    const test_image_data_len: u18 = @intCast(test_image.height * test_image_scanline_len);
     std.debug.assert(test_image_data_len <= test_image.max_data_len);
 
     {

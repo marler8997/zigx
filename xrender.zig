@@ -20,7 +20,7 @@ pub const query_version = struct {
     };
     pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) void {
         buf[0] = ext_opcode;
-        buf[1] = @enumToInt(ExtOpcode.query_version);
+        buf[1] = @intFromEnum(ExtOpcode.query_version);
         std.debug.assert(len & 0x3 == 0);
         x.writeIntNative(u16, buf + 2, len >> 2);
         x.writeIntNative(u32, buf + 4, args.major_version);

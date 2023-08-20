@@ -26,9 +26,9 @@ pub const Special = enum(u8) {
     vertical_bar = 248,
 
     pub fn toCombined(self: Special) Combined {
-        return @intToEnum(Combined, (@as(u16, 9) << 8) | @enumToInt(self));
+        return @enumFromInt((@as(u16, 9) << 8) | @intFromEnum(self));
     }
     pub fn next(self: Special) Special {
-        return @intToEnum(Special, @enumToInt(self) + 1);
+        return @enumFromInt(@intFromEnum(self) + 1);
     }
 };

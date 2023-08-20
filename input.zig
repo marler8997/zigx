@@ -27,12 +27,12 @@ pub fn main() !u8 {
     {
         var sym_key_map = std.AutoHashMapUnmanaged(u32, Key){};
         defer sym_key_map.deinit(allocator);
-        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.kbd_escape), Key.escape);
-        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.latin_w), Key.w);
-        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.latin_i), Key.i);
-        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.latin_d), Key.d);
-        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.latin_g), Key.g);
-        try sym_key_map.put(allocator, @enumToInt(x.charset.Combined.latin_c), Key.c);
+        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.kbd_escape), Key.escape);
+        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.latin_w), Key.w);
+        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.latin_i), Key.i);
+        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.latin_d), Key.d);
+        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.latin_g), Key.g);
+        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.latin_c), Key.c);
 
         const keymap = try x.keymap.request(allocator, conn.sock, conn.setup.fixed().*);
         defer keymap.deinit(allocator);
@@ -43,7 +43,7 @@ pub fn main() !u8 {
             var i: usize = 0;
             var sym_offset: usize = 0;
             while (i < keymap.keycode_count) : (i += 1) {
-                const keycode = @intCast(u8, conn.setup.fixed().min_keycode + i);
+                const keycode: u8 = @intCast(conn.setup.fixed().min_keycode + i);
                 var j: usize = 0;
                 while (j < keymap.syms_per_code) : (j += 1) {
                     const sym = keymap.syms[sym_offset];
@@ -160,7 +160,7 @@ pub fn main() !u8 {
     }
 
     const double_buf = try x.DoubleBuffer.init(
-        std.mem.alignForward(1000, std.mem.page_size),
+        std.mem.alignForward(usize, 1000, std.mem.page_size),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
     // double_buf.deinit() (not necessary)
@@ -168,14 +168,14 @@ pub fn main() !u8 {
     var buf = double_buf.contiguousReadBuffer();
 
     const font_dims: FontDims = blk: {
-        _ = try x.readOneMsg(conn.reader(), @alignCast(4, buf.nextReadBuffer()));
-        switch (x.serverMsgTaggedUnion(@alignCast(4, buf.double_buffer_ptr))) {
+        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
-                const msg = @ptrCast(*x.ServerMsg.QueryTextExtents, msg_reply);
+                const msg: *x.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
                 break :blk .{
-                    .width = @intCast(u8, msg.overall_width),
-                    .height = @intCast(u8, msg.font_ascent + msg.font_descent),
-                    .font_left = @intCast(i16, msg.overall_left),
+                    .width = @intCast(msg.overall_width),
+                    .height = @intCast(msg.font_ascent + msg.font_descent),
+                    .font_left = @intCast(msg.overall_left),
                     .font_ascent = msg.font_ascent,
                 };
             },
@@ -216,7 +216,7 @@ pub fn main() !u8 {
                 break;
             buf.release(msg_len);
             //buf.resetIfEmpty();
-            switch (x.serverMsgTaggedUnion(@alignCast(4, data.ptr))) {
+            switch (x.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
                     std.log.err("{}", .{msg});
                     return 1;
@@ -354,7 +354,7 @@ fn handleReply(
     switch (state.disable_input_device) {
         .initial, .extension_missing, .no_pointer_to_disable, .disabled => {},
         .query_extension => |sequence| if (msg.sequence == sequence) {
-            const msg_ext = @ptrCast(*const x.ServerMsg.QueryExtension, msg);
+            const msg_ext: *const x.ServerMsg.QueryExtension = @ptrCast(msg);
             if (msg_ext.present == 0) {
                 state.disable_input_device = .extension_missing;
             } else {
@@ -376,9 +376,9 @@ fn handleReply(
             const major = x.readIntNative(u16, ptr + 0);
             const minor = x.readIntNative(u16, ptr + 2);
             const present = msg.reserve_min[4];
-            if (opcode != @enumToInt(x.inputext.ExtOpcode.get_extension_version))
+            if (opcode != @intFromEnum(x.inputext.ExtOpcode.get_extension_version))
                 std.debug.panic("invalid opcode in reply {}, expected {}", .{
-                    opcode, @enumToInt(x.inputext.ExtOpcode.get_extension_version)});
+                    opcode, @intFromEnum(x.inputext.ExtOpcode.get_extension_version)});
             if (present == 0)
                 std.debug.panic("XInputExtension is not present, but it was before?", .{});
             if (major != 2)
@@ -395,7 +395,7 @@ fn handleReply(
             return true; // handled
         },
         .list_devices => |state_info| if (msg.sequence == state_info.sequence) {
-            const devices_reply = @ptrCast(*const x.inputext.ListInputDevicesReply, msg);
+            const devices_reply: *const x.inputext.ListInputDevicesReply = @ptrCast(msg);
             var input_info_it = devices_reply.inputInfoIterator();
             var names_it = devices_reply.findNames();
             var selected_pointer_id: ?u8 = null;
@@ -455,7 +455,7 @@ fn handleReply(
             return true;
         },
         .get_prop => |info| if (msg.sequence == info.sequence) {
-            const reply = @ptrCast(*const x.inputext.get_property.Reply, msg);
+            const reply: *const x.inputext.get_property.Reply = @ptrCast(msg);
             std.log.info("get_property returned {}", .{reply});
 
             const change_prop_u8 = x.inputext.change_property.withFormat(u8);
@@ -464,7 +464,7 @@ fn handleReply(
                 .device_id = info.pointer_id,
                 .mode = .replace,
                 .property = info.atom,
-                .@"type" = @enumToInt(x.Atom.INTEGER),
+                .@"type" = @intFromEnum(x.Atom.INTEGER),
                 .values = x.Slice(u16, [*]const u8).initComptime(&[_]u8 { 0 }),
             });
             try msg_sequencer.send(&change_prop_msg, 1);
@@ -686,7 +686,7 @@ fn renderString(
 ) !void {
     var msg: [x.image_text8.max_len]u8 = undefined;
     const text_buf = msg[x.image_text8.text_offset .. x.image_text8.text_offset + 0xff];
-    const text_len = @intCast(u8, (std.fmt.bufPrint(text_buf, fmt, args) catch @panic("string too long")).len);
+    const text_len: u8 = @intCast((std.fmt.bufPrint(text_buf, fmt, args) catch @panic("string too long")).len);
     x.image_text8.serializeNoTextCopy(&msg, text_len, .{
         .drawable_id = drawable_id,
         .gc_id = fg_gc_id,

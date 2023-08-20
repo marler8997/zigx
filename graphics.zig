@@ -117,7 +117,7 @@ pub fn main() !u8 {
     }
 
     const double_buf = try x.DoubleBuffer.init(
-        std.mem.alignForward(1000, std.mem.page_size),
+        std.mem.alignForward(usize, 1000, std.mem.page_size),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
     defer double_buf.deinit(); // not necessary but good to test
@@ -125,14 +125,14 @@ pub fn main() !u8 {
     var buf = double_buf.contiguousReadBuffer();
 
     const font_dims: FontDims = blk: {
-        _ = try x.readOneMsg(conn.reader(), @alignCast(4, buf.nextReadBuffer()));
-        switch (x.serverMsgTaggedUnion(@alignCast(4, buf.double_buffer_ptr))) {
+        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
-                const msg = @ptrCast(*x.ServerMsg.QueryTextExtents, msg_reply);
+                const msg: *x.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
                 break :blk .{
-                    .width = @intCast(u8, msg.overall_width),
-                    .height = @intCast(u8, msg.font_ascent + msg.font_descent),
-                    .font_left = @intCast(i16, msg.overall_left),
+                    .width = @intCast(msg.overall_width),
+                    .height = @intCast(msg.font_ascent + msg.font_descent),
+                    .font_left = @intCast(msg.overall_left),
                     .font_ascent = msg.font_ascent,
                 };
             },
@@ -172,7 +172,7 @@ pub fn main() !u8 {
                 break;
             buf.release(msg_len);
             //buf.resetIfEmpty();
-            switch (x.serverMsgTaggedUnion(@alignCast(4, data.ptr))) {
+            switch (x.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
                     std.log.err("{}", .{msg});
                     return 1;

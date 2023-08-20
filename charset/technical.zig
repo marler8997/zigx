@@ -51,9 +51,9 @@ pub const Technical = enum(u8) {
     downward_arrow = 254,
 
     pub fn toCombined(self: Technical) Combined {
-        return @intToEnum(Combined, (@as(u16, 8) << 8) | @enumToInt(self));
+        return @enumFromInt((@as(u16, 8) << 8) | @intFromEnum(self));
     }
     pub fn next(self: Technical) Technical {
-        return @intToEnum(Technical, @enumToInt(self) + 1);
+        return @enumFromInt(@intFromEnum(self) + 1);
     }
 };

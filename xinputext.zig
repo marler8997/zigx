@@ -6,7 +6,7 @@ pub const ListInputDevicesReplyKind = enum(u8) { opcode = 2 };
 
 pub const ExtOpcode = enum(u8) {
     get_extension_version = 1,
-    list_input_devices = @enumToInt(ListInputDevicesReplyKind.opcode),
+    list_input_devices = @intFromEnum(ListInputDevicesReplyKind.opcode),
     open_device = 3,
     close_device = 4,
     set_device_mode = 5,
@@ -43,7 +43,7 @@ pub const get_extension_version = struct {
             + 2 // unused
             ;
     pub fn getLen(name_len: u16) u16 {
-        return @intCast(u16, non_list_len + std.mem.alignForward(name_len, 4));
+        return non_list_len + std.mem.alignForward(u16, name_len, 4);
     }
     pub const max_len = non_list_len + 0xffff;
     pub const name_offset = 8;
@@ -53,7 +53,7 @@ pub const get_extension_version = struct {
     }
     pub fn serializeNoNameCopy(buf: [*]u8, input_ext_opcode: u8, name: x.Slice(u16, [*]const u8)) void {
         buf[0] = input_ext_opcode;
-        buf[1] = @enumToInt(ExtOpcode.get_extension_version);
+        buf[1] = @intFromEnum(ExtOpcode.get_extension_version);
         const request_len = getLen(name.len);
         std.debug.assert(request_len & 0x3 == 0);
         x.writeIntNative(u16, buf + 2, request_len >> 2);
@@ -67,7 +67,7 @@ pub const list_input_devices = struct {
     pub const len = 4;
     pub fn serialize(buf: [*]u8, input_ext_opcode: u8) void {
         buf[0] = input_ext_opcode;
-        buf[1] = @enumToInt(ExtOpcode.list_input_devices);
+        buf[1] = @intFromEnum(ExtOpcode.list_input_devices);
         x.writeIntNative(u16, buf + 2, len >> 2);
     }
 };
@@ -90,7 +90,7 @@ pub const change_property = struct {
     pub fn withFormat(comptime T: type) type {
         return struct {
             pub fn getLen(value_count: u16) u16 {
-                return @intCast(u16, non_list_len + std.mem.alignForward(value_count * @sizeOf(T), 4));
+                return non_list_len + std.mem.alignForward(u16, value_count * @sizeOf(T), 4);
             }
             pub const Args = struct {
                 device_id: u16,
@@ -102,17 +102,17 @@ pub const change_property = struct {
             };
             pub fn serialize(buf: [*]u8, input_ext_opcode: u8, args: Args) void {
                 buf[0] = input_ext_opcode;
-                buf[1] = @enumToInt(ExtOpcode.change_property);
+                buf[1] = @intFromEnum(ExtOpcode.change_property);
                 const request_len = getLen(args.values.len);
                 std.debug.assert(request_len & 0x3 == 0);
                 x.writeIntNative(u16, buf + 2, request_len >> 2);
                 x.writeIntNative(u16, buf + 4, args.device_id);
-                buf[6] = @enumToInt(args.mode);
+                buf[6] = @intFromEnum(args.mode);
                 buf[7] = @sizeOf(T) * 8;
                 x.writeIntNative(u32, buf + 8, args.property);
                 x.writeIntNative(u32, buf + 12, args.@"type");
                 x.writeIntNative(u32, buf + 16, args.values.len);
-                @memcpy(@ptrCast([*]align(1) T, buf + 20)[0..args.values.len], args.values.nativeSlice());
+                @memcpy(@as([*]align(1) T, @ptrCast(buf + 20))[0..args.values.len], args.values.nativeSlice());
             }
         };
     }
@@ -130,10 +130,10 @@ pub const get_property = struct {
     };
     pub fn serialize(buf: [*]u8, input_ext_opcode: u8, args: Args) void {
         buf[0] = input_ext_opcode;
-        buf[1] = @enumToInt(ExtOpcode.get_property);
+        buf[1] = @intFromEnum(ExtOpcode.get_property);
         x.writeIntNative(u16, buf + 2, len >> 2);
         x.writeIntNative(u16, buf + 4, args.device_id);
-        x.writeIntNative(u8, buf + 6, @boolToInt(args.delete));
+        x.writeIntNative(u8, buf + 6, @intFromBool(args.delete));
         buf[7] = 0; // unused pad
         x.writeIntNative(u32, buf + 8, args.property);
         x.writeIntNative(u32, buf + 12, args.@"type");
@@ -177,9 +177,9 @@ pub const InputClassIdKeyKind = enum(u8) { id = 0 };
 pub const InputClassIdButtonKind = enum(u8) { id = 1 };
 pub const InputClassIdValuatorKind = enum(u8) { id = 2 };
 pub const InputClassId = enum(u8) {
-    key = @enumToInt(InputClassIdKeyKind.id),
-    button = @enumToInt(InputClassIdButtonKind.id),
-    valuator = @enumToInt(InputClassIdValuatorKind.id),
+    key = @intFromEnum(InputClassIdKeyKind.id),
+    button = @intFromEnum(InputClassIdButtonKind.id),
+    valuator = @intFromEnum(InputClassIdValuatorKind.id),
 };
 
 pub fn Length(comptime T: type, comptime value: T) type {
@@ -197,7 +197,7 @@ pub const UnknownInfo = extern struct {
     ) !void {
         _ = fmt;
         _ = options;
-        const bytes = @ptrCast([*]const u8, self)[0..self.length];
+        const bytes = @as([*]const u8, @ptrCast(self))[0..self.length];
         try writer.print("Unknown length={} data={}", .{self.length, std.fmt.fmtSliceHexUpper(bytes)});
     }
 };
@@ -282,18 +282,18 @@ pub const InputInfoIterator = struct {
 
     pub fn front(self: InputInfoIterator) TaggedUnion {
         return switch (self.ptr[0]) {
-            @enumToInt(InputClassId.key     ) =>
-                return TaggedUnion{ .key      = @ptrCast(*align(4) const KeyInfo, self.ptr) },
-            @enumToInt(InputClassId.button  ) =>
-                return TaggedUnion{ .button   = @ptrCast(*align(4) const ButtonInfo, self.ptr) },
-            @enumToInt(InputClassId.valuator) =>
-                return TaggedUnion{ .valuator = @ptrCast(*align(4) const ValuatorInfo, self.ptr) },
+            @intFromEnum(InputClassId.key     ) =>
+                return TaggedUnion{ .key      = @ptrCast(self.ptr) },
+            @intFromEnum(InputClassId.button  ) =>
+                return TaggedUnion{ .button   = @ptrCast(self.ptr) },
+            @intFromEnum(InputClassId.valuator) =>
+                return TaggedUnion{ .valuator = @ptrCast(self.ptr) },
             else                              =>
-                return TaggedUnion{ .unknown  = @ptrCast(*align(4) const UnknownInfo, self.ptr) },
+                return TaggedUnion{ .unknown  = @ptrCast(self.ptr) },
         };
     }
     pub fn pop(self: *InputInfoIterator) void {
-        self.ptr = @alignCast(4, self.ptr + self.ptr[1]);
+        self.ptr = @alignCast(self.ptr + self.ptr[1]);
     }
 };
 
@@ -307,13 +307,13 @@ pub const ListInputDevicesReply = extern struct {
 
     pub fn deviceInfos(self: *const ListInputDevicesReply) x.Slice(u8, [*]const DeviceInfo) {
         return .{
-            .ptr = @intToPtr([*]const DeviceInfo, @ptrToInt(self) + @sizeOf(ListInputDevicesReply)),
+            .ptr = @ptrFromInt(@intFromPtr(self) + @sizeOf(ListInputDevicesReply)),
             .len = self.device_count,
         };
     }
     pub fn inputInfoIterator(self: *const ListInputDevicesReply) InputInfoIterator {
-        const addr = @ptrToInt(self) + @sizeOf(ListInputDevicesReply) + (self.device_count * @sizeOf(DeviceInfo));
-        return InputInfoIterator{ .ptr = @alignCast(4, @intToPtr([*]const u8, addr)) };
+        const addr = @intFromPtr(self) + @sizeOf(ListInputDevicesReply) + (self.device_count * @sizeOf(DeviceInfo));
+        return InputInfoIterator{ .ptr = @ptrFromInt(addr) };
     }
     pub fn findNames(self: *const ListInputDevicesReply) x.StringListIterator {
         var input_info_it = self.inputInfoIterator();
@@ -323,7 +323,7 @@ pub const ListInputDevicesReply = extern struct {
                 input_info_it.pop();
             }
         }
-        const offset = @ptrToInt(input_info_it.ptr) - @ptrToInt(self);
+        const offset = @intFromPtr(input_info_it.ptr) - @intFromPtr(self);
         return .{
             .mem = input_info_it.ptr[0 .. 32 + (4 * self.word_len - offset)],
             .left = self.device_count,
