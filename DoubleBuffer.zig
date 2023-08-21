@@ -86,7 +86,7 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
         },
         .windows => {
             const full_len = half_len * 2;
-            var ptr: [*]align(std.mem.page_size) u8 = @ptrCast(win32.VirtualAlloc2FromApp(
+            var ptr: [*]align(std.mem.page_size) u8 = @alignCast(@ptrCast(win32.VirtualAlloc2FromApp(
                 null, null,
                 full_len,
                 win32.MEM_RESERVE | win32.MEM_RESERVE_PLACEHOLDER,
@@ -94,7 +94,7 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
                 null, 0,
             ) orelse switch (win32.GetLastError()) {
                 else => |err| return std.os.windows.unexpectedError(err),
-            });
+            }));
 
             var free_ptr = true;
             defer if (free_ptr) {
