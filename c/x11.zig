@@ -66,10 +66,16 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
     defer connection.deinit();
 
     {
-        const len = comptime x.connect_setup.getLen(0, 0);
-        var msg: [len]u8 = undefined;
-        x.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
-        sendAll(connection.socket.?, &msg) catch |err|
+        const auth_name = connection.authentication.getName();
+        const auth_data = connection.authentication.getData();
+
+        const len = x.connect_setup.getLen(@intCast(auth_name.len), @intCast(auth_data.len));
+        var msg_buf: [1024]u8 = undefined;
+        if(len > msg_buf.len)
+            return error.SetupTooLarge;
+
+        x.connect_setup.serialize(&msg_buf, 11, 0, .{ .ptr = auth_name.ptr, .len = @intCast(auth_name.len) }, .{ .ptr = auth_data.ptr, .len = @intCast(auth_data.len) });
+        sendAll(connection.socket.?, msg_buf[0..len]) catch |err|
             return reportError("send connect setup failed with {s}", .{@errorName(err)});
     }
 
