@@ -277,13 +277,9 @@ pub const AuthenticationFamily = enum(c_short) {
     Local = 256,
 };
 
-fn parseAuthentication(allocator: std.mem.Allocator, auth_reader: anytype, address: []const u8, family: AuthenticationFamily, display_num: anytype) !Authentication {
+fn parseAuthentication(allocator: std.mem.Allocator, auth_reader: anytype, address: []const u8, family: AuthenticationFamily, display_num: u32) !Authentication {
     var dispno_str_buf: [32]u8 = undefined;
-    const dispno_str = switch(@TypeOf(display_num)) {
-        comptime_int, u32 => try std.fmt.bufPrint(&dispno_str_buf, "{d}", .{display_num}),
-        []const u8 => display_num,
-        else => @compileError("expected display_num to be comptime_int, u32 or []const u8"),
-    };
+    const dispno_str = try std.fmt.bufPrint(&dispno_str_buf, "{d}", .{display_num});
 
     var addr_buffer: [256]u8 = undefined;
     var num_buffer: [256]u8 = undefined;
@@ -312,7 +308,7 @@ fn parseAuthentication(allocator: std.mem.Allocator, auth_reader: anytype, addre
     return error.AuthNotFound;
 }
 
-pub fn getAuthentication(allocator: std.mem.Allocator, address: []const u8, family: AuthenticationFamily, display_num: anytype) Authentication {
+fn getAuthentication(allocator: std.mem.Allocator, address: []const u8, family: AuthenticationFamily, display_num: u32) Authentication {
     var auth_filepath_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const auth_filepath = getAuthorityFilePath(&auth_filepath_buffer) catch return Authentication { .none = {} };
 
@@ -471,7 +467,7 @@ pub fn connectExplicit(allocator: std.mem.Allocator, optional_host: ?[]const u8,
         if (host[0] == '/') {
             return Connection {
                 .socket = try connectUnixPath(host),
-                .authentication = getAuthentication(allocator, host, .Local, host),
+                .authentication = getAuthentication(allocator, host, .Local, display_num),
             };
         }
 
