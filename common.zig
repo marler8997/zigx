@@ -26,19 +26,28 @@ pub const ConnectResult = struct {
 pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
     const display = x.getDisplay();
 
-    const sock = x.connect(display) catch |err| {
+    var connection_buf: [1024]u8 = undefined;
+    var connection_fixed_buf = std.heap.FixedBufferAllocator.init(&connection_buf);
+    var connection = x.connect(connection_fixed_buf.allocator(), display) catch |err| {
         std.log.err("failed to connect to display '{s}': {s}", .{display, @errorName(err)});
         std.os.exit(0xff);
     };
+    defer connection.deinit();
 
     {
-        const len = comptime x.connect_setup.getLen(0, 0);
-        var msg: [len]u8 = undefined;
-        x.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
-        try send(sock, &msg);
+        const auth_name = connection.authentication.getName();
+        const auth_data = connection.authentication.getData();
+
+        const len = x.connect_setup.getLen(@intCast(auth_name.len), @intCast(auth_data.len));
+        var msg_buf: [1024]u8 = undefined;
+        if(len > msg_buf.len)
+            return error.SetupTooLarge;
+
+        x.connect_setup.serialize(&msg_buf, 11, 0, .{ .ptr = auth_name.ptr, .len = @intCast(auth_name.len) }, .{ .ptr = auth_data.ptr, .len = @intCast(auth_data.len) });
+        try send(connection.socket.?, msg_buf[0..len]);
     }
     
-    const reader = SocketReader { .context = sock };
+    const reader = SocketReader { .context = connection.socket.? };
     const connect_setup_header = try x.readConnectSetupHeader(reader, .{});
     switch (connect_setup_header.status) {
         .failed => {
@@ -50,8 +59,9 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
             return error.ConnectSetupFailed;
         },
         .authenticate => {
-            std.log.err("AUTHENTICATE! not implemented", .{});
-            return error.NotImplemetned;
+            // TODO: Print error reason
+            std.log.err("Authentication failed! not implemented", .{});
+            return error.AuthenticationFailed;
         },
         .success => {
             // TODO: check version?
@@ -69,7 +79,7 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
     try x.readFull(reader, connect_setup.buf);
 
-    return ConnectResult{ .sock = sock, .setup = connect_setup };
+    return ConnectResult{ .sock = connection.takeSocket(), .setup = connect_setup };
 }
 
 pub fn asReply(comptime T: type, msg_bytes: []align(4) u8) !*T {

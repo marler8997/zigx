@@ -59,18 +59,21 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
     const display_spec = if (display_spec_opt) |d| std.mem.span(d) else x.getDisplay();
     std.log.info("connectin to DISPLAY '{s}'", .{display_spec});
 
-    const sock = x.connect(display_spec) catch |err|
+    var connection_buf: [1024]u8 = undefined;
+    var connection_fixed_buf = std.heap.FixedBufferAllocator.init(&connection_buf);
+    const connection = x.connect(connection_fixed_buf.allocator(), display_spec) catch |err|
         return reportError("failed to connect to DISPLAY '{s}': {s}", .{display_spec, @errorName(err)});
+    defer connection.deinit();
 
     {
         const len = comptime x.connect_setup.getLen(0, 0);
         var msg: [len]u8 = undefined;
         x.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
-        sendAll(sock, &msg) catch |err|
+        sendAll(connection.socket.?, &msg) catch |err|
             return reportError("send connect setup failed with {s}", .{@errorName(err)});
     }
 
-    const reader = SocketReader { .context = sock };
+    const reader = SocketReader { .context = connection.socket.? };
     const connect_setup_header = x.readConnectSetupHeader(reader, .{}) catch |err|
         return reportError("failed to read connect setup with {s}", .{@errorName(err)});
     switch (connect_setup_header.status) {
@@ -80,7 +83,9 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
             connect_setup_header.readFailReason(reader),
         }),
         .authenticate => {
-            return reportError("AUTHENTICATE! not implemented", .{});
+            // TODO: Print error reason
+            std.log.err("Authentication failed! not implemented", .{});
+            return error.AuthenticationFailed;
         },
         .success => {
             // TODO: check version?
@@ -116,20 +121,20 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
 
     const setup_screens_ptr = connect_setup.getScreensPtr(format_list_limit);
     const screens = try c_allocator.alloc(c.Screen, fixed.root_screen_count);
-    std.log.debug("screens allocated to 0x{x}", .{@ptrToInt(screens.ptr)});
+    std.log.debug("screens allocated to 0x{x}", .{@intFromPtr(screens.ptr)});
     errdefer c_allocator.free(screens);
-    for (screens) |*screen_dst, screen_index| {
+    for (screens, 0..) |*screen_dst, screen_index| {
         const screen_src = &setup_screens_ptr[screen_index];
         inline for (@typeInfo(@TypeOf(screen_src.*)).Struct.fields) |field| {
             std.log.debug("SCREEN {}| {s}: {any}", .{screen_index, field.name, @field(screen_src, field.name)});
         }
-        std.log.debug("screen_ptr is 0x{x}", .{@ptrToInt(screen_dst)});
+        std.log.debug("screen_ptr is 0x{x}", .{@intFromPtr(screen_dst)});
         screen_dst.* = .{
             .display = &display.public,
             .root = screen_src.root,
             .root_visual_num = screen_src.root_visual,
-            .white_pixel = @intCast(c_ulong, screen_src.white_pixel),
-            .black_pixel = @intCast(c_ulong, screen_src.black_pixel),
+            .white_pixel = @intCast(screen_src.white_pixel),
+            .black_pixel = @intCast(screen_src.black_pixel),
         };
     }
 
@@ -138,11 +143,11 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
 
     display.* = .{
         .public = .{
-            .fd = sock,
+            .fd = connection.takeSocket(),
             .proto_major_version = connect_setup_header.proto_major_ver,
             .proto_minor_version = connect_setup_header.proto_minor_ver,
             .default_screen = 0,
-            .nscreens = @intCast(c_uint, fixed.root_screen_count),
+            .nscreens = @intCast(fixed.root_screen_count),
             .screens = screens.ptr,
         },
         .resource_id_base = fixed.resource_id_base,
@@ -165,7 +170,7 @@ export fn XCloseDisplay(display_opt: ?*c.Display) c_int {
     }
 
     c_allocator.free(display_full.read_buf);
-    c_allocator.free(display.screens[0 .. @intCast(usize, display.nscreens)]);
+    c_allocator.free(display.screens[0 .. @as(usize, @intCast(display.nscreens))]);
     //c_allocator.free(@ptrCast([*]u8, display.connect_setup)[0 .. display.connect_setup_len]);
     c_allocator.destroy(display);
     return 0;
@@ -196,9 +201,9 @@ export fn XCreateSimpleWindow(
         .parent_window_id = root_window,
         // TODO: set this correctly
         .depth = 0,
-        .x = @intCast(u16, x_pos), .y = @intCast(u16, y),
-        .width = @intCast(u16, width), .height = @intCast(u16, height),
-        .border_width = @intCast(u16, border_width),
+        .x = @intCast(x_pos), .y = @intCast(y),
+        .width = @intCast(width), .height = @intCast(height),
+        .border_width = @intCast(border_width),
         // TODO
         .class = .copy_from_parent,
 //        .class = .input_output,
@@ -273,7 +278,7 @@ export fn XCreateGC(
         generateErrorEvent(display_full);
     };
 
-    return @ptrCast(c.GC, gc);
+    return @ptrCast(gc);
 }
 
 export fn XMapRaised(display: *c.Display, window: c.Window) c_int {
@@ -332,7 +337,7 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
                 .xexpose = .{
                     .@"type" = c.Expose,
                     .serial = e.sequence,
-                    .send_event = @boolToInt((display_full.read_buf[0] & 0x80) != 0),
+                    .send_event = @intFromBool((display_full.read_buf[0] & 0x80) != 0),
                     .display = display,
                     .window = e.window,
                     .x = e.x, .y = e.y,
@@ -353,7 +358,7 @@ export fn XSelectInput(display: *c.Display, window: c.Window, event_mask: c_ulon
 
     var msg_buf: [x.change_window_attributes.max_len]u8 = undefined;
     const len = x.change_window_attributes.serialize(&msg_buf, window, .{
-        .event_mask = @intCast(u32, event_mask),
+        .event_mask = @intCast(event_mask),
     });
     sendAll(display.fd, msg_buf[0 .. len]) catch |err| {
         reportErrorRaw("failed to send ChangeWindowAttributes message with {s}", .{@errorName(err)});
