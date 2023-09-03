@@ -1343,7 +1343,7 @@ pub const image_text8 = struct {
     pub fn getLen(text_len: u8) u16 {
         return non_list_len + std.mem.alignForward(u16, text_len, 4);
     }
-    pub const max_len = non_list_len + 255;
+    pub const max_len = getLen(255);
     pub const Args = struct {
         drawable_id: u32,
         gc_id: u32,
