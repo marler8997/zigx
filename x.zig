@@ -231,53 +231,139 @@ test "parseDisplay" {
 }
 
 const MitMagicCookie = struct {
-    allocator: std.mem.Allocator,
-    cookie: []u8,
+    const array_capacity: usize = 128;
+    const Array = std.BoundedArray(u8, array_capacity);
+    cookie: Array,
 
-    pub fn init(allocator: std.mem.Allocator, cookie: []const u8) !MitMagicCookie {
-        return MitMagicCookie {
-            .allocator = allocator,
-            .cookie = try allocator.dupe(u8, cookie),
+    pub fn init(cookie: []const u8) !MitMagicCookie {
+        if (cookie.len > array_capacity)
+            return error.CookieTooLarge;
+
+        return .{
+            .cookie = try Array.fromSlice(cookie),
         };
-    }
-
-    pub fn deinit(self: *MitMagicCookie) void {
-        self.allocator.free(self.cookie);
     }
 };
 
-const Authentication = union(enum) {
+pub const Authorization = union(enum) {
     none: void,
     mit_magic_cookie: MitMagicCookie,
 
-    pub fn deinit(self: *Authentication) void {
-        switch(self.*) {
-            Authentication.none => {},
-            Authentication.mit_magic_cookie => |*cookie| cookie.deinit(),
+    pub fn deinit(self: *Authorization) void {
+        switch (self.*) {
+            Authorization.none => {},
+            Authorization.mit_magic_cookie => {},
         }
     }
 
-    pub fn getName(self: *const Authentication) []const u8 {
-        return switch(self.*) {
-            Authentication.none => "",
-            Authentication.mit_magic_cookie => "MIT-MAGIC-COOKIE-1",
+    pub fn getName(self: *const Authorization) []const u8 {
+        return switch (self.*) {
+            Authorization.none => "",
+            Authorization.mit_magic_cookie => AuthorizationType.getName(AuthorizationType.mit_magic_cookie),
         };
     }
 
-    pub fn getData(self: *const Authentication) []const u8 {
-        return switch(self.*) {
-            Authentication.none => "",
-            Authentication.mit_magic_cookie => self.mit_magic_cookie.cookie,
+    pub fn getData(self: *const Authorization) []const u8 {
+        return switch (self.*) {
+            Authorization.none => "",
+            Authorization.mit_magic_cookie => self.mit_magic_cookie.cookie.slice(),
         };
     }
 };
 
-pub const AuthenticationFamily = enum(c_short) {
+pub const AuthorizationType = enum {
+    mit_magic_cookie,
+
+    pub fn getName(self: AuthorizationType) []const u8 {
+        switch (self) {
+            .mit_magic_cookie => return "MIT-MAGIC-COOKIE-1",
+        }
+    }
+};
+
+// TODO: Make this a function that takes a reader and returns a new type with the reader.
+pub const AuthorizationIterator = struct {
+    const Self = @This();
+    const BufferedReader = std.io.BufferedReader(4096, std.fs.File.Reader);
+    const Field = std.BoundedArray(u8, 256);
+
+    file: std.fs.File,
+    reader: BufferedReader,
+    address: Field,
+    num: Field,
+    name: Field,
+    data: Field,
+
+    pub fn init(filepath: []const u8) !Self {
+        const file = try std.fs.cwd().openFile(filepath, .{});
+        return .{
+            .file = file,
+            .reader = std.io.bufferedReader(file.reader()),
+            .address = Field{ .len = 0 },
+            .num = Field{ .len = 0 },
+            .name = Field{ .len = 0 },
+            .data = Field{ .len = 0 },
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.file.close();
+    }
+
+    pub fn next(self: *Self) !?Entry {
+        const reader = self.reader.reader();
+
+        try self.address.resize(0);
+        try self.num.resize(0);
+        try self.name.resize(0);
+        try self.data.resize(0);
+
+        const family = reader.readIntBig(c_short) catch |err| switch(err) {
+            error.EndOfStream => return null,
+            else => return err,
+        };
+
+        try self.readSizedBuffer(&reader, &self.address);
+        try self.readSizedBuffer(&reader, &self.num);
+        try self.readSizedBuffer(&reader, &self.name);
+        try self.readSizedBuffer(&reader, &self.data);
+
+        return .{
+            .family = family,
+            .address = self.address.slice(),
+            .num = self.num.slice(),
+            .name = self.name.slice(),
+            .data = self.data.slice(),
+        };
+    }
+
+    fn readSizedBuffer(_: *Self, reader: anytype, buf: *Field) !void {
+        const len = try reader.readIntBig(c_short);
+        if (len < 0)
+            return error.AuthFileCorrupted;
+        if (len > buf.capacity())
+            return error.AuthArrayTooBig;
+
+        try buf.resize(@intCast(len));
+        if (try reader.readAll(buf.slice()) != buf.len)
+            return error.AuthFileCorrupted;
+    }
+
+    const Entry = struct {
+        family: i16,
+        address: [] const u8,
+        num: [] const u8,
+        name: [] const u8,
+        data: [] const u8,
+    };
+};
+
+pub const AuthorizationFamily = enum(c_short) {
     Internet = 0,
     Local = 256,
 };
 
-fn parseAuthentication(allocator: std.mem.Allocator, auth_reader: anytype, address: []const u8, family: AuthenticationFamily, display_num: anytype) !Authentication {
+pub fn getAuthorization(auth_filepath: []const u8, address: []const u8, family: AuthorizationFamily, display_num: anytype, auth_type: AuthorizationType) !?Authorization {
     var dispno_str_buf: [32]u8 = undefined;
     const dispno_str = switch(@TypeOf(display_num)) {
         comptime_int, u32 => try std.fmt.bufPrint(&dispno_str_buf, "{d}", .{display_num}),
@@ -285,57 +371,69 @@ fn parseAuthentication(allocator: std.mem.Allocator, auth_reader: anytype, addre
         else => @compileError("expected display_num to be comptime_int, u32 or []const u8"),
     };
 
-    var addr_buffer: [256]u8 = undefined;
-    var num_buffer: [256]u8 = undefined;
-    var name_buffer: [256]u8 = undefined;
-    var data_buffer: [256]u8 = undefined;
+    var auth_it = try AuthorizationIterator.init(auth_filepath);
+    defer auth_it.deinit();
 
-    while (true) {
-        const xauth_family = auth_reader.readIntBig(c_short) catch |err| switch(err) {
-            error.EndOfStream => break,
-            else => return err,
-        };
-
-        const xauth_address = try readSizedBuffer(&auth_reader, &addr_buffer);
-        const num = try readSizedBuffer(&auth_reader, &num_buffer);
-        const name = try readSizedBuffer(&auth_reader, &name_buffer);
-        const data = try readSizedBuffer(&auth_reader, &data_buffer);
-
-        // Only MIT-MAGIC-COOKIE is supported for now
-        if (xauth_family == @intFromEnum(family) and std.mem.eql(u8, xauth_address, address) and std.mem.eql(u8, num, dispno_str) and std.mem.eql(u8, name, "MIT-MAGIC-COOKIE-1")) {
-            return Authentication {
-                .mit_magic_cookie = try MitMagicCookie.init(allocator, data),
-            };
+    while (try auth_it.next()) |*auth| {
+        if (auth.family == @intFromEnum(family) and std.mem.eql(u8, auth.address, address) and std.mem.eql(u8, auth.num, dispno_str) and std.mem.eql(u8, auth.name, auth_type.getName())) {
+            switch (auth_type) {
+                .mit_magic_cookie => return Authorization { .mit_magic_cookie = try MitMagicCookie.init(auth.data) },
+            }
         }
     }
 
-    return error.AuthNotFound;
+    return null;
 }
 
-fn getAuthentication(allocator: std.mem.Allocator, address: []const u8, family: AuthenticationFamily, display_num: anytype) Authentication {
-    var auth_filepath_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    const auth_filepath = getAuthorityFilePath(&auth_filepath_buffer) catch return Authentication { .none = {} };
+pub fn getSocketAuthorization(sock: os.socket_t, display_num: anytype) !?Authorization {
+    var auth_filepath_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    const auth_filepath = try getAuthorityFilePath(&auth_filepath_buf);
 
-    const file = std.fs.openFileAbsolute(auth_filepath, .{ .mode = .read_only }) catch return Authentication { .none = {} };
-    defer file.close();
+    var addr: os.sockaddr.storage = undefined;
+    var addrlen: os.socklen_t = @sizeOf(@TypeOf(addr));
+    try os.getsockname(sock, @ptrCast(&addr), &addrlen);
 
-    var buffered_reader = std.io.bufferedReader(file.reader());
-    return parseAuthentication(allocator, buffered_reader.reader(), address, family, display_num) catch return Authentication { .none = {} };
+    var address_buf: [os.HOST_NAME_MAX]u8 = undefined;
+    const address = switch (addr.family) {
+        os.AF.LOCAL => try os.gethostname(&address_buf),
+        os.AF.INET, os.AF.INET6 => {
+            // TODO: Support this, and test this
+            //var remote_addr: os.sockaddr = undefined;
+            //var remote_addrlen: os.socklen_t = 0;
+            //try os.getpeername(sock, &remote_addr, &remote_addrlen);
+            // ...
+            return error.UnsupportedSocketType;
+        },
+        else => return error.UnsupportedSocketType,
+    };
+    
+    const family = socketFamilyGetAuthorizationFamily(addr.family) orelse unreachable;
+    // TODO: Only MIT-MAGIC-COOKIE is supported for now. When others are supported then remove
+    // the auth_type from |getAuthorization| and get the best match (prefer kerberos over xdm, xdm over mit magic cookie).
+    return getAuthorization(auth_filepath, address, family, display_num, .mit_magic_cookie);
 }
 
-fn getAuthorityFilePath(file_path_buf: []u8) ![]const u8 {
-    var auth_fba = std.heap.FixedBufferAllocator.init(file_path_buf);
+fn socketFamilyGetAuthorizationFamily(family: os.sa_family_t) ?AuthorizationFamily {
+    switch (family) {
+        os.AF.LOCAL              => return AuthorizationFamily.Local,
+        os.AF.INET, os.AF.INET6  => return AuthorizationFamily.Internet,
+        else                     => return null,
+    }
+}
+
+pub fn getAuthorityFilePath(filepath_buf: *[std.fs.MAX_PATH_BYTES]u8) ![]const u8 {
+    var auth_fba = std.heap.FixedBufferAllocator.init(filepath_buf);
     if (std.process.getEnvVarOwned(auth_fba.allocator(), "XAUTHORITY")) |auth_env| {
         return auth_env;
     } else |err| switch (err) {
         error.EnvironmentVariableNotFound => {},
         else => return err,
     }
+    auth_fba.reset();
 
     var home_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var home_path_fba = std.heap.FixedBufferAllocator.init(&home_path_buf);
     if (std.process.getEnvVarOwned(home_path_fba.allocator(), "HOME")) |home_env| {
-        auth_fba.reset();
         return try std.fs.path.join(auth_fba.allocator(), &.{home_env, ".Xauthority"});
     } else |err| switch (err) {
         error.EnvironmentVariableNotFound => return error.HomeNotDefined,
@@ -343,26 +441,11 @@ fn getAuthorityFilePath(file_path_buf: []u8) ![]const u8 {
     }
 }
 
-fn readSizedBuffer(auth_reader: anytype, buf: []u8) ![]u8 {
-    const len = try auth_reader.readIntBig(c_short);
-    if (len < 0)
-        return error.AuthFileCorrupted;
-    if (len > buf.len)
-        return error.AuthArrayTooBig;
+test "Authorization" {
+    var hostname_buffer: [os.HOST_NAME_MAX]u8 = undefined;
+    const address = try os.gethostname(&hostname_buffer);
 
-    var data = buf[0..@as(usize, @intCast(len))];
-    if (try auth_reader.readAll(data) != data.len)
-        return error.AuthFileCorrupted;
-
-    return data;
-}
-
-test "Authentication" {
-    var hostname_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
-    const address = try std.os.gethostname(&hostname_buffer);
-
-    var file_stream = std.io.fixedBufferStream(@embedFile("test_files/xauth"));
-    var auth = try parseAuthentication(std.testing.allocator, file_stream.reader(), address, .Local, 0);
+    var auth = try getAuthorization("test_files/xauth", address, .Local, 0, "MIT-MAGIC-COOKIE-1") orelse return error.AuthNotFound;
     defer auth.deinit();
     try std.testing.expectEqualSlices(u8, auth.mit_magic_cookie.cookie, &.{ 0x4C, 0x4F, 0x31, 0x21, 0x1D, 0xB1, 0x28, 0x3D, 0x99, 0x46, 0xCF, 0xD5, 0xB6, 0x71, 0xC0, 0xBF });
 }
@@ -378,24 +461,6 @@ pub fn isUnixProtocol(optionalProtocol: ?[]const u8) bool {
     return false;
 }
 
-pub const Connection = struct {
-    socket: ?os.socket_t,
-    authentication: Authentication,
-
-    pub fn deinit(self: *Connection) void {
-        if(self.socket) |socket|
-            os.close(socket);
-        self.authentication.deinit();
-    }
-
-    pub fn takeSocket(self: *Connection) os.socket_t {
-        std.debug.assert(self.socket != null);
-        const socket = self.socket;
-        self.socket = null;
-        return socket.?;
-    }
-};
-
 // The application should probably have access to the DISPLAY
 // for logging purposes.  This might be too much abstraction.
 //pub fn connect() !os.socket_t {
@@ -405,7 +470,7 @@ pub const Connection = struct {
 //}
 
 //pub const ConnectDisplayError = ParseDisplayError;
-pub fn connect(allocator: std.mem.Allocator, display: []const u8) !Connection {
+pub fn connect(display: []const u8) !os.socket_t {
     const parsed = try parseDisplay(display);
     const optional_host: ?[]const u8 = blk: {
         const host_slice = parsed.hostSlice(display.ptr);
@@ -415,7 +480,7 @@ pub fn connect(allocator: std.mem.Allocator, display: []const u8) !Connection {
         const proto_slice = parsed.protoSlice(display.ptr);
         break :blk if (proto_slice.len == 0) null else proto_slice;
     };
-    return connectExplicit(allocator, optional_host, optional_proto, parsed.display_num);
+    return connectExplicit(optional_host, optional_proto, parsed.display_num);
 }
 
 
@@ -429,36 +494,19 @@ fn displayToTcpPort(display_num: u32) error{DisplayNumberOutOfRange}!u16 {
     return @intCast(port);
 }
 
-pub fn connectExplicit(allocator: std.mem.Allocator, optional_host: ?[]const u8, optional_protocol: ?[]const u8, display_num: u32) !Connection {
+pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u8, display_num: u32) !os.socket_t {
 
     if (optional_protocol) |proto| {
         if (std.mem.eql(u8, proto, "unix")) {
-            var hostname_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
-            const address = try std.os.gethostname(&hostname_buffer);
-
             if (optional_host) |_|
                 @panic("TODO: DISPLAY is unix protocol with a host? Is this possible?");
-
-            return Connection {
-                .socket = try connectUnixDisplayNum(display_num),
-                .authentication = getAuthentication(allocator, address, .Local, display_num),
-            };
+            return connectUnixDisplayNum(display_num);
         }
-
-        var tcp_options = ConnectTcpOptions { .inet6 = false };
-        if (std.mem.eql(u8, proto, "tcp") or std.mem.eql(u8, proto, "inet")) {
-            tcp_options.inet6 = false;
-        } else if (std.mem.eql(u8, proto, "inet6")) {
-            tcp_options.inet6 = true;
-        } else {
-            return error.UnhandledDisplayProtocol;
-        }
-
-        const tcp_host = defaultTcpHost(optional_host);
-        return Connection {
-            .socket = try connectTcp(tcp_host, try displayToTcpPort(display_num), tcp_options),
-            .authentication = Authentication { .none = {} }, // TODO: get authentication here. Need to get remote hostname for address
-        };
+        if (std.mem.eql(u8, proto, "tcp") or std.mem.eql(u8, proto, "inet"))
+            return connectTcp(defaultTcpHost(optional_host), try displayToTcpPort(display_num), .{});
+        if (std.mem.eql(u8, proto, "inet6"))
+            return connectTcp(defaultTcpHost(optional_host), try displayToTcpPort(display_num), .{ .inet6 = true });
+        return error.UnhandledDisplayProtocol;
     }
 
     if (optional_host) |host| {
@@ -467,27 +515,14 @@ pub fn connectExplicit(allocator: std.mem.Allocator, optional_host: ?[]const u8,
             std.log.err("host is 'unix' this might mean 'unix domain socket' but not sure, giving up for now", .{});
             return error.NotSureIWantToSupportAmbiguousUnixHost;
         }
-
-        if (host[0] == '/') {
-            return Connection {
-                .socket = try connectUnixPath(host),
-                .authentication = getAuthentication(allocator, host, .Local, host),
-            };
-        }
-
-        return Connection {
-            .socket = try connectTcp(host, try displayToTcpPort(display_num), .{}),
-            .authentication = Authentication { .none = {} }, // TODO: get authentication here. Need to get remote hostname for address
-        };
+        if (host[0] == '/')
+            return connectUnixPath(host);
+        return connectTcp(host, try displayToTcpPort(display_num), .{});
     } else {
         // otherwise, strategy is to try connecting to a unix domain socket first
         // and fall back to tcp localhost otherwise
-        var hostname_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
-        const address = try std.os.gethostname(&hostname_buffer);
-
-        return Connection {
-            .socket = try connectUnixDisplayNum(display_num),
-            .authentication = getAuthentication(allocator, address, .Local, display_num),
+        return connectUnixDisplayNum(display_num) catch |err| switch (err) {
+            else => |e| return e,
         };
 
         // TODO: uncomment this one we handle some of the errors from connectUnix

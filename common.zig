@@ -26,17 +26,16 @@ pub const ConnectResult = struct {
 pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
     const display = x.getDisplay();
 
-    var connection_buf: [1024]u8 = undefined;
-    var connection_fixed_buf = std.heap.FixedBufferAllocator.init(&connection_buf);
-    var connection = x.connect(connection_fixed_buf.allocator(), display) catch |err| {
+    const sock = x.connect(display) catch |err| {
         std.log.err("failed to connect to display '{s}': {s}", .{display, @errorName(err)});
         std.os.exit(0xff);
     };
-    defer connection.deinit();
+    errdefer x.disconnect(sock);
 
     {
-        const auth_name = connection.authentication.getName();
-        const auth_data = connection.authentication.getData();
+        const auth = getAuthorizationOrNone(display, sock);
+        const auth_name = auth.getName();
+        const auth_data = auth.getData();
 
         const len = x.connect_setup.getLen(@intCast(auth_name.len), @intCast(auth_data.len));
         var msg_buf: [1024]u8 = undefined;
@@ -44,10 +43,10 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
             return error.SetupTooLarge;
 
         x.connect_setup.serialize(&msg_buf, 11, 0, .{ .ptr = auth_name.ptr, .len = @intCast(auth_name.len) }, .{ .ptr = auth_data.ptr, .len = @intCast(auth_data.len) });
-        try send(connection.socket.?, msg_buf[0..len]);
+        try send(sock, msg_buf[0..len]);
     }
     
-    const reader = SocketReader { .context = connection.socket.? };
+    const reader = SocketReader { .context = sock };
     const connect_setup_header = try x.readConnectSetupHeader(reader, .{});
     switch (connect_setup_header.status) {
         .failed => {
@@ -79,7 +78,16 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
     try x.readFull(reader, connect_setup.buf);
 
-    return ConnectResult{ .sock = connection.takeSocket(), .setup = connect_setup };
+    return ConnectResult{ .sock = sock, .setup = connect_setup };
+}
+
+fn getAuthorizationOrNone(display: []const u8, sock: std.os.socket_t) x.Authorization {
+    const display_num = (x.parseDisplay(display) catch unreachable).display_num;
+    const auth = x.getSocketAuthorization(sock, display_num) catch |err| {
+        std.log.debug("failed to get authorization data, error: {s}, connecting to the X server without authorization instead\n", .{@errorName(err)});
+        return x.Authorization{ .none = {} };
+    };
+    return auth orelse x.Authorization{ .none = {} };
 }
 
 pub fn asReply(comptime T: type, msg_bytes: []align(4) u8) !*T {

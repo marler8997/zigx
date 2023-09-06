@@ -59,15 +59,14 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
     const display_spec = if (display_spec_opt) |d| std.mem.span(d) else x.getDisplay();
     std.log.info("connectin to DISPLAY '{s}'", .{display_spec});
 
-    var connection_buf: [1024]u8 = undefined;
-    var connection_fixed_buf = std.heap.FixedBufferAllocator.init(&connection_buf);
-    const connection = x.connect(connection_fixed_buf.allocator(), display_spec) catch |err|
+    const sock = x.connect(display_spec) catch |err|
         return reportError("failed to connect to DISPLAY '{s}': {s}", .{display_spec, @errorName(err)});
-    defer connection.deinit();
+    errdefer x.disconnect(sock);
 
     {
-        const auth_name = connection.authentication.getName();
-        const auth_data = connection.authentication.getData();
+        const auth = getAuthorizationOrNone(display_spec, sock);
+        const auth_name = auth.getName();
+        const auth_data = auth.getData();
 
         const len = x.connect_setup.getLen(@intCast(auth_name.len), @intCast(auth_data.len));
         var msg_buf: [1024]u8 = undefined;
@@ -75,11 +74,11 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
             return error.SetupTooLarge;
 
         x.connect_setup.serialize(&msg_buf, 11, 0, .{ .ptr = auth_name.ptr, .len = @intCast(auth_name.len) }, .{ .ptr = auth_data.ptr, .len = @intCast(auth_data.len) });
-        sendAll(connection.socket.?, msg_buf[0..len]) catch |err|
+        sendAll(sock, msg_buf[0..len]) catch |err|
             return reportError("send connect setup failed with {s}", .{@errorName(err)});
     }
 
-    const reader = SocketReader { .context = connection.socket.? };
+    const reader = SocketReader { .context = sock };
     const connect_setup_header = x.readConnectSetupHeader(reader, .{}) catch |err|
         return reportError("failed to read connect setup with {s}", .{@errorName(err)});
     switch (connect_setup_header.status) {
@@ -149,7 +148,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
 
     display.* = .{
         .public = .{
-            .fd = connection.takeSocket(),
+            .fd = sock,
             .proto_major_version = connect_setup_header.proto_major_ver,
             .proto_minor_version = connect_setup_header.proto_minor_ver,
             .default_screen = 0,
@@ -162,6 +161,15 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
         .read_buf = read_buf,
     };
     return &display.public;
+}
+
+fn getAuthorizationOrNone(display: []const u8, sock: std.os.socket_t) x.Authorization {
+    const display_num = (x.parseDisplay(display) catch unreachable).display_num;
+    const auth = x.getSocketAuthorization(sock, display_num) catch |err| {
+        std.log.debug("failed to get authorization data, error: {s}, connecting to the X server without authorization instead\n", .{@errorName(err)});
+        return x.Authorization{ .none = {} };
+    };
+    return auth orelse x.Authorization{ .none = {} };
 }
 
 export fn XCloseDisplay(display_opt: ?*c.Display) c_int {
