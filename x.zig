@@ -259,7 +259,7 @@ pub const Authorization = union(enum) {
     pub fn getName(self: *const Authorization) []const u8 {
         return switch (self.*) {
             Authorization.none => "",
-            Authorization.mit_magic_cookie => AuthorizationType.getName(AuthorizationType.mit_magic_cookie),
+            Authorization.mit_magic_cookie => AuthorizationType.mit_magic_cookie.getName(),
         };
     }
 
