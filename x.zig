@@ -231,16 +231,16 @@ test "parseDisplay" {
 }
 
 const MitMagicCookie = struct {
-    const array_capacity: usize = 128;
-    const Array = std.BoundedArray(u8, array_capacity);
-    cookie: Array,
+    const cookie_capacity: usize = 128;
+    const Cookie = std.BoundedArray(u8, cookie_capacity);
+    cookie: Cookie,
 
     pub fn init(cookie: []const u8) !MitMagicCookie {
-        if (cookie.len > array_capacity)
+        if (cookie.len > cookie_capacity)
             return error.CookieTooLarge;
 
         return .{
-            .cookie = try Array.fromSlice(cookie),
+            .cookie = try Cookie.fromSlice(cookie),
         };
     }
 };
