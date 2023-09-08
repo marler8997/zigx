@@ -60,8 +60,9 @@ fn listAuthorizationEntries(auth_filename: []const u8) !void {
     var stdout_buffer = std.io.bufferedWriter(stdout);
     const stdout_writer = stdout_buffer.writer();
 
-    var auth_it = try x.AuthorizationIterator.init(auth_filename);
-    defer auth_it.deinit();
+    var auth_file = try x.AuthorizationFile.init(auth_filename);
+    defer auth_file.deinit();
+    var auth_it = auth_file.iterator();
 
     while (try auth_it.next()) |*auth| {
         try stdout_writer.print("{s}/{s}:{s}  {s}  {s}\n", .{ auth.address, authFamilyGetName(auth.family), auth.num, auth.name, std.fmt.fmtSliceHexLower(auth.data) });
@@ -71,8 +72,9 @@ fn listAuthorizationEntries(auth_filename: []const u8) !void {
 
 fn authFamilyGetName(family: i16) []const u8 {
     switch (family) {
-        @intFromEnum(x.AuthorizationFamily.Local) => return "unix",
-        else                                      => return "unknown",
+        @intFromEnum(x.AuthorizationFamily.local)    => return "unix",
+        @intFromEnum(x.AuthorizationFamily.internet) => return "inet",
+        else                                         => return "unknown",
     }
 }
 

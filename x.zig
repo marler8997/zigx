@@ -281,86 +281,108 @@ pub const AuthorizationType = enum {
     }
 };
 
-// TODO: Make this a function that takes a reader and returns a new type with the reader.
-pub const AuthorizationIterator = struct {
-    const Self = @This();
+pub fn AuthorizationIterator(comptime ReaderType: type) type {
+    return struct {
+        const Self = @This();
+        const Field = std.BoundedArray(u8, 256);
+
+        reader: ReaderType,
+        address: Field,
+        num: Field,
+        name: Field,
+        data: Field,
+
+        pub fn init(reader: ReaderType) Self {
+            return .{
+                .reader = reader,
+                .address = Field{ .len = 0 },
+                .num = Field{ .len = 0 },
+                .name = Field{ .len = 0 },
+                .data = Field{ .len = 0 },
+            };
+        }
+
+        pub fn deinit(_: *Self) void {
+
+        }
+
+        pub fn next(self: *Self) !?Entry {
+            try self.address.resize(0);
+            try self.num.resize(0);
+            try self.name.resize(0);
+            try self.data.resize(0);
+
+            const family = self.reader.readIntBig(c_short) catch |err| switch(err) {
+                error.EndOfStream => return null,
+                else => return err,
+            };
+
+            try self.readSizedBuffer(&self.address);
+            try self.readSizedBuffer(&self.num);
+            try self.readSizedBuffer(&self.name);
+            try self.readSizedBuffer(&self.data);
+
+            return .{
+                .family = family,
+                .address = self.address.slice(),
+                .num = self.num.slice(),
+                .name = self.name.slice(),
+                .data = self.data.slice(),
+            };
+        }
+
+        fn readSizedBuffer(self: *Self, buf: *Field) !void {
+            const len = try self.reader.readIntBig(c_short);
+            if (len < 0)
+                return error.AuthFileCorrupted;
+            if (len > buf.capacity())
+                return error.AuthArrayTooBig;
+
+            try buf.resize(@intCast(len));
+            if (try self.reader.readAll(buf.slice()) != buf.len)
+                return error.AuthFileCorrupted;
+        }
+
+        const Entry = struct {
+            family: i16,
+            address: [] const u8,
+            num: [] const u8,
+            name: [] const u8,
+            data: [] const u8,
+        };
+    };
+}
+
+pub fn authorizationIterator(reader: anytype) AuthorizationIterator(@TypeOf(reader)) {
+    return AuthorizationIterator(@TypeOf(reader)).init(reader);
+}
+
+pub const AuthorizationFile = struct {
     const BufferedReader = std.io.BufferedReader(4096, std.fs.File.Reader);
-    const Field = std.BoundedArray(u8, 256);
 
     file: std.fs.File,
-    reader: BufferedReader,
-    address: Field,
-    num: Field,
-    name: Field,
-    data: Field,
+    buffered_reader: BufferedReader,
 
-    pub fn init(filepath: []const u8) !Self {
+    pub fn init(filepath: []const u8) !AuthorizationFile {
         const file = try std.fs.cwd().openFile(filepath, .{});
         return .{
             .file = file,
-            .reader = std.io.bufferedReader(file.reader()),
-            .address = Field{ .len = 0 },
-            .num = Field{ .len = 0 },
-            .name = Field{ .len = 0 },
-            .data = Field{ .len = 0 },
+            .buffered_reader = std.io.bufferedReader(file.reader()),
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *AuthorizationFile) void {
         self.file.close();
     }
 
-    pub fn next(self: *Self) !?Entry {
-        const reader = self.reader.reader();
-
-        try self.address.resize(0);
-        try self.num.resize(0);
-        try self.name.resize(0);
-        try self.data.resize(0);
-
-        const family = reader.readIntBig(c_short) catch |err| switch(err) {
-            error.EndOfStream => return null,
-            else => return err,
-        };
-
-        try self.readSizedBuffer(&reader, &self.address);
-        try self.readSizedBuffer(&reader, &self.num);
-        try self.readSizedBuffer(&reader, &self.name);
-        try self.readSizedBuffer(&reader, &self.data);
-
-        return .{
-            .family = family,
-            .address = self.address.slice(),
-            .num = self.num.slice(),
-            .name = self.name.slice(),
-            .data = self.data.slice(),
-        };
+    pub fn iterator(self: *AuthorizationFile) AuthorizationIterator(BufferedReader.Reader) {
+        return authorizationIterator(self.buffered_reader.reader());
     }
-
-    fn readSizedBuffer(_: *Self, reader: anytype, buf: *Field) !void {
-        const len = try reader.readIntBig(c_short);
-        if (len < 0)
-            return error.AuthFileCorrupted;
-        if (len > buf.capacity())
-            return error.AuthArrayTooBig;
-
-        try buf.resize(@intCast(len));
-        if (try reader.readAll(buf.slice()) != buf.len)
-            return error.AuthFileCorrupted;
-    }
-
-    const Entry = struct {
-        family: i16,
-        address: [] const u8,
-        num: [] const u8,
-        name: [] const u8,
-        data: [] const u8,
-    };
 };
 
 pub const AuthorizationFamily = enum(c_short) {
-    Internet = 0,
-    Local = 256,
+    internet = 0,
+    local = 256,
 };
 
 pub fn getAuthorization(auth_filepath: []const u8, address: []const u8, family: AuthorizationFamily, display_num: anytype, auth_type: AuthorizationType) !?Authorization {
@@ -371,8 +393,9 @@ pub fn getAuthorization(auth_filepath: []const u8, address: []const u8, family: 
         else => @compileError("expected display_num to be comptime_int, u32 or []const u8"),
     };
 
-    var auth_it = try AuthorizationIterator.init(auth_filepath);
-    defer auth_it.deinit();
+    var auth_file = try AuthorizationFile.init(auth_filepath);
+    defer auth_file.deinit();
+    var auth_it = auth_file.iterator();
 
     while (try auth_it.next()) |*auth| {
         if (auth.family == @intFromEnum(family) and std.mem.eql(u8, auth.address, address) and std.mem.eql(u8, auth.num, dispno_str) and std.mem.eql(u8, auth.name, auth_type.getName())) {
@@ -394,9 +417,10 @@ pub fn getSocketAuthorization(sock: os.socket_t, display_num: anytype) !?Authori
     try os.getsockname(sock, @ptrCast(&addr), &addrlen);
 
     var address_buf: [os.HOST_NAME_MAX]u8 = undefined;
-    const address = switch (addr.family) {
-        os.AF.LOCAL => try os.gethostname(&address_buf),
-        os.AF.INET, os.AF.INET6 => {
+    const family = try socketFamilyGetAuthorizationFamily(addr.family);
+    const address = switch (family) {
+        .local => try os.gethostname(&address_buf),
+        .internet => {
             // TODO: Support this, and test this
             //var remote_addr: os.sockaddr = undefined;
             //var remote_addrlen: os.socklen_t = 0;
@@ -404,20 +428,18 @@ pub fn getSocketAuthorization(sock: os.socket_t, display_num: anytype) !?Authori
             // ...
             return error.UnsupportedSocketType;
         },
-        else => return error.UnsupportedSocketType,
     };
     
-    const family = socketFamilyGetAuthorizationFamily(addr.family) orelse unreachable;
     // TODO: Only MIT-MAGIC-COOKIE is supported for now. When others are supported then remove
     // the auth_type from |getAuthorization| and get the best match (prefer kerberos over xdm, xdm over mit magic cookie).
     return getAuthorization(auth_filepath, address, family, display_num, .mit_magic_cookie);
 }
 
-fn socketFamilyGetAuthorizationFamily(family: os.sa_family_t) ?AuthorizationFamily {
+fn socketFamilyGetAuthorizationFamily(family: os.sa_family_t) !AuthorizationFamily {
     switch (family) {
-        os.AF.LOCAL              => return AuthorizationFamily.Local,
-        os.AF.INET, os.AF.INET6  => return AuthorizationFamily.Internet,
-        else                     => return null,
+        os.AF.LOCAL              => return .local,
+        os.AF.INET, os.AF.INET6  => return .internet,
+        else                     => return error.UnsupportedSocketType,
     }
 }
 
@@ -433,7 +455,7 @@ pub fn getAuthorityFilePath(filepath_buf: *[std.fs.MAX_PATH_BYTES]u8) ![]const u
 
     var home_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var home_path_fba = std.heap.FixedBufferAllocator.init(&home_path_buf);
-    if (std.process.getEnvVarOwned(home_path_fba.allocator(), "HOME")) |home_env| {
+    if (std.process.getEnvVarOwned(home_path_fba.allocator(), getUserHomeDirectoryEnvVarName())) |home_env| {
         return try std.fs.path.join(auth_fba.allocator(), &.{home_env, ".Xauthority"});
     } else |err| switch (err) {
         error.EnvironmentVariableNotFound => return error.HomeNotDefined,
@@ -441,13 +463,22 @@ pub fn getAuthorityFilePath(filepath_buf: *[std.fs.MAX_PATH_BYTES]u8) ![]const u
     }
 }
 
+fn getUserHomeDirectoryEnvVarName() []const u8 {
+    // TODO: Use GetUserProfileDirectory on windows instead, but zig doesn't implement that function yet
+    switch (builtin.os.tag) {
+        .windows => return "USERPROFILE",
+        else     => return "HOME",
+    }
+}
+
 test "Authorization" {
     var hostname_buffer: [os.HOST_NAME_MAX]u8 = undefined;
     const address = try os.gethostname(&hostname_buffer);
 
-    var auth = try getAuthorization("test_files/xauth", address, .Local, 0, "MIT-MAGIC-COOKIE-1") orelse return error.AuthNotFound;
+    var auth = try getAuthorization("test_files/xauth", address, .local, 0, .mit_magic_cookie) orelse return error.AuthNotFound;
     defer auth.deinit();
-    try std.testing.expectEqualSlices(u8, auth.mit_magic_cookie.cookie, &.{ 0x4C, 0x4F, 0x31, 0x21, 0x1D, 0xB1, 0x28, 0x3D, 0x99, 0x46, 0xCF, 0xD5, 0xB6, 0x71, 0xC0, 0xBF });
+    try std.testing.expectEqualSlices(u8, AuthorizationType.mit_magic_cookie.getName(), auth.getName());
+    try std.testing.expectEqualSlices(u8, &.{ 0x4C, 0x4F, 0x31, 0x21, 0x1D, 0xB1, 0x28, 0x3D, 0x99, 0x46, 0xCF, 0xD5, 0xB6, 0x71, 0xC0, 0xBF }, auth.getData());
 }
 
 const ConnectError = error {
