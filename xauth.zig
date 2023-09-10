@@ -101,25 +101,17 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
     }) |entry| {
         const addr = entry.addr(auth_mapped.mem);
         switch (entry.family) {
-            .inet => {
-                if (addr.len == 4) {
-                    try writer.print("{}.{}.{}.{}", .{addr[0], addr[1], addr[2], addr[3]});
-                } else {
-                    try writer.print("{}/inet", .{std.fmt.fmtSliceHexLower(addr)});
-                }
+            .inet => if (addr.len == 4) {
+                try writer.print("{}.{}.{}.{}", .{addr[0], addr[1], addr[2], addr[3]});
+            } else {
+                try writer.print("{}/inet", .{std.fmt.fmtSliceHexLower(addr)});
             },
-            .unix => {
-                try writer.print("{s}/unix", .{entry.addr(auth_mapped.mem)});
-            },
-            .wild => {
-                // not sure what to do, should we write "*"? nothing?
-            },
-            else => |family| {
-                try writer.print("{}/{}", .{
-                    std.zig.fmtEscapes(entry.addr(auth_mapped.mem)),
-                    family,
-                });
-            },
+            .unix => try writer.print("{s}/unix", .{entry.addr(auth_mapped.mem)}),
+            .wild => {}, // not sure what to do, should we write "*"? nothing?
+            else => |family| try writer.print("{}/{}", .{
+                std.zig.fmtEscapes(entry.addr(auth_mapped.mem)),
+                family,
+            }),
         }
 
         var display_buf: [40]u8 = undefined;
