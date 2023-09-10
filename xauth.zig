@@ -99,26 +99,38 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
         std.log.err("auth file '{s}' is invalid", .{auth_filename.str});
         std.process.exit(1);
     }) |entry| {
-        var family_buf: [5]u8 = undefined;
+        const addr = entry.addr(auth_mapped.mem);
+        switch (entry.family) {
+            .inet => {
+                if (addr.len == 4) {
+                    try writer.print("{}.{}.{}.{}", .{addr[0], addr[1], addr[2], addr[3]});
+                } else {
+                    try writer.print("{}/inet", .{std.fmt.fmtSliceHexLower(addr)});
+                }
+            },
+            .unix => {
+                try writer.print("{s}/unix", .{entry.addr(auth_mapped.mem)});
+            },
+            .wild => {
+                // not sure what to do, should we write "*"? nothing?
+            },
+            else => |family| {
+                try writer.print("{}/{}", .{
+                    std.zig.fmtEscapes(entry.addr(auth_mapped.mem)),
+                    family,
+                });
+            },
+        }
+
         var display_buf: [40]u8 = undefined;
         const display: []const u8 = if (entry.display_num) |d| (
             std.fmt.bufPrint(&display_buf, "{}", .{d}) catch unreachable
         ) else "";
-        try writer.print("{s}/{s}:{s}  {s}  {s}\n", .{
-            entry.addr(auth_mapped.mem),
-            getFamilyString(entry.family, &family_buf),
+        try writer.print(":{s}  {s}  {}\n", .{
             display,
             entry.name(auth_mapped.mem),
             std.fmt.fmtSliceHexLower(entry.data(auth_mapped.mem)),
         });
     }
     try buffered_writer.flush();
-}
-
-fn getFamilyString(family: x.AuthFamily, buf: *[5]u8) []const u8 {
-    return switch (family) {
-        .internet => "inet",
-        .local => "unix",
-        else => std.fmt.bufPrint(buf, "{}", .{@intFromEnum(family)}) catch unreachable,
-    };
 }

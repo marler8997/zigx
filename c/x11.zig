@@ -176,8 +176,7 @@ fn connectSetupAuth(
     defer auth_mapped.unmap();
 
     var auth_filter = x.AuthFilter{
-        .family = null,
-        .addr = null,
+        .addr = .{ .family = .wild, .data = &[0]u8{ } },
         .display_num = display_num,
     };
 
