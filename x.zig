@@ -484,9 +484,9 @@ pub const AuthFilename = struct {
     owned: bool,
 
     pub fn deinit(self: AuthFilename, allocator: std.mem.Allocator) void {
-        // TODO
-        _ = self;
-        _ = allocator;
+        if (self.owned) {
+            allocator.free(self.str);
+        }
     }
 };
 
