@@ -504,13 +504,24 @@ pub fn getAuthFilename(allocator: std.mem.Allocator) !?AuthFilename {
     }
 
     if (os.getenv("XAUTHORITY")) |e| {
-        std.fs.cwd().accessZ(e, .{}) catch |err| switch (err) {
+        if (std.fs.cwd().accessZ(e, .{})) {
+            return .{ .str = e, .owned = false };
+        } else |err| switch (err) {
+            error.FileNotFound => return error.BadXAuthorityEnv,
             else => return err,
-        };
-        return .{ .str = e, .owned = false };
+        }
     }
 
-    // TODO: check for $HOME/.Xauthority
+    if (os.getenv("HOME")) |e| {
+        const path = try std.fs.path.joinZ(allocator, &.{ e, ".Xauthority" });
+        errdefer allocator.free(path);
+        if (std.fs.cwd().accessZ(path, .{})) {
+            return .{ .str = path, .owned = true };
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        }
+    }
     return null;
 }
 
