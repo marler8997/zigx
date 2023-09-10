@@ -115,10 +115,10 @@ pub fn getDisplay() []const u8 {
 //}
 
 
-pub const ParseDisplayError = error {
-    EmptyDisplay, // TODO: is this an error?
-    MultipleProtocols,
-    DisplayStringTooLarge,
+pub const InvalidDisplayError = error {
+    IsEmpty, // TODO: is this an error?
+    HasMultipleProtocols,
+    IsTooLarge,
     NoDisplayNumber,
     BadDisplayNumber,
     BadScreenNumber,
@@ -126,10 +126,10 @@ pub const ParseDisplayError = error {
 
 // display format: [PROTOCOL/]HOST:DISPLAYNUM[.SCREEN]
 // assumption: display.len > 0
-pub fn parseDisplay(display: []const u8) ParseDisplayError!ParsedDisplay {
-    if (display.len == 0) return ParseDisplayError.EmptyDisplay;
+pub fn parseDisplay(display: []const u8) InvalidDisplayError!ParsedDisplay {
+    if (display.len == 0) return InvalidDisplayError.IsEmpty;
     if (display.len >= std.math.maxInt(u16))
-            return ParseDisplayError.DisplayStringTooLarge;
+            return InvalidDisplayError.IsTooLarge;
 
     var parsed : ParsedDisplay = .{
         .protoLen = 0,
@@ -156,18 +156,18 @@ pub fn parseDisplay(display: []const u8) ParseDisplayError!ParsedDisplay {
                 .preferredScreen = null,
             };
             if (parsed.protoLen > 0)
-                return ParseDisplayError.MultipleProtocols;
+                return InvalidDisplayError.HasMultipleProtocols;
             parsed.protoLen = index;
         }
         index += 1;
         if (index == display.len)
-            return ParseDisplayError.NoDisplayNumber;
+            return InvalidDisplayError.NoDisplayNumber;
     }
 
     parsed.hostLimit = index;
     index += 1;
     if (index == display.len)
-        return ParseDisplayError.NoDisplayNumber;
+        return InvalidDisplayError.NoDisplayNumber;
 
     while (true) {
         const c = display[index];
@@ -180,13 +180,13 @@ pub fn parseDisplay(display: []const u8) ParseDisplayError!ParsedDisplay {
 
     //std.debug.warn("num '{}'\n", .{display[parsed.hostLimit + 1..index]});
     parsed.display_num = std.fmt.parseInt(u32, display[parsed.hostLimit + 1..index], 10) catch
-        return ParseDisplayError.BadDisplayNumber;
+        return InvalidDisplayError.BadDisplayNumber;
     if (index == display.len) {
         parsed.preferredScreen = null;
     } else {
         index += 1;
         parsed.preferredScreen = std.fmt.parseInt(u32, display[index..], 10) catch
-            return ParseDisplayError.BadScreenNumber;
+            return InvalidDisplayError.BadScreenNumber;
     }
     return parsed;
 }
@@ -202,24 +202,24 @@ fn testParseDisplay(display: []const u8, proto: []const u8, host: []const u8, di
 test "parseDisplay" {
     // no need to test the empty string case, it triggers an assert and a client passing
     // one is a bug that needs to be fixed
-    try testing.expectError(ParseDisplayError.MultipleProtocols, parseDisplay("a//"));
-    try testing.expectError(ParseDisplayError.NoDisplayNumber, parseDisplay("0"));
-    try testing.expectError(ParseDisplayError.NoDisplayNumber, parseDisplay("0/"));
-    try testing.expectError(ParseDisplayError.NoDisplayNumber, parseDisplay("0/1"));
-    try testing.expectError(ParseDisplayError.NoDisplayNumber, parseDisplay(":"));
+    try testing.expectError(InvalidDisplayError.HasMultipleProtocols, parseDisplay("a//"));
+    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay("0"));
+    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay("0/"));
+    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay("0/1"));
+    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay(":"));
 
-    try testing.expectError(ParseDisplayError.BadDisplayNumber, parseDisplay(":a"));
-    try testing.expectError(ParseDisplayError.BadDisplayNumber, parseDisplay(":0a"));
-    try testing.expectError(ParseDisplayError.BadDisplayNumber, parseDisplay(":0a."));
-    try testing.expectError(ParseDisplayError.BadDisplayNumber, parseDisplay(":0a.0"));
-    try testing.expectError(ParseDisplayError.BadDisplayNumber, parseDisplay(":1x"));
-    try testing.expectError(ParseDisplayError.BadDisplayNumber, parseDisplay(":1x."));
-    try testing.expectError(ParseDisplayError.BadDisplayNumber, parseDisplay(":1x.10"));
+    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":a"));
+    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":0a"));
+    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":0a."));
+    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":0a.0"));
+    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":1x"));
+    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":1x."));
+    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":1x.10"));
 
-    try testing.expectError(ParseDisplayError.BadScreenNumber, parseDisplay(":1.x"));
-    try testing.expectError(ParseDisplayError.BadScreenNumber, parseDisplay(":1.0x"));
+    try testing.expectError(InvalidDisplayError.BadScreenNumber, parseDisplay(":1.x"));
+    try testing.expectError(InvalidDisplayError.BadScreenNumber, parseDisplay(":1.0x"));
     // TODO: should this be an error or no????
-    //try testing.expectError(ParseDisplayError.BadScreenNumber, parseDisplay(":1."));
+    //try testing.expectError(InvalidDisplayError.BadScreenNumber, parseDisplay(":1."));
 
     try testParseDisplay("proto/host:123.456", "proto", "host", 123, 456);
     try testParseDisplay("host:123.456", "", "host", 123, 456);
@@ -249,7 +249,7 @@ pub fn isUnixProtocol(optionalProtocol: ?[]const u8) bool {
 //    return connectDisplay(display);
 //}
 
-//pub const ConnectDisplayError = ParseDisplayError;
+//pub const ConnectDisplayError = InvalidDisplayError;
 pub fn connect(display: []const u8) !os.socket_t {
     const parsed = try parseDisplay(display);
     const optional_host: ?[]const u8 = blk: {
