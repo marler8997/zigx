@@ -57,44 +57,57 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
     // TODO: x.getDisplay allocates on windows, maybe we cache it on windows?
     // TODO: should an empty string be handled like null as well?
     const display_spec = if (display_spec_opt) |d| std.mem.span(d) else x.getDisplay();
-    std.log.info("connectin to DISPLAY '{s}'", .{display_spec});
+    std.log.info("connecting to DISPLAY '{s}'", .{display_spec});
 
-    const sock = x.connect(display_spec) catch |err|
+    const parsed_display = x.parseDisplay(display_spec) catch |err|
+        return reportError("invalid DISPLAY '{s}': {s}", .{display_spec, @errorName(err)});
+
+    const sock = x.connect(display_spec, parsed_display) catch |err|
         return reportError("failed to connect to DISPLAY '{s}': {s}", .{display_spec, @errorName(err)});
+    errdefer x.disconnect(sock);
 
-    {
-        const len = comptime x.connect_setup.getLen(0, 0);
-        var msg: [len]u8 = undefined;
-        x.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
+    const setup_header = blk: {
+        if (x.getAuthFilename(c_allocator) catch |err|
+                return reportError("failed to get auth filename with {s}", .{@errorName(err)})
+        ) |auth_filename| {
+            defer auth_filename.deinit(c_allocator);
+            if (try connectSetupAuth(parsed_display.display_num, sock, auth_filename.str)) |hdr|
+                break :blk hdr;
+        }
+
+        var msg: [x.connect_setup.getLen(0, 0)]u8 = undefined;
+        x.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0}, .{ .ptr = undefined, .len = 0 });
         sendAll(sock, &msg) catch |err|
             return reportError("send connect setup failed with {s}", .{@errorName(err)});
-    }
 
-    const reader = SocketReader { .context = sock };
-    const connect_setup_header = x.readConnectSetupHeader(reader, .{}) catch |err|
-        return reportError("failed to read connect setup with {s}", .{@errorName(err)});
-    switch (connect_setup_header.status) {
-        .failed => return reportError("connect setup failed, version={}.{}, reason='{s}'", .{
-            connect_setup_header.proto_major_ver,
-            connect_setup_header.proto_minor_ver,
-            connect_setup_header.readFailReason(reader),
-        }),
-        .authenticate => {
-            return reportError("AUTHENTICATE! not implemented", .{});
-        },
-        .success => {
-            // TODO: check version?
-            std.log.debug("SUCCESS! version {}.{}", .{connect_setup_header.proto_major_ver, connect_setup_header.proto_minor_ver});
-        },
-        else => |status| return reportError(
-            "expected 0, 1 or 2 as first byte of connect setup reply, but got {}", .{status}),
-    }
+        const reader = SocketReader { .context = sock };
+        const connect_setup_header = x.readConnectSetupHeader(reader, .{}) catch |err|
+            return reportError("failed to read connect setup with {s}", .{@errorName(err)});
+        switch (connect_setup_header.status) {
+            .failed => {
+                std.log.debug("no auth connect setup failed, version={}.{}, reason='{s}'", .{
+                    connect_setup_header.proto_major_ver,
+                    connect_setup_header.proto_minor_ver,
+                    connect_setup_header.readFailReason(reader),
+                });
+            },
+            .authenticate => {
+                std.log.debug("no auth connect setup failed with AUTHENTICATE", .{});
+            },
+            .success => break :blk connect_setup_header,
+            else => |status| return reportError(
+                "expected 0, 1 or 2 as first byte of connect setup reply, but got {}", .{status},
+            ),
+        }
+        return reportError("the X server rejected our connect setup message", .{});
+    };
 
-    const buf = try c_allocator.allocWithOptions(u8, connect_setup_header.getReplyLen(), 4, null);
+    const buf = try c_allocator.allocWithOptions(u8, setup_header.getReplyLen(), 4, null);
     defer c_allocator.free(buf);
 
     const connect_setup = x.ConnectSetup { .buf = buf };
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
+    const reader = SocketReader { .context = sock };
     x.readFull(reader, connect_setup.buf) catch |err|
         return reportError("failed to read connect setup with {s}", .{@errorName(err)});
 
@@ -139,8 +152,8 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
     display.* = .{
         .public = .{
             .fd = sock,
-            .proto_major_version = connect_setup_header.proto_major_ver,
-            .proto_minor_version = connect_setup_header.proto_minor_ver,
+            .proto_major_version = setup_header.proto_major_ver,
+            .proto_minor_version = setup_header.proto_minor_ver,
             .default_screen = 0,
             .nscreens = @intCast(fixed.root_screen_count),
             .screens = screens.ptr,
@@ -151,6 +164,83 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
         .read_buf = read_buf,
     };
     return &display.public;
+}
+
+fn connectSetupAuth(
+    display_num: ?u32,
+    sock: std.os.socket_t,
+    auth_filename: []const u8,
+) error{Reported,OutOfMemory}!?x.ConnectSetup.Header {
+    const auth_mapped = x.MappedFile.init(auth_filename, .{}) catch |err|
+        return reportError("failed to mmap auth file '{s}' with {s}", .{auth_filename, @errorName(err)});
+    defer auth_mapped.unmap();
+
+    var auth_filter = x.AuthFilter{
+        .family = null,
+        .addr = null,
+        .display_num = display_num,
+    };
+
+    var addr_buf: [x.max_sock_filter_addr]u8 = undefined;
+    auth_filter.applySocket(sock, &addr_buf) catch |err| {
+        std.log.warn("failed to apply socket to auth filter with {s}", .{@errorName(err)});
+    };
+
+    var auth_it = x.AuthIterator{ .mem = auth_mapped.mem };
+    while (auth_it.next() catch {
+        std.log.warn("auth file '{s}' is invalid", .{auth_filename});
+        return null;
+    }) |entry| {
+        if (auth_filter.isFiltered(auth_mapped.mem, entry)) |reason| {
+            std.log.debug("ignoring auth because {s} does not match: {}", .{@tagName(reason), entry.fmt(auth_mapped.mem)});
+            continue;
+        }
+        const name = entry.name(auth_mapped.mem);
+        const data = entry.data(auth_mapped.mem);
+        const name_x = x.Slice(u16, [*]const u8){
+            .ptr = name.ptr,
+            .len = @intCast(name.len),
+        };
+        const data_x = x.Slice(u16, [*]const u8){
+            .ptr = data.ptr,
+            .len = @intCast(data.len),
+        };
+
+        const msg_len = x.connect_setup.getLen(name_x.len, data_x.len);
+        const msg = try c_allocator.alloc(u8, msg_len);
+        defer c_allocator.free(msg);
+        x.connect_setup.serialize(msg.ptr, 11, 0, name_x, data_x);
+        sendAll(sock, msg) catch |err|
+            return reportError("send connect setup failed with {s}", .{@errorName(err)});
+
+        const reader = SocketReader { .context = sock };
+        const connect_setup_header = x.readConnectSetupHeader(reader, .{}) catch |err|
+            return reportError("failed to read connect setup with {s}", .{@errorName(err)});
+        switch (connect_setup_header.status) {
+            .failed => {
+                std.log.debug("connect setup failed, version={}.{}, reason='{s}'", .{
+                    connect_setup_header.proto_major_ver,
+                    connect_setup_header.proto_minor_ver,
+                    connect_setup_header.readFailReason(reader),
+                });
+                // try the next?
+            },
+            .authenticate => {
+                std.log.debug("AUTHENTICATE with {} failed", .{entry.fmt(auth_mapped.mem)});
+                // try the next auth
+            },
+            .success => {
+                // TODO: check version?
+                std.log.debug("SUCCESS! version {}.{}", .{connect_setup_header.proto_major_ver, connect_setup_header.proto_minor_ver});
+                return connect_setup_header;
+            },
+            else => |status| return reportError(
+                "expected 0, 1 or 2 as first byte of connect setup reply, but got {}", .{status},
+            ),
+        }
+    }
+
+    return null;
 }
 
 export fn XCloseDisplay(display_opt: ?*c.Display) c_int {

@@ -23,21 +23,30 @@ pub const ConnectResult = struct {
     }
 };
 
-pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
-    const display = x.getDisplay();
+pub fn connectSetupMaxAuth(
+    sock: std.os.socket_t,
+    comptime max_auth_len: usize,
+    auth_name: x.Slice(u16, [*]const u8),
+    auth_data: x.Slice(u16, [*]const u8),
+) !?u16 {
+    var buf: [x.connect_setup.auth_offset + max_auth_len]u8 = undefined;
+    const len = x.connect_setup.getLen(auth_name.len, auth_data.len);
+    if (len > max_auth_len)
+        return error.AuthTooBig;
+    return connectSetup(sock, buf[0 .. len], auth_name, auth_data);
+}
 
-    const sock = x.connect(display) catch |err| {
-        std.log.err("failed to connect to display '{s}': {s}", .{display, @errorName(err)});
-        std.os.exit(0xff);
-    };
+pub fn connectSetup(
+    sock: std.os.socket_t,
+    msg: []u8,
+    auth_name: x.Slice(u16, [*]const u8),
+    auth_data: x.Slice(u16, [*]const u8),
+) !?u16 {
+    std.debug.assert(msg.len == x.connect_setup.getLen(auth_name.len, auth_data.len));
 
-    {
-        const len = comptime x.connect_setup.getLen(0, 0);
-        var msg: [len]u8 = undefined;
-        x.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
-        try send(sock, &msg);
-    }
-    
+    x.connect_setup.serialize(msg.ptr, 11, 0, auth_name, auth_data);
+    try send(sock, msg);
+
     const reader = SocketReader { .context = sock };
     const connect_setup_header = try x.readConnectSetupHeader(reader, .{});
     switch (connect_setup_header.status) {
@@ -56,17 +65,108 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
         .success => {
             // TODO: check version?
             std.log.debug("SUCCESS! version {}.{}", .{connect_setup_header.proto_major_ver, connect_setup_header.proto_minor_ver});
+            return connect_setup_header.getReplyLen();
         },
         else => |status| {
             std.log.err("Error: expected 0, 1 or 2 as first byte of connect setup reply, but got {}", .{status});
             return error.MalformedXReply;
         }
     }
+}
+
+fn connectSetupAuth(
+    display_num: ?u32,
+    sock: std.os.socket_t,
+    auth_filename: []const u8,
+) !?u16 {
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // TODO: test bad auth
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    //if (try connectSetupMaxAuth(sock, 1000, .{ .ptr = "wat", .len = 3}, .{ .ptr = undefined, .len = 0})) |_|
+    //    @panic("todo");
+
+    const auth_mapped = try x.MappedFile.init(auth_filename, .{});
+    defer auth_mapped.unmap();
+
+    var auth_filter = x.AuthFilter{
+        .family = null,
+        .addr = null,
+        .display_num = display_num,
+    };
+
+    var addr_buf: [x.max_sock_filter_addr]u8 = undefined;
+    auth_filter.applySocket(sock, &addr_buf) catch |err| {
+        std.log.warn("failed to apply socket to auth filter with {s}", .{@errorName(err)});
+    };
+
+    var auth_it = x.AuthIterator{ .mem = auth_mapped.mem };
+    while (auth_it.next() catch {
+        std.log.warn("auth file '{s}' is invalid", .{auth_filename});
+        return null;
+    }) |entry| {
+        if (auth_filter.isFiltered(auth_mapped.mem, entry)) |reason| {
+            std.log.debug("ignoring auth because {s} does not match: {}", .{@tagName(reason), entry.fmt(auth_mapped.mem)});
+            continue;
+        }
+        const name = entry.name(auth_mapped.mem);
+        const data = entry.data(auth_mapped.mem);
+        const name_x = x.Slice(u16, [*]const u8){
+            .ptr = name.ptr,
+            .len = @intCast(name.len),
+        };
+        const data_x = x.Slice(u16, [*]const u8){
+            .ptr = data.ptr,
+            .len = @intCast(data.len),
+        };
+        std.log.debug("trying auth {}", .{entry.fmt(auth_mapped.mem)});
+        if (try connectSetupMaxAuth(sock, 1000, name_x, data_x)) |reply_len|
+            return reply_len;
+    }
+
+    return null;
+}
+
+pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
+    const display = x.getDisplay();
+    const parsed_display = x.parseDisplay(display) catch |err| {
+        std.log.err("invalid display '{s}': {s}", .{display, @errorName(err)});
+        std.os.exit(0xff);
+    };
+
+    const sock = x.connect(display, parsed_display) catch |err| {
+        std.log.err("failed to connect to display '{s}': {s}", .{display, @errorName(err)});
+        std.os.exit(0xff);
+    };
+    errdefer x.disconnect(sock);
+
+    const setup_reply_len: u16 = blk: {
+        if (try x.getAuthFilename(allocator)) |auth_filename| {
+            defer auth_filename.deinit(allocator);
+            if (try connectSetupAuth(parsed_display.display_num, sock, auth_filename.str)) |reply_len|
+                break :blk reply_len;
+        }
+
+        // Try no authentication
+        std.log.debug("trying no auth", .{});
+        var msg_buf: [x.connect_setup.getLen(0, 0)]u8 = undefined;
+        if (try connectSetup(
+            sock,
+            &msg_buf,
+            .{ .ptr = undefined, .len = 0 },
+            .{ .ptr = undefined, .len = 0 },
+        )) |reply_len| {
+            break :blk reply_len;
+        }
+
+        std.log.err("the X server rejected our connect setup message", .{});
+        std.os.exit(0xff);
+    };
 
     const connect_setup = x.ConnectSetup {
-        .buf = try allocator.allocWithOptions(u8, connect_setup_header.getReplyLen(), 4, null),
+        .buf = try allocator.allocWithOptions(u8, setup_reply_len, 4, null),
     };
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
+    const reader = SocketReader { .context = sock };
     try x.readFull(reader, connect_setup.buf);
 
     return ConnectResult{ .sock = sock, .setup = connect_setup };

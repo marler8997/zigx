@@ -36,6 +36,7 @@ pub const render = @import("xrender.zig");
 pub const dbe = @import("xdbe.zig");
 
 // Expose some helpful stuff
+pub const MappedFile = @import("MappedFile.zig");
 pub const charset = @import("charset.zig");
 pub const Charset = charset.Charset;
 pub const DoubleBuffer = @import("DoubleBuffer.zig");
@@ -129,7 +130,7 @@ pub const InvalidDisplayError = error {
 pub fn parseDisplay(display: []const u8) InvalidDisplayError!ParsedDisplay {
     if (display.len == 0) return InvalidDisplayError.IsEmpty;
     if (display.len >= std.math.maxInt(u16))
-            return InvalidDisplayError.IsTooLarge;
+        return InvalidDisplayError.IsTooLarge;
 
     var parsed : ParsedDisplay = .{
         .protoLen = 0,
@@ -250,8 +251,7 @@ pub fn isUnixProtocol(optionalProtocol: ?[]const u8) bool {
 //}
 
 //pub const ConnectDisplayError = InvalidDisplayError;
-pub fn connect(display: []const u8) !os.socket_t {
-    const parsed = try parseDisplay(display);
+pub fn connect(display: []const u8, parsed: ParsedDisplay) !os.socket_t {
     const optional_host: ?[]const u8 = blk: {
         const host_slice = parsed.hostSlice(display.ptr);
         break :blk if (host_slice.len == 0) null else host_slice;
@@ -479,49 +479,261 @@ pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@Ty
 //    return (4 - (value % 4)) % 4;
 //}
 
+pub const AuthFilename = struct {
+    str: []const u8,
+    owned: bool,
+
+    pub fn deinit(self: AuthFilename, allocator: std.mem.Allocator) void {
+        // TODO
+        _ = self;
+        _ = allocator;
+    }
+};
+
+// returns the auth filename only if it exists.
+pub fn getAuthFilename(allocator: std.mem.Allocator) !?AuthFilename {
+    if (builtin.os.tag == .windows) {
+        if (std.process.getEnvVarOwned(allocator, "XAUTHORITY")) |filename| {
+            return .{ .str = filename, .owned = true };
+        } else |err| switch (err) {
+            error.EnvironmentVariableNotFound => {},
+            else => |e| return e,
+        }
+        // TODO: is there a default path on windows?
+        return null;
+    }
+
+    if (os.getenv("XAUTHORITY")) |e| {
+        std.fs.cwd().accessZ(e, .{}) catch |err| switch (err) {
+            else => return err,
+        };
+        return .{ .str = e, .owned = false };
+    }
+
+    // TODO: check for $HOME/.Xauthority
+    return null;
+}
+
+pub const AuthFamily = enum(u16) {
+    internet = 0,
+    local = 256,
+    _,
+    pub fn str(self: AuthFamily) ?[]const u8 {
+        // TODO: can we use an inline switch?
+        return switch (self) {
+            .internet => "internet",
+            .local => "local",
+            else => null,
+        };
+    }
+};
+
+pub const AuthFilterReason = enum {
+    address_family,
+    address,
+    display_num,
+};
+
+pub const max_sock_filter_addr = if (builtin.os.tag == .windows) 255 else std.os.HOST_NAME_MAX;
+
+pub const AuthFilter = struct {
+    family: ?AuthFamily,
+    addr: ?[]const u8,
+    display_num: ?u32,
+
+    pub fn applySocket(self: *AuthFilter, sock: std.os.socket_t, addr_buf: *[max_sock_filter_addr]u8) !void {
+        var addr: os.sockaddr.storage = undefined;
+        var addrlen: os.socklen_t = @sizeOf(@TypeOf(addr));
+        try os.getsockname(sock, @ptrCast(&addr), &addrlen);
+
+        if (@hasDecl(os.AF, "LOCAL")) {
+            if (addr.family == os.AF.LOCAL) {
+                self.family = .local;
+                self.addr = try os.gethostname(addr_buf);
+                return;
+            }
+        }
+        switch (addr.family) {
+            os.AF.INET, os.AF.INET6 => {
+                //var remote_addr: os.sockaddr = undefined;
+                //var remote_addrlen: os.socklen_t = 0;
+                //try os.getpeername(sock, &remote_addr, &remote_addrlen);
+                return error.InternetSocketsNotImplemented;
+            },
+            else => {},
+        }
+    }
+
+    pub fn isFiltered(
+        self: AuthFilter,
+        auth_mem: []const u8,
+        entry: AuthIteratorEntry,
+    ) ?AuthFilterReason {
+        if (self.family) |family| {
+            // TODO: is entry.family of 65535 might mean don't filter?
+            if (entry.family != family) return .address_family;
+        }
+        if (self.addr) |addr| {
+            if (!std.mem.eql(u8, addr, entry.addr(auth_mem))) return .address;
+        }
+        if (self.display_num) |num| {
+            if (entry.display_num) |entry_num| {
+                if (num != entry_num) return .display_num;
+            }
+        }
+        return null;
+    }
+};
+
+pub const AuthIteratorEntry = struct {
+    family: AuthFamily,
+    addr_start: usize,
+    addr_end: usize,
+    name_start: usize,
+    display_num: ?u32,
+    name_end: usize,
+    data_end: usize,
+    pub fn addr(self: AuthIteratorEntry, mem: []const u8) []const u8 {
+        return mem[self.addr_start..self.addr_end];
+    }
+    pub fn name(self: AuthIteratorEntry, mem: []const u8) []const u8 {
+        return mem[self.name_start..self.name_end];
+    }
+    pub fn data(self: AuthIteratorEntry, mem: []const u8) []const u8 {
+        return mem[self.name_end + 2..self.data_end];
+    }
+
+    pub fn fmt(self: AuthIteratorEntry, mem: []const u8) Formatter {
+        return .{ .mem = mem, .entry = self };
+    }
+    const Formatter = struct {
+        mem: []const u8,
+        entry: AuthIteratorEntry,
+        pub fn format(
+            self: @This(),
+            comptime fmt_spec: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) @TypeOf(writer).Error!void {
+            _ = fmt_spec;
+            _ = options;
+
+            const family_str: []const u8 = self.entry.family.str() orelse "?";
+            const data_slice = self.entry.data(self.mem);
+            try writer.print("family={}({s}) addr='{}' display={?} name='{}' data {} bytes: {}", .{
+                @intFromEnum(self.entry.family),
+                family_str,
+                std.zig.fmtEscapes(self.entry.addr(self.mem)),
+                self.entry.display_num,
+                std.zig.fmtEscapes(self.entry.name(self.mem)),
+                data_slice.len,
+                std.fmt.fmtSliceHexUpper(data_slice),
+            });
+        }
+    };
+};
+
+pub const AuthIterator = struct {
+    mem: []const u8,
+    idx: usize = 0,
+
+    pub fn next(self: *AuthIterator) error{InvalidAuthFile}!?AuthIteratorEntry {
+        if (self.idx == self.mem.len) return null;
+        if (self.idx + 10 > self.mem.len) return error.InvalidAuthFile;
+
+        // TODO: is big endian guaranteed?
+        //       using a fixed endianness makes it look like these files are supposed
+        //       to be compatible across machines, but then it's using c_short which isn't?
+        const family = std.mem.readIntBig(u16, self.mem[self.idx..][0..2]);
+        const addr_len = std.mem.readIntBig(u16, self.mem[self.idx + 2..][0..2]);
+        const addr_start = self.idx + 4;
+        const addr_end = addr_start + addr_len;
+        if (addr_end + 2 > self.mem.len) return error.InvalidAuthFile;
+        const num_len = std.mem.readIntBig(u16, self.mem[addr_end..][0..2]);
+        const num_end = addr_end + 2 + num_len;
+        if (num_end + 2 > self.mem.len) return error.InvalidAuthFile;
+        const name_len = std.mem.readIntBig(u16, self.mem[num_end..][0..2]);
+        const name_end = num_end + 2 + name_len;
+        if (name_end + 2 > self.mem.len) return error.InvalidAuthFile;
+        const data_len = std.mem.readIntBig(u16, self.mem[name_end..][0..2]);
+        const data_end = name_end + 2 + data_len;
+        if (data_end > self.mem.len) return error.InvalidAuthFile;
+
+        const num_str = self.mem[addr_end + 2 .. num_end];
+        const num: ?u32 = blk: {
+            if (num_str.len == 0) break :blk null;
+            break :blk std.fmt.parseInt(u32, num_str, 10) catch return error.InvalidAuthFile;
+        };
+
+        self.idx = data_end;
+        return AuthIteratorEntry{
+            .family = @enumFromInt(family),
+            .addr_start = addr_start,
+            .addr_end = addr_end,
+            .display_num = num,
+            .name_start = num_end + 2,
+            .name_end = name_end,
+            .data_end = data_end,
+        };
+    }
+};
+
 pub const connect_setup = struct {
-    pub fn getLen(auth_proto_name_len: u16, auth_proto_data_len: u16) u16 {
-        return
-              1 // byte-order
-            + 1 // unused
-            + 2 // proto_major_ver
-            + 2 // proto_minor_ver
-            + 2 // auth_proto_name_len
-            + 2 // auth_proto_data_len
-            + 2 // unused
-            //+ auth_proto_name_len
-            //+ pad4(u16, auth_proto_name_len)
-            + std.mem.alignForward(u16, auth_proto_name_len, 4)
-            //+ auth_proto_data_len
-            //+ pad4(u16, auth_proto_data_len)
-            + std.mem.alignForward(u16, auth_proto_data_len, 4)
+    pub const max_auth_name_len = std.math.maxInt(u16);
+    pub const max_auth_data_len = std.math.maxInt(u16);
+    pub const max_len = getLen(max_auth_name_len, max_auth_data_len);
+
+    pub const auth_offset =
+          1 // byte-order
+        + 1 // unused
+        + 2 // proto_major_ver
+        + 2 // proto_minor_ver
+        + 2 // auth_name_len
+        + 2 // auth_data_len
+        + 2 // unused
+        ;
+    pub fn getLen(auth_name_len: u16, auth_data_len: u16) u32 {
+        return auth_offset
+            //+ auth_name_len
+            //+ pad4(u16, auth_name_len)
+            + std.mem.alignForward(u32, auth_name_len, 4)
+            //+ auth_data_len
+            //+ pad4(u16, auth_data_len)
+            + std.mem.alignForward(u32, auth_data_len, 4)
             ;
     }
-    pub fn serialize(buf: [*]u8, proto_major_ver: u16, proto_minor_ver: u16, auth_proto_name: Slice(u16, [*]const u8), auth_proto_data: Slice(u16, [*]const u8)) void {
+
+    pub fn serialize(
+        buf: [*]u8,
+        proto_major_ver: u16,
+        proto_minor_ver: u16,
+        auth_name: Slice(u16, [*]const u8),
+        auth_data: Slice(u16, [*]const u8),
+    ) void {
         buf[0] = @as(u8, if (builtin.target.cpu.arch.endian() == .Big) BigEndian else LittleEndian);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, proto_major_ver);
         writeIntNative(u16, buf + 4, proto_minor_ver);
-        writeIntNative(u16, buf + 6, auth_proto_name.len);
-        writeIntNative(u16, buf + 8, auth_proto_data.len);
+        writeIntNative(u16, buf + 6, auth_name.len);
+        writeIntNative(u16, buf + 8, auth_data.len);
         writeIntNative(u16, buf + 10, 0); // unused
-        @memcpy(buf[12..][0..auth_proto_name.len], auth_proto_name.nativeSlice());
-        //const off = 12 + pad4(u16, auth_proto_name.len);
-        const off : u16 = 12 + std.mem.alignForward(u16, auth_proto_name.len, 4);
-        @memcpy(buf[off..][0..auth_proto_data.len], auth_proto_data.nativeSlice());
+        @memcpy(buf[12..][0..auth_name.len], auth_name.nativeSlice());
+        //const off = 12 + pad4(u16, auth_name.len);
+        const off : u16 = 12 + std.mem.alignForward(u16, auth_name.len, 4);
+        @memcpy(buf[off..][0..auth_data.len], auth_data.nativeSlice());
         std.debug.assert(
-            getLen(auth_proto_name.len, auth_proto_data.len) ==
-            off + std.mem.alignForward(u16, auth_proto_data.len, 4)
+            getLen(auth_name.len, auth_data.len) ==
+            off + std.mem.alignForward(u16, auth_data.len, 4)
         );
     }
 };
 
 test "ConnectSetupMessage" {
-    const auth_proto_name = comptime slice(u16, @as([]const u8, "hello"));
-    const auth_proto_data = comptime slice(u16, @as([]const u8, "there"));
-    const len = comptime connect_setup.getLen(auth_proto_name.len, auth_proto_data.len);
+    const auth_name = comptime slice(u16, @as([]const u8, "hello"));
+    const auth_data = comptime slice(u16, @as([]const u8, "there"));
+    const len = comptime connect_setup.getLen(auth_name.len, auth_data.len);
     var buf: [len]u8 = undefined;
-    connect_setup.serialize(&buf, 1, 1, auth_proto_name, auth_proto_data);
+    connect_setup.serialize(&buf, 1, 1, auth_name, auth_data);
 }
 
 pub const Opcode = enum(u8) {
