@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 #include <X11/Xlib.h>
@@ -86,7 +87,7 @@ int main(int argc, char *argv[])
             logf("TODO: handle key press!");
             break;
         default:
-            error("unknown even type %d", event.type);
+            errorf("unknown even type %d", event.type);
             exit(1);
         }
     }
