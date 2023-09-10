@@ -517,6 +517,7 @@ pub fn getAuthFilename(allocator: std.mem.Allocator) !?AuthFilename {
 pub const AuthFamily = enum(u16) {
     internet = 0,
     local = 256,
+    wild = 65535,
     _,
     pub fn str(self: AuthFamily) ?[]const u8 {
         // TODO: can we use an inline switch?
@@ -537,8 +538,12 @@ pub const AuthFilterReason = enum {
 pub const max_sock_filter_addr = if (builtin.os.tag == .windows) 255 else std.os.HOST_NAME_MAX;
 
 pub const AuthFilter = struct {
-    family: ?AuthFamily,
-    addr: ?[]const u8,
+    const Addr = struct {
+        family: AuthFamily,
+        data: []const u8,
+    };
+
+    addr: ?Addr,
     display_num: ?u32,
 
     pub fn applySocket(self: *AuthFilter, sock: std.os.socket_t, addr_buf: *[max_sock_filter_addr]u8) !void {
@@ -548,8 +553,10 @@ pub const AuthFilter = struct {
 
         if (@hasDecl(os.AF, "LOCAL")) {
             if (addr.family == os.AF.LOCAL) {
-                self.family = .local;
-                self.addr = try os.gethostname(addr_buf);
+                self.addr = Addr{
+                    .family = .local,
+                    .addr = try os.gethostname(addr_buf),
+                };
                 return;
             }
         }
@@ -569,12 +576,11 @@ pub const AuthFilter = struct {
         auth_mem: []const u8,
         entry: AuthIteratorEntry,
     ) ?AuthFilterReason {
-        if (self.family) |family| {
-            // TODO: is entry.family of 65535 might mean don't filter?
-            if (entry.family != family) return .address_family;
-        }
         if (self.addr) |addr| {
-            if (!std.mem.eql(u8, addr, entry.addr(auth_mem))) return .address;
+            if (entry.family != .wild) {
+                if (entry.family != addr.family) return .address_family;
+                if (!std.mem.eql(u8, addr, entry.addr(auth_mem))) return .address;
+            }
         }
         if (self.display_num) |num| {
             if (entry.display_num) |entry_num| {
