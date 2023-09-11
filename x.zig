@@ -542,18 +542,40 @@ pub const AuthFamily = enum(u16) {
 };
 
 pub const AuthFilterReason = enum {
-    address_family,
     address,
     display_num,
 };
 
 pub const max_sock_filter_addr = if (builtin.os.tag == .windows) 255 else std.os.HOST_NAME_MAX;
 
+const Addr = struct {
+    family: AuthFamily,
+    data: []const u8,
+
+    pub fn format(
+        self: Addr,
+        comptime fmt_spec: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) @TypeOf(writer).Error!void {
+        _ = fmt_spec;
+        _ = options;
+        const d = self.data;
+        switch (self.family) {
+            .inet => if (d.len == 4) {
+                try writer.print("{}.{}.{}.{}", .{d[0], d[1], d[2], d[3]});
+            } else {
+                try writer.print("{}/inet", .{std.fmt.fmtSliceHexLower(d)});
+            },
+            .unix => try writer.print("{s}/unix", .{d}),
+            .wild => try writer.print("*", .{}),
+            else => |family|
+                try writer.print("{}/{}", .{std.fmt.fmtSliceHexLower(d), family}),
+        }
+    }
+};
+
 pub const AuthFilter = struct {
-    const Addr = struct {
-        family: AuthFamily,
-        data: []const u8,
-    };
 
     addr: Addr,
     display_num: ?u32,
@@ -626,7 +648,7 @@ pub const AuthIteratorEntry = struct {
         mem: []const u8,
         entry: AuthIteratorEntry,
         pub fn format(
-            self: @This(),
+            self: Formatter,
             comptime fmt_spec: []const u8,
             options: std.fmt.FormatOptions,
             writer: anytype,
@@ -634,12 +656,12 @@ pub const AuthIteratorEntry = struct {
             _ = fmt_spec;
             _ = options;
 
-            const family_str: []const u8 = self.entry.family.str() orelse "?";
             const data_slice = self.entry.data(self.mem);
-            try writer.print("family={}({s}) addr='{}' display={?} name='{}' data {} bytes: {}", .{
-                @intFromEnum(self.entry.family),
-                family_str,
-                std.zig.fmtEscapes(self.entry.addr(self.mem)),
+            try writer.print("address={} display={?} name='{}' data {} bytes: {}", .{
+                Addr{
+                    .family = self.entry.family,
+                    .data = self.entry.addr(self.mem),
+                },
                 self.entry.display_num,
                 std.zig.fmtEscapes(self.entry.name(self.mem)),
                 data_slice.len,

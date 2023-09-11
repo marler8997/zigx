@@ -94,9 +94,12 @@ fn connectSetupAuth(
     };
 
     var addr_buf: [x.max_sock_filter_addr]u8 = undefined;
-    auth_filter.applySocket(sock, &addr_buf) catch |err| {
+    if (auth_filter.applySocket(sock, &addr_buf)) {
+        std.log.debug("applied address filter {}", .{auth_filter.addr});
+    } else |err| {
+        // not a huge deal, we'll just try all auth methods
         std.log.warn("failed to apply socket to auth filter with {s}", .{@errorName(err)});
-    };
+    }
 
     var auth_it = x.AuthIterator{ .mem = auth_mapped.mem };
     while (auth_it.next() catch {
