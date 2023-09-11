@@ -548,7 +548,7 @@ pub const AuthFilterReason = enum {
 
 pub const max_sock_filter_addr = if (builtin.os.tag == .windows) 255 else std.os.HOST_NAME_MAX;
 
-const Addr = struct {
+pub const Addr = struct {
     family: AuthFamily,
     data: []const u8,
 
@@ -565,6 +565,7 @@ const Addr = struct {
             .inet => if (d.len == 4) {
                 try writer.print("{}.{}.{}.{}", .{d[0], d[1], d[2], d[3]});
             } else {
+                // TODO: support ipv6?
                 try writer.print("{}/inet", .{std.fmt.fmtSliceHexLower(d)});
             },
             .unix => try writer.print("{s}/unix", .{d}),

@@ -99,19 +99,15 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
         std.log.err("auth file '{s}' is invalid", .{auth_filename.str});
         std.process.exit(1);
     }) |entry| {
-        const addr = entry.addr(auth_mapped.mem);
         switch (entry.family) {
-            .inet => if (addr.len == 4) {
-                try writer.print("{}.{}.{}.{}", .{addr[0], addr[1], addr[2], addr[3]});
-            } else {
-                try writer.print("{}/inet", .{std.fmt.fmtSliceHexLower(addr)});
-            },
-            .unix => try writer.print("{s}/unix", .{entry.addr(auth_mapped.mem)}),
             .wild => {}, // not sure what to do, should we write "*"? nothing?
-            else => |family| try writer.print("{}/{}", .{
-                std.zig.fmtEscapes(entry.addr(auth_mapped.mem)),
-                family,
-            }),
+            else => {
+                const addr = x.Addr{
+                    .family = entry.family,
+                    .data = entry.addr(auth_mapped.mem),
+                };
+                try addr.format("", .{}, writer);
+            },
         }
 
         var display_buf: [40]u8 = undefined;
