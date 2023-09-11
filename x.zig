@@ -299,6 +299,13 @@ pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u
             return connectUnixPath(host);
         return connectTcp(host, try displayToTcpPort(display_num), .{});
     } else {
+        if (builtin.os.tag == .windows) {
+            std.log.err(
+                "unsure how to connect to DISPLAY :{} on windows, how about specifing a hostname? i.e. localhost:{0}",
+                .{display_num},
+            );
+            std.os.exit(0xff);
+        }
         // otherwise, strategy is to try connecting to a unix domain socket first
         // and fall back to tcp localhost otherwise
         return connectUnixDisplayNum(display_num) catch |err| switch (err) {
