@@ -154,7 +154,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.bg_gc(),
-            .drawable_id = screen.root,
+            .drawable_id = ids.window(),
         }, .{
             .foreground = screen.black_pixel,
         });
@@ -164,7 +164,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.fg_gc(),
-            .drawable_id = screen.root,
+            .drawable_id = ids.window(),
         }, .{
             .background = screen.black_pixel,
             .foreground = x.rgb24To(0xffaadd, screen.root_depth),
