@@ -809,6 +809,8 @@ pub const Opcode = enum(u8) {
     poly_fill_rectangle = 70,
     put_image = 72,
     image_text8 = 76,
+    create_colormap = 78,
+    free_colormap = 79,
     query_extension = 98,
     get_keyboard_mapping = 101,
     _,
@@ -952,7 +954,7 @@ pub const window = struct {
         save_under: bool = false,
         event_mask: u32 = 0,
         dont_propagate: u32 = 0,
-        colormap: Colormap = .copy_from_parent,
+        colormap: NonExhaustive(Colormap) = .copy_from_parent,
         cursor: Cursor = .none,
     };
 };
@@ -1369,6 +1371,34 @@ pub const free_pixmap = struct {
     pub const len = 8;
     pub fn serialize(buf: [*]u8, id: u32) void {
         buf[0] = @intFromEnum(Opcode.free_pixmap);
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, id);
+    }
+};
+
+pub const create_colormap = struct {
+    pub const len = 16;
+    pub const Args = struct {
+        id: u32,
+        window_id: u32,
+        visual_id: u32,
+        alloc: enum(u8) { none, all },
+    };
+    pub fn serialize(buf: [*]u8, args: Args) void {
+        buf[0] = @intFromEnum(Opcode.create_colormap);
+        buf[1] = @intFromEnum(args.alloc);
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, args.id);
+        writeIntNative(u32, buf + 8, args.window_id);
+        writeIntNative(u32, buf + 12, args.visual_id);
+    }
+};
+
+pub const free_colormap = struct {
+    pub const len = 8;
+    pub fn serialize(buf: [*]u8, id: u32) void {
+        buf[0] = @intFromEnum(Opcode.free_colormap);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, id);
