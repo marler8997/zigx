@@ -263,7 +263,7 @@ pub fn main() !u8 {
                             else => unreachable, // We did not register for these events so we should not see them
                         }
                     } else {
-                        std.log.info("TODO: handle a GE generic event {}", .{msg});
+                        std.log.info("TODO: handle a generic extension event {}", .{msg});
                         return error.TodoHandleGenericExtensionEvent;
                     }
                 },

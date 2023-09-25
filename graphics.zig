@@ -181,6 +181,10 @@ pub fn main() !u8 {
                     std.log.info("todo: handle a reply message {}", .{msg});
                     return error.TodoHandleReplyMessage;
                 },
+                .generic_extension_event => |msg| {
+                    std.log.info("TODO: handle a generic extension event {}", .{msg});
+                    return error.TodoHandleGenericExtensionEvent;
+                },
                 .key_press => |msg| {
                     std.log.info("key_press: {}", .{msg.keycode});
                 },
