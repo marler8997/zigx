@@ -121,22 +121,19 @@ pub fn main() !u8 {
         inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
             std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
         }
-        const depth = screen.root_depth;
         break :blk .{
             .screen = screen,
-            .depth = depth,
             .image_format = getImageFormat(
                 image_endian,
                 formats,
-                depth,
+                screen.root_depth,
             ) catch |err| {
-                std.log.err("can't resolve root depth {} format: {s}", .{depth, @errorName(err)});
+                std.log.err("can't resolve root depth {} format: {s}", .{screen.root_depth, @errorName(err)});
                 return 0xff;
             },
         };
     };
     const screen = conn_setup_result.screen;
-    const depth = conn_setup_result.depth;
 
     // TODO: maybe need to call conn.setup.verify or something?
 
@@ -146,7 +143,7 @@ pub fn main() !u8 {
         const len = x.create_window.serialize(&msg_buf, .{
             .window_id = ids.window(),
             .parent_window_id = screen.root,
-            .depth = depth,
+            .depth = 0, // we don't care, just inherit from the parent
             .x = 0, .y = 0,
             .width = window_width, .height = window_height,
             .border_width = 0, // TODO: what is this?
@@ -154,7 +151,7 @@ pub fn main() !u8 {
             .visual_id = screen.root_visual,
         }, .{
 //            .bg_pixmap = .copy_from_parent,
-            .bg_pixel = x.rgb24To(0xbbccdd, depth),
+            .bg_pixel = x.rgb24To(0xbbccdd, screen.root_depth),
 //            //.border_pixmap =
 //            .border_pixel = 0x01fa8ec9,
 //            .bit_gravity = .north_west,
@@ -205,7 +202,7 @@ pub fn main() !u8 {
             .drawable_id = ids.window(),
         }, .{
             .background = screen.black_pixel,
-            .foreground = x.rgb24To(0xffaadd, depth),
+            .foreground = x.rgb24To(0xffaadd, screen.root_depth),
             // prevent NoExposure events when we send CopyArea
             .graphics_exposures = false,
         });
@@ -344,7 +341,7 @@ pub fn main() !u8 {
                         });
                     }
                     break :blk .{
-                        .matching_picture_format = try findMatchingPictureFormat(msg.getPictureFormats()[0..], depth),
+                        .matching_picture_format = try findMatchingPictureFormat(msg.getPictureFormats()[0..], screen.root_depth),
                     };
                 },
                 else => |msg| {
@@ -459,7 +456,7 @@ pub fn main() !u8 {
                     std.log.info("expose: {}", .{msg});
                     try render(
                         conn.sock,
-                        depth,
+                        screen.root_depth,
                         conn_setup_result.image_format,
                         ids,
                         font_dims,
