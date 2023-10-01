@@ -199,10 +199,6 @@ pub fn main() !u8 {
                 .reply => |msg| {
                     try state.onReply(msg, conn.sock, ids, fonts);
                 },
-                .generic_extension_event => |msg| {
-                    std.log.info("TODO: handle a generic extension event {}", .{msg});
-                    return error.TodoHandleGenericExtensionEvent;
-                },
                 .key_press => |msg| {
                     std.log.info("key_press: {}", .{msg.keycode});
                     const diff: isize = if (keycode_map.get(msg.keycode)) |key| switch (key) {

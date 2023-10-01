@@ -91,7 +91,6 @@ pub fn main() !u8 {
 
     // TODO: maybe need to call conn.setup.verify or something?
     const window_id = conn.setup.fixed().resource_id_base;
-    std.log.debug("screen.root={}, window_id={}", .{screen.root, window_id});
     {
         var msg_buf: [x.create_window.max_len]u8 = undefined;
         const len = x.create_window.serialize(&msg_buf, .{
@@ -206,8 +205,15 @@ pub fn main() !u8 {
     }
     var state = State { };
 
-    // Kick this off right-away so the XInputExtension is ready when we need it
-    try queryInputExtension(&msg_sequencer, &state);
+    {
+        const name = comptime x.Slice(u16, [*]const u8).initComptime("XInputExtension");
+        var msg: [x.query_extension.getLen(name.len)]u8 = undefined;
+        x.query_extension.serialize(&msg, name);
+        try msg_sequencer.send(&msg, 1);
+        state.xinput = .{ .sent_extension_query = .{
+            .sequence = msg_sequencer.last_sequence,
+        }};
+    }
 
     while (true) {
         {
@@ -255,10 +261,10 @@ pub fn main() !u8 {
                     try render(&msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state);
                 },
                 .generic_extension_event => |msg| {
-                    if(state.query_input_extension == .enabled and msg.ext_opcode == state.query_input_extension.enabled.input_extension_info.opcode) {
+                    if(state.xinput == .enabled and msg.ext_opcode == state.xinput.enabled.input_extension_info.opcode) {
                         switch (x.inputext.genericExtensionEventTaggedUnion(@alignCast(data.ptr))) {
                             .raw_button_press => |extension_msg| {
-                                std.log.info("TODO: handle a raw_button_press {}", .{extension_msg});
+                                std.log.info("received raw_button_press {}", .{extension_msg});
                             },
                             else => unreachable, // We did not register for these events so we should not see them
                         }
@@ -383,12 +389,12 @@ fn handleReply(
         .enabled => {},
     }
 
-    switch (state.query_input_extension) {
+    switch (state.xinput) {
         .initial, .extension_missing, .enabled => {},
-        .query_extension => |info| if (msg.sequence == info.sequence) {
+        .sent_extension_query => |query| if (msg.sequence == query.sequence) {
             const msg_ext: *const x.ServerMsg.QueryExtension = @ptrCast(msg);
             if (msg_ext.present == 0) {
-                state.query_input_extension = .extension_missing;
+                state.xinput = .extension_missing;
             } else {
                 std.debug.assert(msg_ext.present == 1);
                 const name = comptime x.Slice(u16, [*]const u8).initComptime("XInputExtension");
@@ -403,7 +409,7 @@ fn handleReply(
                     msg_ext.first_error,
                 });
 
-                state.query_input_extension = .{ .get_version = .{
+                state.xinput = .{ .get_version = .{
                     .sequence = msg_sequencer.last_sequence,
                     .input_extension_info = .{
                         .extension_name = "XInputExtension",
@@ -428,7 +434,7 @@ fn handleReply(
             if (msg_ext.minor_version < 3)
                 std.debug.panic("XInputExtension minor version is {} but I've only tested >= {}", .{msg_ext.minor_version, 3});
 
-            state.query_input_extension = .{ .enabled = .{
+            state.xinput = .{ .enabled = .{
                 .input_extension_info = info.input_extension_info,
             }};
 
@@ -606,35 +612,16 @@ fn createWindow(msg_sequencer: *MsgSequencer, parent_window_id: u32, window_id: 
     }
 }
 
-fn queryInputExtension(msg_sequencer: *MsgSequencer, state: *State) !void {
-    const already_fmt = "already working on querying the input extension, {s}...";
-    switch (state.query_input_extension) {
-        .initial => {
-            const name = comptime x.Slice(u16, [*]const u8).initComptime("XInputExtension");
-            var msg: [x.query_extension.getLen(name.len)]u8 = undefined;
-            x.query_extension.serialize(&msg, name);
-            try msg_sequencer.send(&msg, 1);
-            state.query_input_extension = .{ .query_extension = .{
-                .sequence = msg_sequencer.last_sequence,
-            }};
-        },
-        .query_extension => std.log.info(already_fmt, .{"querying XInputExtension"}),
-        .extension_missing => std.log.info("XInputExtension is missing", .{}),
-        .get_version => std.log.info(already_fmt, .{"getting XInputExtension version"}),
-        .enabled => std.log.info("XInputExtension is already enabled", .{}),
-    }
-}
-
 fn listenToRawEvents(msg_sequencer: *MsgSequencer, state: *State, root_window_id: u32) !void {
     //const already_fmt = "already working on adding the listener for raw events, {s}...";
     const extension_missing_fmt = "unable to listen to raw events, XInputExtension is missing";
     switch (state.listen_to_raw_events) {
         .initial, .extension_not_available_yet => {
-            if(state.query_input_extension == .extension_missing) {
+            if(state.xinput == .extension_missing) {
                 std.log.info(extension_missing_fmt, .{});
                 state.listen_to_raw_events = .extension_missing;
                 return;
-            } else if(state.query_input_extension != .enabled) {
+            } else if(state.xinput != .enabled) {
                 std.log.info("unable to listen to raw events, we haven't checked for the XInputExtension yet (just wait a second and try again).", .{});
                 state.listen_to_raw_events = .extension_not_available_yet;
                 return;
@@ -649,7 +636,7 @@ fn listenToRawEvents(msg_sequencer: *MsgSequencer, state: *State, root_window_id
                 }
             };
 
-            const input_ext_opcode = state.query_input_extension.enabled.input_extension_info.opcode;
+            const input_ext_opcode = state.xinput.enabled.input_extension_info.opcode;
             var message_buffer: [x.inputext.select_events.getLen(@as(u16, @intCast(event_masks.len)))]u8 = undefined;
             const len = x.inputext.select_events.serialize(&message_buffer, input_ext_opcode, .{
                 .window_id = root_window_id,
@@ -671,17 +658,17 @@ fn disableInputDevice(msg_sequencer: *MsgSequencer, state: *State) !void {
         // Transition from initial or someone who previously failed to disable the
         // pointer because they had no pointer at the time.
         .initial, .no_pointer_to_disable, .extension_not_available_yet => {
-            if(state.query_input_extension == .extension_missing) {
+            if(state.xinput == .extension_missing) {
                 std.log.info(extension_missing_fmt, .{});
                 state.disable_input_device = .extension_missing;
                 return;
-            } else if(state.query_input_extension != .enabled) {
+            } else if(state.xinput != .enabled) {
                 std.log.info("can't disable input device, we haven't checked for the XInputExtension yet (just wait a second and try again).", .{});
                 state.disable_input_device = .extension_not_available_yet;
                 return;
             }
 
-            const input_ext_opcode = state.query_input_extension.enabled.input_extension_info.opcode;
+            const input_ext_opcode = state.xinput.enabled.input_extension_info.opcode;
             var list_devices_msg: [x.inputext.list_input_devices.len]u8 = undefined;
             x.inputext.list_input_devices.serialize(&list_devices_msg, input_ext_opcode);
             try msg_sequencer.send(&list_devices_msg, 1);
@@ -723,9 +710,9 @@ const State = struct {
     } = .disabled,
     confine_grab: bool = false,
 
-    query_input_extension: union(enum) {
+    xinput: union(enum) {
         initial: void,
-        query_extension: struct {
+        sent_extension_query: struct {
             sequence: u16,
         },
         extension_missing: void,
