@@ -248,6 +248,7 @@ pub fn main() !u8 {
                         &msg_sequencer,
                         &state,
                         msg,
+                        screen.root,
                         window_id,
                         bg_gc_id,
                         fg_gc_id,
@@ -359,6 +360,7 @@ fn handleReply(
     msg_sequencer: *MsgSequencer,
     state: *State,
     msg: *const x.ServerMsg.Reply,
+    root_window_id: u32,
     window_id: u32,
     bg_gc_id: u32,
     fg_gc_id: u32,
@@ -437,6 +439,17 @@ fn handleReply(
             state.xinput = .{ .enabled = .{
                 .input_extension_info = info.input_extension_info,
             }};
+
+            // Now that we see that the input extension is available and compatible, let's
+            // resume any operations that someone requested while we were waiting for the
+            // extension to be available.
+            if (state.disable_input_device == .extension_not_available_yet) {
+                try disableInputDevice(msg_sequencer, state);
+            }
+            if (state.listen_to_raw_events == .extension_not_available_yet) {
+                try listenToRawEvents(msg_sequencer, state, root_window_id);
+            }
+
 
             return true; // handled
         },
@@ -622,7 +635,7 @@ fn listenToRawEvents(msg_sequencer: *MsgSequencer, state: *State, root_window_id
                 state.listen_to_raw_events = .extension_missing;
                 return;
             } else if(state.xinput != .enabled) {
-                std.log.info("unable to listen to raw events, we haven't checked for the XInputExtension yet (just wait a second and try again).", .{});
+                std.log.info("unable to listen to raw events at this moment, waiting for the XInputExtension before continuing.", .{});
                 state.listen_to_raw_events = .extension_not_available_yet;
                 return;
             }
@@ -663,7 +676,7 @@ fn disableInputDevice(msg_sequencer: *MsgSequencer, state: *State) !void {
                 state.disable_input_device = .extension_missing;
                 return;
             } else if(state.xinput != .enabled) {
-                std.log.info("can't disable input device, we haven't checked for the XInputExtension yet (just wait a second and try again).", .{});
+                std.log.info("can't disable input device at this moment, waiting for the XInputExtension before continuing.", .{});
                 state.disable_input_device = .extension_not_available_yet;
                 return;
             }
