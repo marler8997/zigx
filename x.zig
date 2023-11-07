@@ -2573,7 +2573,7 @@ pub fn wsaStartup() !void {
     }
 }
 
-pub fn readSock(sock: os.socket_t, buf: []u8, flags: u32) !usize {
+pub fn readSock(sock: os.socket_t, buf: []u8, flags: u32) std.os.RecvFromError!usize {
     if (builtin.os.tag == .windows) {
         const result = os.windows.recvfrom(sock, buf.ptr, buf.len, flags, null, null);
         if (result != os.windows.ws2_32.SOCKET_ERROR)
@@ -2587,7 +2587,7 @@ pub fn readSock(sock: os.socket_t, buf: []u8, flags: u32) !usize {
     return os.recv(sock, buf, flags);
 }
 
-pub fn writeSock(sock: os.socket_t, buf: []const u8, flags: u32) !usize {
+pub fn writeSock(sock: os.socket_t, buf: []const u8, flags: u32) std.os.SendError!usize {
     if (builtin.os.tag == .windows) {
         const result = os.windows.sendto(sock, buf.ptr, buf.len, flags, null, 0);
         if (result != os.windows.ws2_32.SOCKET_ERROR)
