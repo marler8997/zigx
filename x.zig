@@ -2579,6 +2579,8 @@ pub fn readSock(sock: os.socket_t, buf: []u8, flags: u32) !usize {
         if (result != os.windows.ws2_32.SOCKET_ERROR)
             return @intCast(result);
         switch (os.windows.ws2_32.WSAGetLastError()) {
+            .WSAEWOULDBLOCK => return error.WouldBlock,
+            .WSAECONNRESET => return error.ConnectionResetByPeer,
             else => |err| return os.windows.unexpectedWSAError(err),
         }
     }
@@ -2591,6 +2593,8 @@ pub fn writeSock(sock: os.socket_t, buf: []const u8, flags: u32) !usize {
         if (result != os.windows.ws2_32.SOCKET_ERROR)
             return @intCast(result);
         switch (os.windows.ws2_32.WSAGetLastError()) {
+            .WSAEWOULDBLOCK => return error.WouldBlock,
+            .WSAECONNRESET => return error.ConnectionResetByPeer,
             else => |err| return os.windows.unexpectedWSAError(err),
         }
     }
