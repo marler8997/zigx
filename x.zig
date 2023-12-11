@@ -1854,6 +1854,8 @@ pub const EventCode = enum(u8) {
 
 pub const ErrorKind = enum(u8) { err = 0 };
 pub const ReplyKind = enum(u8) { reply = 1 };
+// From the X Generic Event Extension
+pub const GenericEventKind = enum(u8) { generic_extension_event = 35 };
 pub const ServerMsgKind = enum(u8) {
     err = @intFromEnum(ErrorKind.err),
     reply = @intFromEnum(ReplyKind.reply),
@@ -1890,6 +1892,7 @@ pub const ServerMsgKind = enum(u8) {
     colormap_notify   = @intFromEnum(EventCode.colormap_notify),
     client_message    = @intFromEnum(EventCode.client_message),
     mapping_notify    = @intFromEnum(EventCode.mapping_notify),
+    generic_extension_event        = @intFromEnum(GenericEventKind.generic_extension_event),
     _,
 };
 
@@ -1911,6 +1914,7 @@ pub const ServerMsgTaggedUnion = union(enum) {
     reparent_notify: *align(4) Event.ReparentNotify,
     configure_notify: *align(4) Event.ConfigureNotify,
     mapping_notify: *align(4) Event.MappingNotify,
+    generic_extension_event: *align(4) ServerMsg.GenericExtensionEvent,
 };
 pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
     switch (@as(ServerMsgKind, @enumFromInt(0x7f & msg_ptr[0]))) {
@@ -1930,6 +1934,7 @@ pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
         .reparent_notify => return .{ .reparent_notify = @ptrCast(msg_ptr) },
         .configure_notify => return .{ .configure_notify = @ptrCast(msg_ptr) },
         .mapping_notify => return .{ .mapping_notify = @ptrCast(msg_ptr) },
+        .generic_extension_event => return .{ .generic_extension_event = @ptrCast(msg_ptr) },
         else => return .{ .unhandled = @ptrCast(msg_ptr) },
     }
 }
@@ -1939,6 +1944,7 @@ pub const ServerMsg = extern union {
     generic: Generic,
     err: Error,
     reply: Reply,
+    generic_extension_event: GenericExtensionEvent,
     query_font: QueryFont,
     query_text_extents: QueryTextExtents,
     list_fonts: ListFonts,
@@ -1959,6 +1965,20 @@ pub const ServerMsg = extern union {
         reserve_min: [24]u8,
     };
     comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+
+    // From the X Generic Event Extension
+    pub const GenericExtensionEvent = extern struct {
+        response_type: GenericEventKind,
+        /// The major opcode of the extension.
+        ext_opcode: u8,
+        sequence: u16,
+        /// The length field specifies the number of 4-byte blocks after the
+        /// initial 32 bytes. If length is 0, the event is 32 bytes long.
+        word_len: u32, // length in 4-byte words
+        event_opcode: u16,
+        reserve_min: [22]u8,
+    };
+    comptime { std.debug.assert(@sizeOf(GenericExtensionEvent) == 32); }
 
     comptime { std.debug.assert(@sizeOf(Error) == 32); }
     pub const Error = extern struct {
@@ -2288,13 +2308,26 @@ pub const StringListIterator = struct {
     }
 };
 
+/// Given the first 32 bytes of a given message coming across the wire,
+/// parse out the given type and return the number of bytes that should be in the message
 pub fn parseMsgLen(buf: [32]u8) u32 {
     switch (buf[0] & 0x7f) {
         @intFromEnum(ServerMsgKind.err) => return 32,
-        @intFromEnum(ServerMsgKind.reply) =>
-            return 32 + (4 * readIntNative(u32, buf[4..8])),
+        @intFromEnum(ServerMsgKind.reply),
+        @intFromEnum(ServerMsgKind.generic_extension_event) => {
+            // Here is how those `4` and `8` magic numbers offsets are derived:
+            // const start_offset = @offsetOf(ServerMsg.Reply, "word_len");
+            // const end_offset = start_offset + @sizeOf(std.meta.FieldType(ServerMsg.Reply, .word_len));
+            //
+            // Or in the case of the generic extension event:
+            // const start_offset = @offsetOf(ServerMsg.GenericExtensionEvent, "word_len");
+            // const end_offset = start_offset + @sizeOf(std.meta.FieldType(ServerMsg.GenericExtensionEvent, .word_len));
+            //
+            const calculated_msg_length = 32 + (4 * readIntNative(u32, buf[4..8]));
+            return calculated_msg_length;
+        },
         2 ... 34 => return 32,
-        else => |t| std.debug.panic("handle reply type {}", .{t}),
+        else => |t| std.debug.panic("We currently do not handle reply type {}", .{t}),
     }
 }
 
