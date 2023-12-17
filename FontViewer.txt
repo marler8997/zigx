@@ -1,0 +1,34 @@
+
+
+# XLFD: X Logical Font Description
+
+https://en.wikipedia.org/wiki/X_logical_font_description#:~:text=One%20prominent%20XLFD%20convention%20is,FAMILY_NAME%3A%20Typeface%20family
+
+
+14 fields.
+
+
+Given a set of fonts, how do you create a useful set of filters?
+
+1. Every field value should have a "number" associated that represents how many fonts have that field value.
+2. Every "filtered field"
+
+
+You should be able to select a field value and only include or exclude all fonts with that value.
+    The UI for every field value should indicate how many fonts will remain if it is used.
+
+    Field: WEIGHT_NAME
+    Filter: [X] Inclusive(100) [ ] Exclusive(20)
+    [X] medium(100)
+    [ ] bold(20)
+
+    Note that all values are either inclusive or exclusive, you cannot mix both.  The UI should have some way of switching this?
+
+
+
+
+
+
+You should be able to remove a filter, 
+
+1. Do all fonts share the same fields?

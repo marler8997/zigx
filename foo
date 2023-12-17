@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+import re
+
+with open("fontnames", "r") as f:
+#with open("fontnames2", "r") as f:
+    fontnames = f.read()
+
+def inc(d, key):
+    if key in d:
+        d[key] += 1
+    else:
+        d[key] = 1
+
+fields = (
+    "foundry",
+    "family",
+    "weight",
+    "slant",
+    "setwidthname",
+    "addstylename",
+    "pixelsize",
+    "pointsize",
+    "resx",
+    "resy",
+    "spacing",
+    "avg_width",
+    "charset_registry",
+    "charset_encoding",
+)
+
+regex = ""
+count_maps = []
+for field in fields:
+    regex += "-([^-]*)"
+    count_maps.append({})
+
+total_fonts = 0
+xlfd_fonts = 0
+
+for font in fontnames.splitlines():
+    total_fonts += 1
+    match = re.match(regex, font)
+    #print(f"font '{font}'")
+    if not match:
+        continue
+
+    xlfd_fonts += 1
+
+    for i in range(0, len(fields)):
+        field = fields[i]
+        inc(count_maps[i], match[i+1])
+
+print("--------------------------------------------------------------------------------")
+
+print(f"{total_fonts} Total Fonts")
+print(f"{xlfd_fonts} XLFD Fonts")
+
+for i in range(0, len(fields)):
+    field = fields[i]
+    count_map = count_maps[i]
+    print(f"{field} count: {len(count_map)}")
+    for field, count in reversed(sorted(count_map.items(), key=lambda item: item[1])):
+        print(f"  {field}: {count}")
