@@ -843,7 +843,7 @@ pub const WinGravity = enum(u4) {
     static = 10,
 };
 
-fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool {
+pub fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool {
     const default_value_ptr = @as(?*align(1) const field.type, @ptrCast(field.default_value)) orelse
         @compileError("isDefaultValue was called on field '" ++ field.name ++ "' which has no default value");
     switch (@typeInfo(field.type)) {
@@ -857,7 +857,7 @@ fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool
     }
 }
 
-fn optionToU32(value: anytype) u32 {
+pub fn optionToU32(value: anytype) u32 {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
         .Bool => return @intFromBool(value),
@@ -867,6 +867,7 @@ fn optionToU32(value: anytype) u32 {
     if (T == u32) return value;
     if (T == ?u32) return value.?;
     if (T == u16) return @intCast(value);
+    if (T == i16) return @intCast(@as(u16, @bitCast(value)));
     @compileError("TODO: implement optionToU32 for type: " ++ @typeName(T));
 }
 
@@ -1256,6 +1257,10 @@ pub const get_font_path = struct {
     }
 };
 
+pub const SubWindowMode = enum(u8) {
+    clip_by_children = 0,
+    include_inferiors = 1,
+};
 pub const gc_option_count = 23;
 pub const gc_option_flag = struct {
     pub const function           : u32 = (1 <<  0);
@@ -1302,7 +1307,7 @@ pub const GcOptions = struct {
     // tile_stipple_y_origin 0
     font: ?u32 = null,
     // font <server dependent>
-    // subwindow_mode clip_by_children
+    subwindow_mode: SubWindowMode = .clip_by_children,
     graphics_exposures: bool = true,
     // clip_x_origin 0
     // clip_y_origin 0
@@ -1447,6 +1452,9 @@ pub const clear_area = struct {
     }
 };
 
+/// The src and dest drawables must have the same root and depth. If you want to copy
+/// between two different drawables with different depths, use the X Render extension
+/// -> `composite`.
 pub const copy_area = struct {
     pub const len = 28;
     pub const Args = struct {
