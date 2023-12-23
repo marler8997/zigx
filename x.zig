@@ -808,6 +808,7 @@ pub const Opcode = enum(u8) {
     poly_rectangle = 67,
     poly_fill_rectangle = 70,
     put_image = 72,
+    get_image = 73,
     image_text8 = 76,
     create_colormap = 78,
     free_colormap = 79,
@@ -1620,6 +1621,63 @@ pub const put_image = struct {
         buf[23] = 0; // unused
         comptime { std.debug.assert(24 == data_offset); }
     }
+};
+
+pub const get_image = struct {
+    pub const len =
+          1 // opcode
+        + 1 // format
+        + 2 // request length
+        + 4 // drawable id
+        + 2 // x
+        + 2 // y
+        + 2 // width
+        + 2 // height
+        + 4 // plane-mask
+        ;
+    pub const Args = struct {
+        format: enum(u8) {
+            xy_pixmap = 1,
+            z_pixmap = 2,
+        },
+        drawable_id: u32,
+        x: i16,
+        y: i16,
+        width: u16,
+        height: u16,
+        plane_mask: u32,
+    };
+    pub fn serialize(buf: [*]u8, args: Args) void {
+        buf[0] = @intFromEnum(Opcode.get_image);
+        buf[1] = @intFromEnum(args.format);
+        writeIntNative(u16, buf + 2, @as(u16, @intCast(len >> 2)));
+        writeIntNative(u32, buf + 4, args.drawable_id);
+        writeIntNative(i16, buf + 8, args.x);
+        writeIntNative(i16, buf + 10, args.y);
+        writeIntNative(u16, buf + 12, args.width);
+        writeIntNative(u16, buf + 14, args.height);
+        writeIntNative(u32, buf + 16, args.plane_mask);
+    }
+
+    pub const Reply = extern struct {
+        response_type: ReplyKind,
+        depth: u8,
+        sequence: u16,
+        reply_len: u32,
+        visual: u32,
+        unused: [20]u8, // padding
+        _data_start: [0]u8,
+
+        // From the X11 protocol docs:
+        // (n+p)/4    reply length
+        pub const scanline_pad_bytes = 4;
+
+        pub fn getData(self: *@This()) []const u8 {
+            const ptr: [*]const u8 = @ptrFromInt(@intFromPtr(&self._data_start));
+            return ptr[0..(self.reply_len * scanline_pad_bytes)];
+        }
+    };
+    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
 };
 
 pub const image_text8 = struct {
