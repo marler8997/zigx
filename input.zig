@@ -70,7 +70,7 @@ pub fn main() !u8 {
         for (formats, 0..) |format, i| {
             std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
         }
-        var screen = conn.setup.getFirstScreenPtr(format_list_limit);
+        const screen = conn.setup.getFirstScreenPtr(format_list_limit);
         inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
             std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
         }

@@ -3,6 +3,7 @@ const std = @import("std");
 const x = @import("./x.zig");
 const common = @import("common.zig");
 
+const is_zig_0_11 = std.mem.eql(u8, @import("builtin").zig_version_string, "0.11.0");
 const Endian = std.builtin.Endian;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -67,8 +68,8 @@ pub fn main() !u8 {
             std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
         }
         const image_endian: Endian = switch (fixed.image_byte_order) {
-            .lsb_first => .Little,
-            .msb_first => .Big,
+            .lsb_first => if (is_zig_0_11) .Little else .little,
+            .msb_first => if (is_zig_0_11) .Big else .big,
             else => |order| {
                 std.log.err("unknown image-byte-order {}", .{order});
                 return 0xff;
@@ -82,7 +83,7 @@ pub fn main() !u8 {
         for (formats, 0..) |format, i| {
             std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
         }
-        var screen = conn.setup.getFirstScreenPtr(format_list_limit);
+        const screen = conn.setup.getFirstScreenPtr(format_list_limit);
         inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
             std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
         }

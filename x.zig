@@ -49,6 +49,8 @@ pub const TcpBasePort = 6000;
 pub const BigEndian = 'B';
 pub const LittleEndian = 'l';
 
+const is_zig_0_11 = std.mem.eql(u8, builtin.zig_version_string, "0.11.0");
+
 // TODO: is there another way to do this, is this somewhere in std?
 pub fn optEql(optLeft: anytype, optRight: anytype) bool {
     if (optLeft) |left| {
@@ -339,13 +341,15 @@ pub fn connectTcp(name: []const u8, port: u16, options: ConnectTcpOptions) !os.s
 }
 
 pub fn tcpConnectToAddress(address: std.net.Address) !os.socket_t {
-    const nonblock = if (std.io.is_async) os.SOCK.NONBLOCK else 0;
+    //const nonblock = if (std.io.is_async) os.SOCK.NONBLOCK else 0;
+    const nonblock = 0;
     const sock_flags = os.SOCK.STREAM | nonblock |
         (if (builtin.os.tag == .windows) 0 else os.SOCK.CLOEXEC);
     const sockfd = try os.socket(address.any.family, sock_flags, os.IPPROTO.TCP);
     errdefer os.closeSocket(sockfd);
 
-    if (std.io.is_async) {
+    //if (std.io.is_async) {
+    if (false) {
         const loop = std.event.Loop.instance orelse return error.WouldBlock;
         try loop.connect(sockfd, &address.any, address.getOsSockLen());
     } else {
@@ -681,6 +685,21 @@ pub const AuthIteratorEntry = struct {
     };
 };
 
+const NewEndian = if (is_zig_0_11) enum { big, little } else std.builtin.Endian;
+fn readInt(comptime T: type, buffer: *const [@divExact(@typeInfo(T).Int.bits, 8)]u8, endian: NewEndian) T {
+    return if (is_zig_0_11) switch (endian) {
+        .big => std.mem.readIntBig(u16, buffer),
+        .little => std.mem.readIntLittle(u16, buffer),
+    } else std.mem.readInt(T, buffer, endian);
+}
+
+pub fn writeInt(comptime T: type, buffer: *[@divExact(@typeInfo(T).Int.bits, 8)]u8, value: T, endian: NewEndian) void {
+    return if (is_zig_0_11) switch (endian) {
+        .big => std.mem.writeIntSliceBig(T, buffer, value),
+        .little => std.mem.writeIntSliceLittle(T, buffer, value),
+    } else std.mem.writeInt(T, buffer, value, endian);
+}
+
 pub const AuthIterator = struct {
     mem: []const u8,
     idx: usize = 0,
@@ -692,18 +711,18 @@ pub const AuthIterator = struct {
         // TODO: is big endian guaranteed?
         //       using a fixed endianness makes it look like these files are supposed
         //       to be compatible across machines, but then it's using c_short which isn't?
-        const family = std.mem.readIntBig(u16, self.mem[self.idx..][0..2]);
-        const addr_len = std.mem.readIntBig(u16, self.mem[self.idx + 2..][0..2]);
+        const family = readInt(u16, self.mem[self.idx..][0..2], .big);
+        const addr_len = readInt(u16, self.mem[self.idx + 2..][0..2], .big);
         const addr_start = self.idx + 4;
         const addr_end = addr_start + addr_len;
         if (addr_end + 2 > self.mem.len) return error.InvalidAuthFile;
-        const num_len = std.mem.readIntBig(u16, self.mem[addr_end..][0..2]);
+        const num_len = readInt(u16, self.mem[addr_end..][0..2], .big);
         const num_end = addr_end + 2 + num_len;
         if (num_end + 2 > self.mem.len) return error.InvalidAuthFile;
-        const name_len = std.mem.readIntBig(u16, self.mem[num_end..][0..2]);
+        const name_len = readInt(u16, self.mem[num_end..][0..2], .big);
         const name_end = num_end + 2 + name_len;
         if (name_end + 2 > self.mem.len) return error.InvalidAuthFile;
-        const data_len = std.mem.readIntBig(u16, self.mem[name_end..][0..2]);
+        const data_len = readInt(u16, self.mem[name_end..][0..2], .big);
         const data_end = name_end + 2 + data_len;
         if (data_end > self.mem.len) return error.InvalidAuthFile;
 
@@ -758,7 +777,7 @@ pub const connect_setup = struct {
         auth_name: Slice(u16, [*]const u8),
         auth_data: Slice(u16, [*]const u8),
     ) void {
-        buf[0] = @as(u8, if (builtin.target.cpu.arch.endian() == .Big) BigEndian else LittleEndian);
+        buf[0] = @as(u8, if (builtin.target.cpu.arch.endian() == if (is_zig_0_11) .Big else .big) BigEndian else LittleEndian);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, proto_major_ver);
         writeIntNative(u16, buf + 4, proto_minor_ver);
@@ -1219,7 +1238,7 @@ pub const query_text_extents = struct {
         writeIntNative(u32, buf + 4, font_id);
         var off: usize = 8;
         for (text.ptr[0..text.len]) |c| {
-            std.mem.writeIntSliceBig(u16, (buf + off)[0..2], c);
+            writeInt(u16, (buf + off)[0..2], c, .big);
             off += 2;
         }
         std.debug.assert(len == std.mem.alignForward(usize, off, 4));
