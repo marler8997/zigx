@@ -2,9 +2,9 @@ const std = @import("std");
 const x = @import("x.zig");
 const common = @This();
 
-pub const SocketReader = std.io.Reader(std.os.socket_t, std.os.RecvFromError, readSocket);
+pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocket);
 
-pub fn send(sock: std.os.socket_t, data: []const u8) !void {
+pub fn send(sock: std.posix.socket_t, data: []const u8) !void {
     const sent = try x.writeSock(sock, data, 0);
     if (sent != data.len) {
         std.log.err("send {} only sent {}\n", .{data.len, sent});
@@ -13,7 +13,7 @@ pub fn send(sock: std.os.socket_t, data: []const u8) !void {
 }
 
 pub const ConnectResult = struct {
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     setup: x.ConnectSetup,
     pub fn reader(self: ConnectResult) SocketReader {
         return .{ .context = self.sock };
@@ -24,7 +24,7 @@ pub const ConnectResult = struct {
 };
 
 pub fn connectSetupMaxAuth(
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     comptime max_auth_len: usize,
     auth_name: x.Slice(u16, [*]const u8),
     auth_data: x.Slice(u16, [*]const u8),
@@ -37,7 +37,7 @@ pub fn connectSetupMaxAuth(
 }
 
 pub fn connectSetup(
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     msg: []u8,
     auth_name: x.Slice(u16, [*]const u8),
     auth_data: x.Slice(u16, [*]const u8),
@@ -76,7 +76,7 @@ pub fn connectSetup(
 
 fn connectSetupAuth(
     display_num: ?u32,
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     auth_filename: []const u8,
 ) !?u16 {
     // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -132,12 +132,12 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
     const display = x.getDisplay();
     const parsed_display = x.parseDisplay(display) catch |err| {
         std.log.err("invalid display '{s}': {s}", .{display, @errorName(err)});
-        std.os.exit(0xff);
+        std.process.exit(0xff);
     };
 
     const sock = x.connect(display, parsed_display) catch |err| {
         std.log.err("failed to connect to display '{s}': {s}", .{display, @errorName(err)});
-        std.os.exit(0xff);
+        std.process.exit(0xff);
     };
     errdefer x.disconnect(sock);
 
@@ -161,7 +161,7 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
         }
 
         std.log.err("the X server rejected our connect setup message", .{});
-        std.os.exit(0xff);
+        std.process.exit(0xff);
     };
 
     const connect_setup = x.ConnectSetup {
@@ -183,6 +183,6 @@ pub fn asReply(comptime T: type, msg_bytes: []align(4) u8) !*T {
     return @alignCast(@ptrCast(generic_msg));
 }
 
-fn readSocket(sock: std.os.socket_t, buffer: []u8) !usize {
+fn readSocket(sock: std.posix.socket_t, buffer: []u8) !usize {
     return x.readSock(sock, buffer, 0);
 }

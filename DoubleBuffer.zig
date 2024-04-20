@@ -9,7 +9,7 @@ const DoubleBuffer = @This();
 
 const builtin = @import("builtin");
 const std = @import("std");
-const os = std.os;
+const posix = std.posix;
 const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 
 const impl: enum { memfd, shm, windows } = switch (builtin.os.tag) {
@@ -22,8 +22,8 @@ const impl: enum { memfd, shm, windows } = switch (builtin.os.tag) {
 ptr: [*]align(std.mem.page_size) u8,
 half_len: usize,
 data: switch (impl) {
-    .memfd => os.fd_t,
-    .shm => os.fd_t,
+    .memfd => posix.fd_t,
+    .shm => posix.fd_t,
     .windows => win32.HANDLE,
 },
 
@@ -35,8 +35,8 @@ pub const InitOptions = struct {
 pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
     switch (impl) {
         .memfd => {
-            const fd = try os.memfd_createZ(opt.memfd_name, 0);
-            errdefer os.close(fd);
+            const fd = try posix.memfd_createZ(opt.memfd_name, 0);
+            errdefer posix.close(fd);
             const ptr = try mapFdDouble(fd, half_len);
             return .{
                 .ptr = ptr,
@@ -57,7 +57,7 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
             var unique_name_buf: [rand_hex_len + 1]u8 = undefined;
             const unique_name = blk: {
                 var rand_bytes: [rand_byte_len]u8 = undefined;
-                try os.getrandom(&rand_bytes);
+                try posix.getrandom(&rand_bytes);
                 break :blk std.fmt.bufPrintZ(
                     &unique_name_buf,
                     "{}",
@@ -68,15 +68,15 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
 
             const fd = std.c.shm_open(
                 unique_name,
-                std.os.O.RDWR | std.os.O.CREAT | std.os.O.EXCL,
-                std.os.S.IRUSR | std.os.S.IWUSR,
+                std.posix.O.RDWR | std.posix.O.CREAT | std.posix.O.EXCL,
+                std.posix.S.IRUSR | std.posix.S.IWUSR,
             );
-            if (fd == -1) switch (@as(std.os.E, @enumFromInt(std.c._errno().*))) {
+            if (fd == -1) switch (@as(std.posix.E, @enumFromInt(std.c._errno().*))) {
                 .EXIST => return error.PathAlreadyExists,
                 .NAMETOOLONG => return error.NameTooLong,
-                else => |err| return std.os.unexpectedErrno(err),
+                else => |err| return std.posix.unexpectedErrno(err),
             };
-            errdefer os.close(fd);
+            errdefer posix.close(fd);
             const ptr = try mapFdDouble(fd, half_len);
             return .{
                 .ptr = ptr,
@@ -123,7 +123,7 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
             ) orelse switch (win32.GetLastError()) {
                 else => |err| return std.os.windows.unexpectedError(err),
             };
-            errdefer os.close(map);
+            errdefer posix.close(map);
 
             const ptr_again = win32.MapViewOfFile3FromApp(
                 map,
@@ -168,13 +168,13 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
 pub fn deinit(self: DoubleBuffer) void {
     switch (impl) {
         .memfd, .shm => {
-            os.munmap(self.ptr[0 .. self.half_len * 2]);
-            os.close(self.data);
+            posix.munmap(self.ptr[0 .. self.half_len * 2]);
+            posix.close(self.data);
         },
         .windows => {
             std.debug.assert(0 != win32.UnmapViewOfFile(self.ptr + self.half_len));
             std.debug.assert(0 != win32.UnmapViewOfFile(self.ptr));
-            errdefer os.close(self.data);
+            errdefer posix.close(self.data);
         },
     }
 }
@@ -187,14 +187,23 @@ pub fn contiguousReadBuffer(self: DoubleBuffer) ContiguousReadBuffer {
 }
 
 
-pub fn mapFdDouble(fd: os.fd_t, half_size: usize) ![*]align(std.mem.page_size) u8 {
+pub fn mapFdDouble(fd: posix.fd_t, half_size: usize) ![*]align(std.mem.page_size) u8 {
     std.debug.assert((half_size % std.mem.page_size) == 0);
-    try os.ftruncate(fd, half_size);
-    const ptr = (try os.mmap(null, 2 * half_size, os.PROT.NONE, os.MAP.PRIVATE | os.MAP.ANONYMOUS, -1, 0)).ptr;
-    _ = try os.mmap(ptr,
-        half_size, os.PROT.READ | os.PROT.WRITE, os.MAP.SHARED | os.MAP.FIXED, fd, 0);
-    _ = try os.mmap(@alignCast(ptr + half_size),
-        half_size, os.PROT.READ | os.PROT.WRITE, os.MAP.SHARED | os.MAP.FIXED, fd, 0);
+    try posix.ftruncate(fd, half_size);
+    const ptr = (try posix.mmap(
+        null,
+        2 * half_size,
+        posix.PROT.NONE,
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        -1,
+        0,
+    )).ptr;
+    _ = try posix.mmap(
+        ptr, half_size, posix.PROT.READ | posix.PROT.WRITE, .{ .TYPE = .SHARED, .FIXED = true }, fd, 0
+    );
+    _ = try posix.mmap(
+        @alignCast(ptr + half_size), half_size, posix.PROT.READ | posix.PROT.WRITE, .{ .TYPE = .SHARED, .FIXED = true }, fd, 0
+    );
     return ptr;
 }
 

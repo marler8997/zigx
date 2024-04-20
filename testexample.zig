@@ -3,7 +3,6 @@ const std = @import("std");
 const x = @import("./x.zig");
 const common = @import("common.zig");
 
-const is_zig_0_11 = std.mem.eql(u8, @import("builtin").zig_version_string, "0.11.0");
 const Endian = std.builtin.Endian;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -60,7 +59,7 @@ fn getImageFormat(
 pub fn main() !u8 {
     try x.wsaStartup();
     const conn = try common.connect(allocator);
-    defer std.os.shutdown(conn.sock, .both) catch {};
+    defer std.posix.shutdown(conn.sock, .both) catch {};
 
     const conn_setup_result = blk: {
         const fixed = conn.setup.fixed();
@@ -68,8 +67,8 @@ pub fn main() !u8 {
             std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
         }
         const image_endian: Endian = switch (fixed.image_byte_order) {
-            .lsb_first => if (is_zig_0_11) .Little else .little,
-            .msb_first => if (is_zig_0_11) .Big else .big,
+            .lsb_first => .little,
+            .msb_first => .big,
             else => |order| {
                 std.log.err("unknown image-byte-order {}", .{order});
                 return 0xff;
@@ -366,7 +365,7 @@ const FontDims = struct {
 };
 
 fn render(
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     depth: u8,
     image_format: ImageFormat,
     ids: Ids,
@@ -532,7 +531,7 @@ fn render(
 
 }
 
-fn changeGcColor(sock: std.os.socket_t, gc_id: u32, color: u32) !void {
+fn changeGcColor(sock: std.posix.socket_t, gc_id: u32, color: u32) !void {
     var msg_buf: [x.change_gc.max_len]u8 = undefined;
     const len = x.change_gc.serialize(&msg_buf, gc_id, .{
         .foreground = color,

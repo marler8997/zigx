@@ -10,7 +10,7 @@ const allocator = arena.allocator();
 pub fn main() !void {
     try x.wsaStartup();
     const conn = try common.connect(allocator);
-    defer std.os.shutdown(conn.sock, .both) catch {};
+    defer std.posix.shutdown(conn.sock, .both) catch {};
 
     {
         const pattern_string = "*";

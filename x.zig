@@ -29,7 +29,8 @@ const std = @import("std");
 const stdext = @import("stdext.zig");
 const testing = std.testing;
 const builtin = @import("builtin");
-const os = std.os;
+const posix = std.posix;
+const windows = std.os.windows;
 
 pub const inputext = @import("xinputext.zig");
 pub const render = @import("xrender.zig");
@@ -48,8 +49,6 @@ pub const TcpBasePort = 6000;
 
 pub const BigEndian = 'B';
 pub const LittleEndian = 'l';
-
-const is_zig_0_11 = std.mem.eql(u8, builtin.zig_version_string, "0.11.0");
 
 // TODO: is there another way to do this, is this somewhere in std?
 pub fn optEql(optLeft: anytype, optRight: anytype) bool {
@@ -101,16 +100,16 @@ pub fn getDisplay() []const u8 {
         return std.process.getEnvVarOwned(arena.allocator(), "DISPLAY") catch |err| switch (err) {
             error.EnvironmentVariableNotFound => return ":0",
             error.OutOfMemory => @panic("Out of memory"),
-            error.InvalidUtf8 => @panic("Environment Variables are invalid utf8?"),
+            error.InvalidWtf8 => @panic("Environment Variables are invalid wtf8?"),
         };
     }
-    return os.getenv("DISPLAY") orelse ":0";
+    return posix.getenv("DISPLAY") orelse ":0";
 }
 
 // Return: display if set, otherwise the environment variable DISPLAY
 //pub fn getDisplay(display: anytype) @TypeOf(display) {
 //    if (display.length == 0) {
-//        const env = os.getenv("DISPLAY");
+//        const env = posix.getenv("DISPLAY");
 //        if (@TypeOf(display) == []const u8)
 //            return env else "";
 //        @compileError("display string type not implemented");
@@ -246,14 +245,14 @@ pub fn isUnixProtocol(optionalProtocol: ?[]const u8) bool {
 
 // The application should probably have access to the DISPLAY
 // for logging purposes.  This might be too much abstraction.
-//pub fn connect() !os.socket_t {
-//    const display = os.getenv("DISPLAY") orelse
+//pub fn connect() !posix.socket_t {
+//    const display = posix.getenv("DISPLAY") orelse
 //        return connectExplicit(null, null, 0);
 //    return connectDisplay(display);
 //}
 
 //pub const ConnectDisplayError = InvalidDisplayError;
-pub fn connect(display: []const u8, parsed: ParsedDisplay) !os.socket_t {
+pub fn connect(display: []const u8, parsed: ParsedDisplay) !posix.socket_t {
     const optional_host: ?[]const u8 = blk: {
         const host_slice = parsed.hostSlice(display.ptr);
         break :blk if (host_slice.len == 0) null else host_slice;
@@ -276,7 +275,7 @@ fn displayToTcpPort(display_num: u32) error{DisplayNumberOutOfRange}!u16 {
     return @intCast(port);
 }
 
-pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u8, display_num: u32) !os.socket_t {
+pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u8, display_num: u32) !posix.socket_t {
 
     if (optional_protocol) |proto| {
         if (std.mem.eql(u8, proto, "unix")) {
@@ -306,7 +305,7 @@ pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u
                 "unsure how to connect to DISPLAY :{} on windows, how about specifing a hostname? i.e. localhost:{0}",
                 .{display_num},
             );
-            std.os.exit(0xff);
+            std.process.exit(0xff);
         }
         // otherwise, strategy is to try connecting to a unix domain socket first
         // and fall back to tcp localhost otherwise
@@ -322,51 +321,32 @@ pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u
 pub const ConnectTcpOptions = struct {
     inet6: bool = false,
 };
-pub fn connectTcp(name: []const u8, port: u16, options: ConnectTcpOptions) !os.socket_t {
+pub fn connectTcp(name: []const u8, port: u16, options: ConnectTcpOptions) !posix.socket_t {
     if (options.inet6) return error.Inet6NotImplemented;
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const list = try std.net.getAddressList(arena.allocator(), name, port);
     defer list.deinit();
     for (list.addrs) |addr| {
-        return tcpConnectToAddress(addr) catch |err| switch (err) {
+        return (std.net.tcpConnectToAddress(addr) catch |err| switch (err) {
             error.ConnectionRefused => {
                 continue;
             },
             else => return err,
-        };
+        }).handle;
     }
     if (list.addrs.len == 0) return error.UnknownHostName;
-    return os.ConnectError.ConnectionRefused;
+    return posix.ConnectError.ConnectionRefused;
 }
 
-pub fn tcpConnectToAddress(address: std.net.Address) !os.socket_t {
-    //const nonblock = if (std.io.is_async) os.SOCK.NONBLOCK else 0;
-    const nonblock = 0;
-    const sock_flags = os.SOCK.STREAM | nonblock |
-        (if (builtin.os.tag == .windows) 0 else os.SOCK.CLOEXEC);
-    const sockfd = try os.socket(address.any.family, sock_flags, os.IPPROTO.TCP);
-    errdefer os.closeSocket(sockfd);
-
-    //if (std.io.is_async) {
-    if (false) {
-        const loop = std.event.Loop.instance orelse return error.WouldBlock;
-        try loop.connect(sockfd, &address.any, address.getOsSockLen());
-    } else {
-        try os.connect(sockfd, &address.any, address.getOsSockLen());
-    }
-
-    return sockfd;
+pub fn disconnect(sock: posix.socket_t) void {
+    posix.shutdown(sock, .both) catch {}; // ignore any error here
+    posix.close(sock);
 }
 
-pub fn disconnect(sock: os.socket_t) void {
-    os.shutdown(sock, .both) catch {}; // ignore any error here
-    os.close(sock);
-}
-
-pub fn connectUnixDisplayNum(display_num: u32) !os.socket_t {
+pub fn connectUnixDisplayNum(display_num: u32) !posix.socket_t {
     const path_prefix = "/tmp/.X11-unix/X";
-    var addr = os.sockaddr.un { .family = os.AF.UNIX, .path = undefined };
+    var addr = posix.sockaddr.un { .family = posix.AF.UNIX, .path = undefined };
     const path = std.fmt.bufPrintZ(
         &addr.path,
         "{s}{}",
@@ -375,8 +355,8 @@ pub fn connectUnixDisplayNum(display_num: u32) !os.socket_t {
     return connectUnixAddr(&addr, path.len);
 }
 
-pub fn connectUnixPath(socket_path: []const u8) !os.socket_t {
-    var addr = os.sockaddr.un { .family = os.AF.UNIX, .path = undefined };
+pub fn connectUnixPath(socket_path: []const u8) !posix.socket_t {
+    var addr = posix.sockaddr.un { .family = posix.AF.UNIX, .path = undefined };
     const path = std.fmt.bufPrintZ(
         &addr.path,
         "{s}",
@@ -385,13 +365,13 @@ pub fn connectUnixPath(socket_path: []const u8) !os.socket_t {
     return connectUnixAddr(&addr, path.len);
 }
 
-pub fn connectUnixAddr(addr: *const os.sockaddr.un, path_len: usize) !os.socket_t {
-    const sock = try os.socket(os.AF.UNIX, os.SOCK.STREAM, 0);
-    errdefer os.close(sock);
+pub fn connectUnixAddr(addr: *const posix.sockaddr.un, path_len: usize) !posix.socket_t {
+    const sock = try posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0);
+    errdefer posix.close(sock);
 
     // TODO: should we set any socket options?
-    const addr_len: os.socklen_t = @intCast(@offsetOf(os.sockaddr.un, "path") + path_len + 1);
-    os.connect(sock, @ptrCast(addr), addr_len) catch |err| switch (err) {
+    const addr_len: posix.socklen_t = @intCast(@offsetOf(posix.sockaddr.un, "path") + path_len + 1);
+    posix.connect(sock, @ptrCast(addr), addr_len) catch |err| switch (err) {
         // TODO: handle some of these errors and translate them so we can "fall back" to tcp
         //       for example, we might handle error.FileNotFound, but I would probably
         //       translate most errors to custom ones so we only fallback when we get
@@ -514,7 +494,7 @@ pub fn getAuthFilename(allocator: std.mem.Allocator) !?AuthFilename {
         return null;
     }
 
-    if (os.getenv("XAUTHORITY")) |e| {
+    if (posix.getenv("XAUTHORITY")) |e| {
         if (std.fs.cwd().accessZ(e, .{})) {
             return .{ .str = e, .owned = false };
         } else |err| switch (err) {
@@ -523,7 +503,7 @@ pub fn getAuthFilename(allocator: std.mem.Allocator) !?AuthFilename {
         }
     }
 
-    if (os.getenv("HOME")) |e| {
+    if (posix.getenv("HOME")) |e| {
         const path = try std.fs.path.joinZ(allocator, &.{ e, ".Xauthority" });
         errdefer allocator.free(path);
         if (std.fs.cwd().accessZ(path, .{})) {
@@ -557,7 +537,7 @@ pub const AuthFilterReason = enum {
     display_num,
 };
 
-pub const max_sock_filter_addr = if (builtin.os.tag == .windows) 255 else std.os.HOST_NAME_MAX;
+pub const max_sock_filter_addr = if (builtin.os.tag == .windows) 255 else posix.HOST_NAME_MAX;
 
 pub const Addr = struct {
     family: AuthFamily,
@@ -594,25 +574,25 @@ pub const AuthFilter = struct {
     addr: Addr,
     display_num: ?u32,
 
-    pub fn applySocket(self: *AuthFilter, sock: std.os.socket_t, addr_buf: *[max_sock_filter_addr]u8) !void {
-        var addr: os.sockaddr.storage = undefined;
-        var addrlen: os.socklen_t = @sizeOf(@TypeOf(addr));
-        try os.getsockname(sock, @ptrCast(&addr), &addrlen);
+    pub fn applySocket(self: *AuthFilter, sock: std.posix.socket_t, addr_buf: *[max_sock_filter_addr]u8) !void {
+        var addr: posix.sockaddr.storage = undefined;
+        var addrlen: posix.socklen_t = @sizeOf(@TypeOf(addr));
+        try posix.getsockname(sock, @ptrCast(&addr), &addrlen);
 
-        if (@hasDecl(os.AF, "LOCAL")) {
-            if (addr.family == os.AF.LOCAL) {
+        if (@hasDecl(posix.AF, "LOCAL")) {
+            if (addr.family == posix.AF.LOCAL) {
                 self.addr = .{
                     .family = .unix,
-                    .data = try os.gethostname(addr_buf),
+                    .data = try posix.gethostname(addr_buf),
                 };
                 return;
             }
         }
         switch (addr.family) {
-            os.AF.INET, os.AF.INET6 => {
-                //var remote_addr: os.sockaddr = undefined;
-                //var remote_addrlen: os.socklen_t = 0;
-                //try os.getpeername(sock, &remote_addr, &remote_addrlen);
+            posix.AF.INET, posix.AF.INET6 => {
+                //var remote_addr: posix.sockaddr = undefined;
+                //var remote_addrlen: posix.socklen_t = 0;
+                //try posix.getpeername(sock, &remote_addr, &remote_addrlen);
                 return error.InternetSocketsNotImplemented;
             },
             else => {},
@@ -685,21 +665,6 @@ pub const AuthIteratorEntry = struct {
     };
 };
 
-const NewEndian = if (is_zig_0_11) enum { big, little } else std.builtin.Endian;
-fn readInt(comptime T: type, buffer: *const [@divExact(@typeInfo(T).Int.bits, 8)]u8, endian: NewEndian) T {
-    return if (is_zig_0_11) switch (endian) {
-        .big => std.mem.readIntBig(u16, buffer),
-        .little => std.mem.readIntLittle(u16, buffer),
-    } else std.mem.readInt(T, buffer, endian);
-}
-
-pub fn writeInt(comptime T: type, buffer: *[@divExact(@typeInfo(T).Int.bits, 8)]u8, value: T, endian: NewEndian) void {
-    return if (is_zig_0_11) switch (endian) {
-        .big => std.mem.writeIntSliceBig(T, buffer, value),
-        .little => std.mem.writeIntSliceLittle(T, buffer, value),
-    } else std.mem.writeInt(T, buffer, value, endian);
-}
-
 pub const AuthIterator = struct {
     mem: []const u8,
     idx: usize = 0,
@@ -711,18 +676,18 @@ pub const AuthIterator = struct {
         // TODO: is big endian guaranteed?
         //       using a fixed endianness makes it look like these files are supposed
         //       to be compatible across machines, but then it's using c_short which isn't?
-        const family = readInt(u16, self.mem[self.idx..][0..2], .big);
-        const addr_len = readInt(u16, self.mem[self.idx + 2..][0..2], .big);
+        const family = std.mem.readInt(u16, self.mem[self.idx..][0..2], .big);
+        const addr_len = std.mem.readInt(u16, self.mem[self.idx + 2..][0..2], .big);
         const addr_start = self.idx + 4;
         const addr_end = addr_start + addr_len;
         if (addr_end + 2 > self.mem.len) return error.InvalidAuthFile;
-        const num_len = readInt(u16, self.mem[addr_end..][0..2], .big);
+        const num_len = std.mem.readInt(u16, self.mem[addr_end..][0..2], .big);
         const num_end = addr_end + 2 + num_len;
         if (num_end + 2 > self.mem.len) return error.InvalidAuthFile;
-        const name_len = readInt(u16, self.mem[num_end..][0..2], .big);
+        const name_len = std.mem.readInt(u16, self.mem[num_end..][0..2], .big);
         const name_end = num_end + 2 + name_len;
         if (name_end + 2 > self.mem.len) return error.InvalidAuthFile;
-        const data_len = readInt(u16, self.mem[name_end..][0..2], .big);
+        const data_len = std.mem.readInt(u16, self.mem[name_end..][0..2], .big);
         const data_end = name_end + 2 + data_len;
         if (data_end > self.mem.len) return error.InvalidAuthFile;
 
@@ -777,7 +742,7 @@ pub const connect_setup = struct {
         auth_name: Slice(u16, [*]const u8),
         auth_data: Slice(u16, [*]const u8),
     ) void {
-        buf[0] = @as(u8, if (builtin.target.cpu.arch.endian() == if (is_zig_0_11) .Big else .big) BigEndian else LittleEndian);
+        buf[0] = @as(u8, if (builtin.target.cpu.arch.endian() == .big) BigEndian else LittleEndian);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, proto_major_ver);
         writeIntNative(u16, buf + 4, proto_minor_ver);
@@ -1238,7 +1203,7 @@ pub const query_text_extents = struct {
         writeIntNative(u32, buf + 4, font_id);
         var off: usize = 8;
         for (text.ptr[0..text.len]) |c| {
-            writeInt(u16, (buf + off)[0..2], c, .big);
+            std.mem.writeInt(u16, (buf + off)[0..2], c, .big);
             off += 2;
         }
         std.debug.assert(len == std.mem.alignForward(usize, off, 4));
@@ -1726,11 +1691,11 @@ pub fn readIntNative(comptime T: type, buf: [*]const u8) T {
 }
 
 
-pub fn recvFull(sock: os.socket_t, buf: []u8) !void {
+pub fn recvFull(sock: posix.socket_t, buf: []u8) !void {
     std.debug.assert(buf.len > 0);
     var total_received : usize = 0;
     while (true) {
-        const last_received = try os.recv(sock, buf[total_received..], 0);
+        const last_received = try posix.recv(sock, buf[total_received..], 0);
         if (last_received == 0)
             return error.ConnectionResetByPeer;
         total_received += last_received;
@@ -2588,34 +2553,34 @@ pub fn charsetName(set: Charset) ?[]const u8 {
 // the start of their program to setup WSA on Windows
 pub fn wsaStartup() !void {
     if (builtin.os.tag == .windows) {
-        _ = try os.windows.WSAStartup(2, 2);
+        _ = try windows.WSAStartup(2, 2);
     }
 }
 
-pub fn readSock(sock: os.socket_t, buf: []u8, flags: u32) std.os.RecvFromError!usize {
+pub fn readSock(sock: posix.socket_t, buf: []u8, flags: u32) std.posix.RecvFromError!usize {
     if (builtin.os.tag == .windows) {
-        const result = os.windows.recvfrom(sock, buf.ptr, buf.len, flags, null, null);
-        if (result != os.windows.ws2_32.SOCKET_ERROR)
+        const result = windows.recvfrom(sock, buf.ptr, buf.len, flags, null, null);
+        if (result != windows.ws2_32.SOCKET_ERROR)
             return @intCast(result);
-        switch (os.windows.ws2_32.WSAGetLastError()) {
+        switch (windows.ws2_32.WSAGetLastError()) {
             .WSAEWOULDBLOCK => return error.WouldBlock,
             .WSAECONNRESET => return error.ConnectionResetByPeer,
-            else => |err| return os.windows.unexpectedWSAError(err),
+            else => |err| return windows.unexpectedWSAError(err),
         }
     }
-    return os.recv(sock, buf, flags);
+    return posix.recv(sock, buf, flags);
 }
 
-pub fn writeSock(sock: os.socket_t, buf: []const u8, flags: u32) std.os.SendError!usize {
+pub fn writeSock(sock: posix.socket_t, buf: []const u8, flags: u32) std.posix.SendError!usize {
     if (builtin.os.tag == .windows) {
-        const result = os.windows.sendto(sock, buf.ptr, buf.len, flags, null, 0);
-        if (result != os.windows.ws2_32.SOCKET_ERROR)
+        const result = windows.sendto(sock, buf.ptr, buf.len, flags, null, 0);
+        if (result != windows.ws2_32.SOCKET_ERROR)
             return @intCast(result);
-        switch (os.windows.ws2_32.WSAGetLastError()) {
+        switch (windows.ws2_32.WSAGetLastError()) {
             .WSAEWOULDBLOCK => return error.WouldBlock,
             .WSAECONNRESET => return error.ConnectionResetByPeer,
-            else => |err| return os.windows.unexpectedWSAError(err),
+            else => |err| return windows.unexpectedWSAError(err),
         }
     }
-    return os.send(sock, buf, flags);
+    return posix.send(sock, buf, flags);
 }
