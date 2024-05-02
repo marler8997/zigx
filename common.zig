@@ -4,6 +4,17 @@ const common = @This();
 
 pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocket);
 
+/// Sanity check that we're not running into data integrity (corruption) issues caused
+/// by overflowing and wrapping around to the front ofq the buffer.
+fn checkMessageLengthFitsInBuffer(message_length: usize, buffer_limit: usize) !void {
+    if(message_length > buffer_limit) {
+        std.debug.panic("Reply is bigger than our buffer (data corruption will ensue) {} > {}. In order to fix, increase the buffer size.", .{
+            message_length,
+            buffer_limit,
+        });
+    }
+}
+
 pub fn send(sock: std.posix.socket_t, data: []const u8) !void {
     const sent = try x.writeSock(sock, data, 0);
     if (sent != data.len) {
@@ -185,4 +196,68 @@ pub fn asReply(comptime T: type, msg_bytes: []align(4) u8) !*T {
 
 fn readSocket(sock: std.posix.socket_t, buffer: []u8) !usize {
     return x.readSock(sock, buffer, 0);
+}
+
+/// X server extension info.
+pub const ExtensionInfo = struct {
+    extension_name: []const u8,
+    /// The extension opcode is used to identify which X extension a given request is
+    /// intended for (used as the major opcode). This essentially namespaces any extension
+    /// requests. The extension differentiates its own requests by using a minor opcode.
+    opcode: u8,
+    /// Extension error codes are added on top of this base error code.
+    base_error_code: u8,
+};
+
+pub const ExtensionVersion = struct {
+    major_version: u16,
+    minor_version: u16,
+};
+
+/// Determines whether the extension is available on the server.
+pub fn getExtensionInfo(
+    sock: std.posix.socket_t,
+    buffer: *x.ContiguousReadBuffer,
+    comptime extension_name: []const u8,
+) !?ExtensionInfo {
+    const reader = common.SocketReader{ .context = sock };
+    const buffer_limit = buffer.half_len;
+
+    {
+        const ext_name = comptime x.Slice(u16, [*]const u8).initComptime(extension_name);
+        var message_buffer: [x.query_extension.getLen(ext_name.len)]u8 = undefined;
+        x.query_extension.serialize(&message_buffer, ext_name);
+        try common.send(sock, &message_buffer);
+    }
+    const message_length = try x.readOneMsg(reader, @alignCast(buffer.nextReadBuffer()));
+    try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
+    const optional_extension = blk: {
+        switch (x.serverMsgTaggedUnion(@alignCast(buffer.double_buffer_ptr))) {
+            .reply => |msg_reply| {
+                const msg: *x.ServerMsg.QueryExtension = @ptrCast(msg_reply);
+                if (msg.present == 0) {
+                    std.log.info("{s} extension: not present", .{extension_name});
+                    break :blk null;
+                }
+                std.debug.assert(msg.present == 1);
+                std.log.info("{s} extension: opcode={} base_error_code={}", .{
+                    extension_name,
+                    msg.major_opcode,
+                    msg.first_error,
+                });
+                std.log.info("{s} extension: {}", .{ extension_name, msg });
+                break :blk ExtensionInfo{
+                    .extension_name = extension_name,
+                    .opcode = msg.major_opcode,
+                    .base_error_code = msg.first_error,
+                };
+            },
+            else => |msg| {
+                std.log.err("expected a reply for `x.query_extension` but got {}", .{msg});
+                return error.ExpectedReplyButGotSomethingElse;
+            },
+        }
+    };
+
+    return optional_extension;
 }
