@@ -45,6 +45,14 @@ pub const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 pub const Slice = @import("x/slice.zig").Slice;
 pub const keymap = @import("keymap.zig");
 
+const x_test = @import("test/x_test.zig");
+
+test {
+    // Perhaps we can use `std.testing.refAllDecls(@This());` instead but that requires
+    // us to make the `x_test` import public.
+    _ = x_test;
+}
+
 pub const TcpBasePort = 6000;
 
 pub const BigEndian = 'B';
@@ -191,45 +199,6 @@ pub fn parseDisplay(display: []const u8) InvalidDisplayError!ParsedDisplay {
             return InvalidDisplayError.BadScreenNumber;
     }
     return parsed;
-}
-
-fn testParseDisplay(display: []const u8, proto: []const u8, host: []const u8, display_num: u32, screen: ?u32) !void {
-    const parsed = try parseDisplay(display);
-    try testing.expect(std.mem.eql(u8, proto, parsed.protoSlice(display.ptr)));
-    try testing.expect(std.mem.eql(u8, host, parsed.hostSlice(display.ptr)));
-    try testing.expectEqual(display_num, parsed.display_num);
-    try testing.expectEqual(screen, parsed.preferredScreen);
-}
-
-test "parseDisplay" {
-    // no need to test the empty string case, it triggers an assert and a client passing
-    // one is a bug that needs to be fixed
-    try testing.expectError(InvalidDisplayError.HasMultipleProtocols, parseDisplay("a//"));
-    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay("0"));
-    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay("0/"));
-    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay("0/1"));
-    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay(":"));
-
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":a"));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":0a"));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":0a."));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":0a.0"));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":1x"));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":1x."));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":1x.10"));
-
-    try testing.expectError(InvalidDisplayError.BadScreenNumber, parseDisplay(":1.x"));
-    try testing.expectError(InvalidDisplayError.BadScreenNumber, parseDisplay(":1.0x"));
-    // TODO: should this be an error or no????
-    //try testing.expectError(InvalidDisplayError.BadScreenNumber, parseDisplay(":1."));
-
-    try testParseDisplay("proto/host:123.456", "proto", "host", 123, 456);
-    try testParseDisplay("host:123.456", "", "host", 123, 456);
-    try testParseDisplay(":123.456", "", "", 123, 456);
-    try testParseDisplay(":123", "", "", 123, null);
-    try testParseDisplay("a/:43", "a", "", 43, null);
-    try testParseDisplay("/", "", "/", 0, null);
-    try testParseDisplay("/some/file/path/x0", "", "/some/file/path/x0", 0, null);
 }
 
 const ConnectError = error {
@@ -759,14 +728,6 @@ pub const connect_setup = struct {
         );
     }
 };
-
-test "ConnectSetupMessage" {
-    const auth_name = comptime slice(u16, @as([]const u8, "hello"));
-    const auth_data = comptime slice(u16, @as([]const u8, "there"));
-    const len = comptime connect_setup.getLen(auth_name.len, auth_data.len);
-    var buf: [len]u8 = undefined;
-    connect_setup.serialize(&buf, 1, 1, auth_name, auth_data);
-}
 
 pub const Opcode = enum(u8) {
     create_window = 1,
@@ -2308,6 +2269,37 @@ pub const Screen = extern struct {
     save_unders: u8,
     root_depth: u8,
     allowed_depth_count: u8,
+    _allowed_depths_array_start: [0]ScreenDepth,
+
+    pub fn getAllowedDepths(self: *@This(), allocator: std.mem.Allocator) ![]align(4) *ScreenDepth {
+        var depths = try allocator.alloc(*ScreenDepth, self.allowed_depth_count);
+        var pointer_offset: usize = 0;
+        for (0..self.allowed_depth_count) |i| {
+            var depth_ptr: *align(4) ScreenDepth = @ptrFromInt(@intFromPtr(&self._allowed_depths_array_start) + pointer_offset);
+
+            depths[i] = depth_ptr;
+
+            const depth_variable_size: usize = @as(usize, @sizeOf(ScreenDepth)) +
+                (@as(usize, @sizeOf(VisualType)) * @as(usize, depth_ptr.visual_type_count));
+            pointer_offset += depth_variable_size;
+        }
+
+        return depths;
+    }
+
+    pub fn findMatchingVisualType(self: *@This(), desired_depth: u8, desired_class: VisualType.Class, allocator: std.mem.Allocator) !VisualType {
+        const depths = try self.getAllowedDepths(allocator);
+        defer allocator.free(depths);
+
+        for (depths) |depth| {
+            if (depth.depth != desired_depth) continue;
+            for (depth.getVisualTypes()) |visual_type| {
+                if (visual_type.class != desired_class) continue;
+                return visual_type;
+            }
+        }
+        return error.VisualTypeNotFound;
+    }
 };
 
 comptime { std.debug.assert(@sizeOf(ScreenDepth) == 8); }
@@ -2316,6 +2308,12 @@ pub const ScreenDepth = extern struct {
     unused0: u8,
     visual_type_count: u16,
     unused1: u32,
+    _visual_types_array_start: [0]VisualType,
+
+    pub fn getVisualTypes(self: *@This()) []align(4) const VisualType {
+        const visual_type_ptr_list: [*]align(4) VisualType = @ptrFromInt(@intFromPtr(&self._visual_types_array_start));
+        return visual_type_ptr_list[0..self.visual_type_count];
+    }
 };
 
 comptime { std.debug.assert(@sizeOf(VisualType) == 24); }
@@ -2491,6 +2489,25 @@ pub const ConnectSetup = struct {
     }
     pub fn getScreensPtr(self: @This(), format_list_limit: u32) [*]align(4) Screen {
         return @alignCast(@ptrCast(self.buf.ptr + format_list_limit));
+    }
+    pub fn getScreens(self: @This(), allocator: std.mem.Allocator) ![]align(4) *Screen {
+        const format_list_offset = ConnectSetup.getFormatListOffset(self.fixed().vendor_len);
+        const format_list_limit = ConnectSetup.getFormatListLimit(format_list_offset, self.fixed().format_count);
+
+        const screen_count = self.fixed().root_screen_count;
+        var screens = try allocator.alloc(*Screen, screen_count);
+        var pointer_offset = format_list_limit;
+        for (0..screen_count) |screen_index| {
+            var screen: *align(4) Screen = @alignCast(@ptrCast(self.buf.ptr + pointer_offset));
+            screens[screen_index] = screen;
+            const depths = try screen.getAllowedDepths(allocator);
+            for (depths) |depth| {
+                pointer_offset += @sizeOf(ScreenDepth) + (@sizeOf(VisualType) * depth.visual_type_count);
+            }
+            pointer_offset += @sizeOf(Screen);
+        }
+
+        return screens;
     }
 };
 
