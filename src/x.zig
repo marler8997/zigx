@@ -35,6 +35,7 @@ const windows = std.os.windows;
 pub const inputext = @import("xinputext.zig");
 pub const render = @import("xrender.zig");
 pub const dbe = @import("xdbe.zig");
+pub const testext = @import("xtest.zig");
 
 // Expose some helpful stuff
 pub const MappedFile = @import("MappedFile.zig");
