@@ -761,6 +761,7 @@ pub const Opcode = enum(u8) {
     create_window = 1,
     change_window_attributes = 2,
     map_window = 8,
+    configure_window = 12,
     intern_atom = 16,
     grab_pointer = 26,
     ungrab_pointer = 27,
@@ -835,11 +836,21 @@ fn optionToU32(value: anytype) u32 {
     switch (@typeInfo(T)) {
         .bool => return @intFromBool(value),
         .@"enum" => return @intFromEnum(value),
+        .optional => |opt| {
+            switch (@typeInfo(opt.child)) {
+                .bool => return @intFromBool(value.?),
+                .@"enum" => return @intFromEnum(value.?),
+                else => {},
+            }
+        },
         else => {},
     }
     if (T == u32) return value;
     if (T == ?u32) return value.?;
     if (T == u16) return @intCast(value);
+    if (T == ?u16) return @intCast(value.?);
+    if (T == i16) return @intCast(@as(u16, @bitCast(value)));
+    if (T == ?i16) return @intCast(@as(u16, @bitCast(value.?)));
     @compileError("TODO: implement optionToU32 for type: " ++ @typeName(T));
 }
 
@@ -954,8 +965,8 @@ pub const create_window = struct {
         window_id: u32,
         parent_window_id: u32,
         depth: u8,
-        x: u16,
-        y: u16,
+        x: i16,
+        y: i16,
         width: u16,
         height: u16,
         border_width: u16,
@@ -971,8 +982,8 @@ pub const create_window = struct {
 
         writeIntNative(u32, buf + 4, args.window_id);
         writeIntNative(u32, buf + 8, args.parent_window_id);
-        writeIntNative(u16, buf + 12, args.x);
-        writeIntNative(u16, buf + 14, args.y);
+        writeIntNative(i16, buf + 12, args.x);
+        writeIntNative(i16, buf + 14, args.y);
         writeIntNative(u16, buf + 16, args.width);
         writeIntNative(u16, buf + 18, args.height);
         writeIntNative(u16, buf + 20, args.border_width);
@@ -1037,6 +1048,97 @@ pub const map_window = struct {
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, window_id);
+    }
+};
+
+pub const StackMode = enum(u8) {
+    /// The window is placed at the top of the stack.
+    ///
+    /// When sibling is specified, the window is placed just above the sibling.
+    above = 0,
+    /// The window is placed at the bottom of the stack.
+    ///
+    /// When sibling is specified, the window is placed just below the sibling.
+    below = 1,
+    /// If any sibling occludes the window, then the window is placed at the top of the
+    /// stack.
+    ///
+    /// When sibling is specified, if the sibling occludes the window, then the window
+    /// is placed at the top of the stack.
+    top_if = 2,
+    /// If the window occludes any sibling, then the window is placed at the bottom of
+    /// the stack.
+    ///
+    /// When sibling is specified, if the window occludes the sibling, then the window
+    /// is placed at the bottom of the stack.
+    bottom_if = 3,
+    /// If any sibling occludes the window, then the window is placed at the top of the
+    /// stack. Otherwise, if the window occludes any sibling, then the window is placed
+    /// at the bottom of the stack.
+    ///
+    /// When sibling is specified, if the sibling occludes the window, then the window
+    /// is placed at the top of the stack. Otherwise, if the window occludes the
+    /// sibling, then the window is placed at the bottom of the stack.
+    opposite = 4,
+};
+
+pub const configure_window = struct {
+    pub const non_option_len =
+          2 // opcode and unused
+        + 2 // request length
+        + 4 // window id
+        + 2 // bitmask
+        + 2 // unused
+        ;
+    pub const max_len = non_option_len + (std.meta.fields(Options).len * 4);
+    // 7 possible 4-byte options
+    comptime { std.debug.assert(7 == std.meta.fields(Options).len); }
+
+    pub const Args = struct {
+        window_id: u32,
+    };
+
+    pub const option_flags = struct {
+        pub const x             : u16 = (1 <<  0);
+        pub const y             : u16 = (1 <<  1);
+        pub const width         : u16 = (1 <<  2);
+        pub const height        : u16 = (1 <<  3);
+        pub const border_width  : u16 = (1 <<  4);
+        pub const sibling       : u16 = (1 <<  5);
+        pub const stack_mode    : u16 = (1 <<  6);
+    };
+    pub const Options = struct {
+        x: ?i16 = null,
+        y: ?i16 = null,
+        width: ?u16 = null,
+        height: ?u16 = null,
+        border_width: ?u16 = null,
+        sibling: ?u32 = null,
+        stack_mode: ?StackMode = null,
+    };
+
+    pub fn serialize(buf: [*]u8, args: Args, options: Options) u16 {
+        buf[0] = @intFromEnum(Opcode.configure_window);
+        buf[1] = 0; // unused
+        // buf[2-3] is the len, set at the end of the function
+        writeIntNative(u32, buf + 4, args.window_id);
+        // buf[8-9] is the option_mask, set at the end of the function
+
+        var request_len: u16 = non_option_len;
+        var option_mask: u32 = 0;
+
+        inline for (std.meta.fields(Options)) |field| {
+            if (!isDefaultValue(options, field)) {
+                writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
+                option_mask |= @field(option_flags, field.name);
+                request_len += 4;
+            }
+        }
+
+        writeIntNative(u32, buf + 8, option_mask);
+        std.debug.assert((request_len & 0x3) == 0);
+        writeIntNative(u16, buf + 2, request_len >> 2);
+        return request_len;
     }
 };
 

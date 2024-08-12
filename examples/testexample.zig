@@ -335,6 +335,19 @@ pub fn main() !u8 {
     //     }
     // }
 
+    {
+        // This will probably happen by default when you `map_window` (I'm guessing it
+        // depends on your window manager) but we can be extra annoying and always bring
+        // the window to the front (just testing this request out).
+        var msg: [x.configure_window.max_len]u8 = undefined;
+        const len = x.configure_window.serialize(&msg, .{
+            .window_id = ids.window(),
+        }, .{
+            .stack_mode = .above,
+        });
+        try conn.send(msg[0..len]);
+    }
+
     while (true) {
         {
             const recv_buf = buf.nextReadBuffer();
