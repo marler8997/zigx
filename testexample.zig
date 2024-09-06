@@ -60,7 +60,7 @@ fn getImageFormat(
 pub fn main() !u8 {
     try x.wsaStartup();
     const conn = try common.connect(allocator);
-    defer std.os.shutdown(conn.sock, .both) catch {};
+    defer std.posix.shutdown(conn.sock, .both) catch {};
 
     const conn_setup_result = blk: {
         const fixed = conn.setup.fixed();
@@ -68,8 +68,8 @@ pub fn main() !u8 {
             std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
         }
         const image_endian: Endian = switch (fixed.image_byte_order) {
-            .lsb_first => .Little,
-            .msb_first => .Big,
+            .lsb_first => .little,
+            .msb_first => .big,
             else => |order| {
                 std.log.err("unknown image-byte-order {}", .{order});
                 return 0xff;
@@ -83,7 +83,7 @@ pub fn main() !u8 {
         for (formats, 0..) |format, i| {
             std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
         }
-        var screen = conn.setup.getFirstScreenPtr(format_list_limit);
+        const screen = conn.setup.getFirstScreenPtr(format_list_limit);
         inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
             std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
         }
@@ -398,7 +398,7 @@ const test_image = struct {
 };
 
 fn render(
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     depth: u8,
     image_format: ImageFormat,
     ids: Ids,
@@ -550,7 +550,7 @@ fn render(
     }
 }
 
-fn changeGcColor(sock: std.os.socket_t, gc_id: u32, color: u32) !void {
+fn changeGcColor(sock: std.posix.socket_t, gc_id: u32, color: u32) !void {
     var msg_buf: [x.change_gc.max_len]u8 = undefined;
     const len = x.change_gc.serialize(&msg_buf, gc_id, .{
         .foreground = color,
