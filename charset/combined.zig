@@ -1154,4 +1154,11 @@ pub const Combined = enum(u16) {
     kbd_right_hyper = (@as(u16, @intCast(@intFromEnum(Charset.keyboard))) << 8) | 238,
     kbd_delete_rubout = (@as(u16, @intCast(@intFromEnum(Charset.keyboard))) << 8) | 255,
     _,
+
+    pub fn charset(self: Combined) Charset {
+        return @enumFromInt(0xff & (@intFromEnum(self) >> 8));
+    }
+    pub fn code(self: Combined) u8 {
+        return @intCast(@intFromEnum(self) & 0xff);
+    }
 };

@@ -216,4 +216,12 @@ with open(os.path.join(zig_charset_dir, "combined.zig"), "w") as out_file:
             out_file.write("    {}_{} = (@as(u16, @intCast(@intFromEnum(Charset.{}))) << 8) | {},\n".format(
                 charset.combined_prefix, keysym.combined_name, charset.name, keysym.code))
     out_file.write("    _,\n")
+    out_file.write("""
+    pub fn charset(self: Combined) Charset {
+        return @enumFromInt(0xff & (@intFromEnum(self) >> 8));
+    }
+    pub fn code(self: Combined) u8 {
+        return @intCast(@intFromEnum(self) & 0xff);
+    }
+""")
     out_file.write("};\n")

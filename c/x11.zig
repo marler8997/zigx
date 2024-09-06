@@ -6,7 +6,7 @@ const c = @cImport({
 const x = @import("x");
 const c_allocator = std.heap.c_allocator;
 
-fn sendAll(sock: std.os.socket_t, data: []const u8) !void {
+fn sendAll(sock: std.posix.socket_t, data: []const u8) !void {
     var total_sent: usize = 0;
     while (true) {
         const sent = try x.writeSock(sock, data[total_sent..], 0);
@@ -15,8 +15,8 @@ fn sendAll(sock: std.os.socket_t, data: []const u8) !void {
         if (total_sent == data.len) return;
     }
 }
-pub const SocketReader = std.io.Reader(std.os.socket_t, std.os.RecvFromError, readSocket);
-fn readSocket(sock: std.os.socket_t, buffer: []u8) !usize {
+pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocket);
+fn readSocket(sock: std.posix.socket_t, buffer: []u8) !usize {
     return x.readSock(sock, buffer, 0);
 }
 
@@ -168,7 +168,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
 
 fn connectSetupAuth(
     display_num: ?u32,
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     auth_filename: []const u8,
 ) error{Reported,OutOfMemory}!?x.ConnectSetup.Header {
     const auth_mapped = x.MappedFile.init(auth_filename, .{}) catch |err|
@@ -244,7 +244,7 @@ fn connectSetupAuth(
 
 export fn XCloseDisplay(display_opt: ?*c.Display) c_int {
     const display = display_opt orelse return 0;
-    const display_full = @fieldParentPtr(Display, "public", display);
+    const display_full: *Display = @fieldParentPtr("public", display);
 
     {
         var it = display_full.gc_list.first;
@@ -274,7 +274,7 @@ export fn XCreateSimpleWindow(
     _ = border;
     _ = background;
 
-    const display_full = @fieldParentPtr(Display, "public", display);
+    const display_full: *Display = @fieldParentPtr("public", display);
 
     const new_window = display_full.resource_id_base + display_full.next_resource_id_offset;
     display_full.next_resource_id_offset += 1;
@@ -339,7 +339,7 @@ export fn XCreateGC(
     value_mask: c_ulong,
     values: ?[*]c.XGCValues,
 ) c.GC {
-    const display_full = @fieldParentPtr(Display, "public", display);
+    const display_full: *Display = @fieldParentPtr("public", display);
 
     const gc_id = display_full.resource_id_base + display_full.next_resource_id_offset;
     display_full.next_resource_id_offset += 1;
@@ -366,7 +366,7 @@ export fn XCreateGC(
 }
 
 export fn XMapRaised(display: *c.Display, window: c.Window) c_int {
-    const display_full = @fieldParentPtr(Display, "public", display);
+    const display_full: *Display = @fieldParentPtr("public", display);
 
     std.log.info("TODO: send ConfigureWindow stack-mode=Above", .{});
     var msg: [x.map_window.len]u8 = undefined;
@@ -382,11 +382,12 @@ fn handleReadError(err: anytype) noreturn {
     switch (err) {
         error.ConnectionResetByPeer,
         error.EndOfStream,
+        error.ConnectionTimedOut,
         => {
             //@panic("TODO: report x connection closed and/or reset");
             // This seems to be similar to what libx11 does?
             std.io.getStdErr().writer().print("X connection broken\n", .{}) catch @panic("X connection broken");
-            std.os.exit(1);
+            std.process.exit(1);
         },
         error.MessageTooBig => {
             @panic("TODO: how to handle MessageTooBig?");
@@ -403,7 +404,7 @@ fn handleReadError(err: anytype) noreturn {
 }
 
 export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
-    const display_full = @fieldParentPtr(Display, "public", display);
+    const display_full: *Display = @fieldParentPtr("public", display);
 
     //var header_buf: [32]u8 align(4) = undefined;
     const len = x.readOneMsg(SocketReader{ .context = display.fd }, display_full.read_buf) catch |err| handleReadError(err);
@@ -438,7 +439,7 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
 
 // ChangeWindowAttributes(window=w#0A000001, event-mask=KeyPress|ButtonPress|Exposure)
 export fn XSelectInput(display: *c.Display, window: c.Window, event_mask: c_ulong) c_int {
-    const display_full = @fieldParentPtr(Display, "public", display);
+    const display_full: *Display = @fieldParentPtr("public", display);
 
     var msg_buf: [x.change_window_attributes.max_len]u8 = undefined;
     const len = x.change_window_attributes.serialize(&msg_buf, window, .{
