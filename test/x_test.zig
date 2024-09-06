@@ -51,13 +51,13 @@ test "VisualType.findMatchingVisualType" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const connect_setup_stub = x.ConnectSetup {
+    const connect_setup_stub = x.ConnectSetup{
         .buf = TEST_RECEIVED_CONNECT_SETUP_BUFFER[0..],
     };
     // We avoid de-initializing to keep the test buffer around for other tests
     //defer connect_setup_stub.deinit(allocator);
 
-    var screens = try connect_setup_stub.getScreens(allocator);
+    const screens = try connect_setup_stub.getScreens(allocator);
 
     const matching_visual_type_24 = try screens[0].findMatchingVisualType(24, .direct_color, allocator);
     try testing.expectEqual(@as(u32, 1946), matching_visual_type_24.id);
@@ -85,7 +85,7 @@ test "Parse received ConnectSetup message" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const connect_setup_stub = x.ConnectSetup {
+    const connect_setup_stub = x.ConnectSetup{
         .buf = TEST_RECEIVED_CONNECT_SETUP_BUFFER[0..],
     };
     // We avoid de-initializing to keep the test buffer around for other tests
@@ -113,7 +113,7 @@ test "Parse received ConnectSetup message" {
 
     // Check over the screens
     // -------------------------------------------
-    var screens = try connect_setup_stub.getScreens(allocator);
+    const screens = try connect_setup_stub.getScreens(allocator);
     try testing.expectEqual(@as(usize, fixed.root_screen_count), screens.len);
 
     // Check the first screen
@@ -171,7 +171,7 @@ test "Parse received ConnectSetup message" {
             // -------------------------------------------
             const visual_types = screen_depth.getVisualTypes();
             try testing.expectEqual(@as(usize, screen_depth.visual_type_count), visual_types.len);
-            
+
             switch (screen_depth.depth) {
                 1, 4 => {
                     for (visual_types) |visual_type| {

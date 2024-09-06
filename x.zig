@@ -2275,7 +2275,7 @@ pub const Screen = extern struct {
         var depths = try allocator.alloc(*ScreenDepth, self.allowed_depth_count);
         var pointer_offset: usize = 0;
         for (0..self.allowed_depth_count) |i| {
-            var depth_ptr: *align(4) ScreenDepth = @ptrFromInt(@intFromPtr(&self._allowed_depths_array_start) + pointer_offset);
+            const depth_ptr: *align(4) ScreenDepth = @ptrFromInt(@intFromPtr(&self._allowed_depths_array_start) + pointer_offset);
 
             depths[i] = depth_ptr;
 
