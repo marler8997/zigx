@@ -1,8 +1,9 @@
+const builtin = @import("builtin");
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     _ = b.addModule("zigx", .{
-        .source_file = .{ .path = "x.zig" },
+        .root_source_file = b.path("x.zig"),
     });
 
     // Creates a step for unit testing. This only builds the test executable

@@ -19,7 +19,7 @@ const fg_color = 0xadccfa;
 pub fn main() !u8 {
     try x.wsaStartup();
     const conn = try common.connect(allocator);
-    defer std.os.shutdown(conn.sock, .both) catch {};
+    defer std.posix.shutdown(conn.sock, .both) catch {};
 
     var msg_sequencer = MsgSequencer { .sock = conn.sock };
 
@@ -70,7 +70,7 @@ pub fn main() !u8 {
         for (formats, 0..) |format, i| {
             std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
         }
-        var screen = conn.setup.getFirstScreenPtr(format_list_limit);
+        const screen = conn.setup.getFirstScreenPtr(format_list_limit);
         inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
             std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
         }
@@ -132,7 +132,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = bg_gc_id,
-            .drawable_id = screen.root,
+            .drawable_id = window_id,
         }, .{
             .foreground = fg_color,
         });
@@ -142,7 +142,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = fg_gc_id,
-            .drawable_id = screen.root,
+            .drawable_id = window_id,
         }, .{
             .background = bg_color,
             .foreground = fg_color,
@@ -200,7 +200,7 @@ pub fn main() !u8 {
                 std.log.err("buffer size {} not big enough!", .{buf.half_len});
                 return 1;
             }
-            const len = try std.os.recv(conn.sock, recv_buf, 0);
+            const len = try x.readSock(conn.sock, recv_buf, 0);
             if (len == 0) {
                 std.log.info("X server connection closed", .{});
                 return 0;
@@ -233,7 +233,7 @@ pub fn main() !u8 {
                     );
                     if (!handled) {
                         std.log.info("unexpected reply message {}", .{msg});
-                        std.os.exit(0xff);
+                        std.process.exit(0xff);
                     }
                     // just always do another render, it's *probably* needed
                     try render(&msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state);
@@ -481,7 +481,7 @@ fn handleReply(
 }
 
 const MsgSequencer = struct {
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     last_sequence: u16 = 0,
     pub fn addSequence(self: *MsgSequencer, msg_count: u16) void {
         self.last_sequence = self.last_sequence +% msg_count;

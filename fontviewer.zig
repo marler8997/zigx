@@ -21,7 +21,7 @@ const Ids = struct {
 pub fn main() !u8 {
     try x.wsaStartup();
     const conn = try common.connect(allocator);
-    defer std.os.shutdown(conn.sock, .both) catch {};
+    defer std.posix.shutdown(conn.sock, .both) catch {};
 
     const Key = enum {
         left, right,
@@ -108,7 +108,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.gcBackground(),
-            .drawable_id = screen.root,
+            .drawable_id = ids.window(),
         }, .{
             .background = 0xffffff,
             .foreground = 0xffffff,
@@ -120,7 +120,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.gcText(),
-            .drawable_id = screen.root,
+            .drawable_id = ids.window(),
         }, .{
             .background = 0xffffff,
             .foreground = 0,
@@ -242,7 +242,7 @@ const State = struct {
     pub fn onExpose(
         self: *State,
         msg: *x.Event.Expose,
-        sock: std.os.socket_t,
+        sock: std.posix.socket_t,
         ids: Ids,
         fonts: []x.Slice(u8, [*]const u8),
     ) !void {
@@ -258,7 +258,7 @@ const State = struct {
 
     fn getDesiredFont(
         self: *State,
-        sock: std.os.socket_t,
+        sock: std.posix.socket_t,
         ids: Ids,
         fonts: []x.Slice(u8, [*]const u8),
     ) !void {
@@ -295,7 +295,7 @@ const State = struct {
 
     pub fn onQueryFontError(self: *State,
         msg: *x.ServerMsg.Error.Font,
-        sock: std.os.socket_t,
+        sock: std.posix.socket_t,
         ids: Ids,
         fonts: []x.Slice(u8, [*]const u8),
     ) !void {
@@ -315,7 +315,7 @@ const State = struct {
     pub fn onReply(
         self: *State,
         reply_msg: *align(4) x.ServerMsg.Reply,
-        sock: std.os.socket_t,
+        sock: std.posix.socket_t,
         ids: Ids,
         fonts: []x.Slice(u8, [*]const u8),
     ) !void {
@@ -338,7 +338,7 @@ const State = struct {
     fn atIdleCheckDesiredFont(
         self: *State,
         idle: Idle,
-        sock: std.os.socket_t,
+        sock: std.posix.socket_t,
         ids: Ids,
         fonts: []x.Slice(u8, [*]const u8),
     ) !void {
@@ -349,7 +349,7 @@ const State = struct {
 
     pub fn updateDesiredFont(
         self: *State,
-        sock: std.os.socket_t,
+        sock: std.posix.socket_t,
         ids: Ids,
         fonts: []x.Slice(u8, [*]const u8),
         new_desired_font_index: usize,
@@ -365,7 +365,7 @@ const State = struct {
     }
 };
 
-fn render(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), font_index: usize, font_info: *const x.ServerMsg.QueryFont) !void {
+fn render(sock: std.posix.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), font_index: usize, font_info: *const x.ServerMsg.QueryFont) !void {
 
     const font_name = fonts[font_index];
     //std.log.info("rendering font '{s}'", .{font_name});
@@ -400,7 +400,7 @@ fn render(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), fo
     try renderText(sock, ids.window(), ids.gcText(), 10, 10 + (font_height * 6), "abcdefghijklmnopqrstuvwxyz", .{});
 }
 
-fn renderNoFontInfo(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), font_index: usize, still_open: bool) !void {
+fn renderNoFontInfo(sock: std.posix.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]const u8), font_index: usize, still_open: bool) !void {
     _ = still_open;
     const font_name = fonts[font_index];
     _ = font_name;
@@ -429,11 +429,11 @@ fn renderNoFontInfo(sock: std.os.socket_t, ids: Ids, fonts: []x.Slice(u8, [*]con
     //try renderText(sock, ids.window(), ids.gcText(), 10, 90, "Failed to query font info", .{});
 }
 
-fn renderText(sock: std.os.socket_t, drawable_id: u32, gc_id: u32, x_coord: i16, y: i16, comptime fmt: []const u8, args: anytype) !void {
+fn renderText(sock: std.posix.socket_t, drawable_id: u32, gc_id: u32, x_coord: i16, y: i16, comptime fmt: []const u8, args: anytype) !void {
     const str_len_u64 = std.fmt.count(fmt, args);
     const str_len = std.math.cast(u8, str_len_u64) orelse
         std.debug.panic("render large string {} not implemented", .{str_len_u64});
-    
+
     const msg_len = x.image_text8.getLen(str_len);
     const msg = try allocator.alloc(u8, msg_len);
     defer allocator.free(msg);
@@ -447,7 +447,7 @@ fn renderText(sock: std.os.socket_t, drawable_id: u32, gc_id: u32, x_coord: i16,
     try common.send(sock, msg);
 }
 
-fn openAndQueryFont(sock: std.os.socket_t, font_id: u32, font_name: x.Slice(u8, [*]const u8)) !void {
+fn openAndQueryFont(sock: std.posix.socket_t, font_id: u32, font_name: x.Slice(u8, [*]const u8)) !void {
     // TODO: combine these into 1 send
     std.log.info("open and query '{s}'", .{font_name});
     {
