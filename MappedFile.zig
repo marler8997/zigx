@@ -54,28 +54,28 @@ pub fn init(filename: []const u8, opt: Options) !MappedFile {
             else => |err| std.os.windows.unexpectedError(err),
         };
         errdefer std.debug.assert(0 != win32.UnmapViewOfFile(ptr));
-        
+
         return .{
             .mem = @as([*]align(std.mem.page_size)u8, @alignCast(@ptrCast(ptr)))[0 .. file_size],
             .mapping = mapping,
-        };        
+        };
     }
     return .{
-        .mem = try std.os.mmap(
+        .mem = try std.posix.mmap(
             null,
             file_size,
             switch (opt.mode) {
-                .read_only => std.os.PROT.READ,
-                .read_write => std.os.PROT.READ | std.os.PROT.WRITE,
+                .read_only => std.posix.PROT.READ,
+                .read_write => std.posix.PROT.READ | std.posix.PROT.WRITE,
             },
-            std.os.MAP.PRIVATE,
+            .{ .TYPE = .PRIVATE },
             file.handle,
             0,
         ),
         .mapping = {},
-    };    
+    };
 }
-             
+
 pub fn unmap(self: MappedFile) void {
     if (builtin.os.tag == .windows) {
         if (self.mem.len != 0) {
@@ -83,7 +83,7 @@ pub fn unmap(self: MappedFile) void {
             std.os.windows.CloseHandle(self.mapping);
         }
     } else {
-        std.os.munmap(self.mem);
+        std.posix.munmap(self.mem);
     }
 }
 

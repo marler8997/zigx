@@ -1,18 +1,18 @@
 const std = @import("std");
-const os = std.os;
+const posix = std.posix;
 const x = @import("x.zig");
 
-pub fn send(sock: std.os.socket_t, data: []const u8) !void {
+pub fn send(sock: std.posix.socket_t, data: []const u8) !void {
     const sent = try x.writeSock(sock, data, 0);
     if (sent != data.len) {
         std.log.err("send {} only sent {}\n", .{data.len, sent});
         return error.DidNotSendAllData;
     }
 }
-fn readSocket(sock: os.socket_t, buffer: []u8) !usize {
+fn readSocket(sock: posix.socket_t, buffer: []u8) !usize {
     return x.readSock(sock, buffer, 0);
 }
-pub const SocketReader = std.io.Reader(os.socket_t, os.RecvFromError, readSocket);
+pub const SocketReader = std.io.Reader(posix.socket_t, posix.RecvFromError, readSocket);
 
 pub const Keymap = struct {
     keycode_count: u8,
@@ -27,7 +27,7 @@ pub const Keymap = struct {
 // request the keymap from the server.
 // this function sends a messages and expects a reply to that message so this must
 // be done before registering for any asynchronouse events from the server.
-pub fn request(allocator: std.mem.Allocator, sock: os.socket_t, fixed: x.ConnectSetup.Fixed) !Keymap {
+pub fn request(allocator: std.mem.Allocator, sock: posix.socket_t, fixed: x.ConnectSetup.Fixed) !Keymap {
     const keycode_count: u8 = fixed.max_keycode - fixed.min_keycode + 1;
 
     {
