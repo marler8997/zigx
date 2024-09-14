@@ -158,6 +158,52 @@ pub fn main() !u8 {
     std.log.info("read buffer capacity is {}", .{double_buf.half_len});
     var buf = double_buf.contiguousReadBuffer();
 
+    // Set the window name
+    {
+        const window_name = comptime x.Slice(u16, [*]const u8).initComptime("zigx Test Example");
+        const change_property = x.change_property.withFormat(u8);
+        var msg_buf: [change_property.getLen(window_name.len)]u8 = undefined;
+        change_property.serialize(&msg_buf, .{
+            .mode = .replace,
+            .window_id = ids.window(),
+            .property = x.Atom.WM_NAME,
+            .type = x.Atom.STRING,
+            .values = window_name,
+        });
+        try conn.send(msg_buf[0..]);
+    }
+
+    // Test `get_property` by retrieving the property we just set
+    {
+        var msg_buf: [x.get_property.len]u8 = undefined;
+        x.get_property.serialize(&msg_buf, .{
+            .window_id = ids.window(),
+            .property = x.Atom.WM_NAME,
+            .@"type" = x.Atom.STRING,
+            .offset = 0,
+            .len = 64,
+            .delete = false,
+        });
+        try conn.send(msg_buf[0..]);
+    }
+    _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+    switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+        .reply => |msg_reply| {
+            const msg: *x.get_property.Reply = @ptrCast(msg_reply);
+            std.log.debug("get_property responded with: {}", .{msg});
+            const opt_window_name = try msg.getValueBytes();
+            if (opt_window_name) |window_name| {
+                std.log.debug("Retrieved window name: {s}", .{window_name});
+            } else {
+                std.log.err("Unable to figure out the window name from get_property reply: {}", .{msg});
+            }
+        },
+        else => |msg| {
+            std.log.err("expected a reply for `x.get_property` but got {}", .{msg});
+            return error.ExpectedReplyForGetProperty;
+        },
+    }
+
     // Test `query_tree` by finding our own window in the list of children of the root
     // window
     {

@@ -764,6 +764,8 @@ pub const Opcode = enum(u8) {
     configure_window = 12,
     query_tree = 15,
     intern_atom = 16,
+    change_property = 18,
+    get_property = 20,
     grab_pointer = 26,
     ungrab_pointer = 27,
     warp_pointer = 41,
@@ -1192,6 +1194,129 @@ pub const intern_atom = struct {
         writeIntNative(u16, buf + 4, args.name.len);
         @memcpy(buf[8..][0..args.name.len], args.name.nativeSlice());
     }
+};
+
+pub const change_property = struct {
+    pub const non_list_len =
+          2 // opcode and mode
+        + 2 // request length
+        + 4 // window ID
+        + 4 // property atom
+        + 4 // type
+        + 1 // value format
+        + 3 // unused
+        + 4 // value length
+        ;
+    pub const Mode = enum(u8) {
+        replace = 0,
+        prepend = 1,
+        append = 2,
+    };
+    pub fn withFormat(comptime T: type) type {
+        switch (T) {
+            u8, u16, u32 => {},
+            else => @compileError("change_property is only compatible with u8, u16, u32 value formats but saw " ++ @typeName(T))
+        }
+
+        return struct {
+            pub fn getLen(value_count: u16) u16 {
+                return non_list_len + std.mem.alignForward(u16, value_count * @sizeOf(T), 4);
+            }
+            pub const Args = struct {
+                mode: Mode,
+                window_id: u32,
+                property: Atom, // atom
+                /// atom
+                ///
+                /// This value isn't interpreted by the X server. It's just passed back
+                /// to the client application when using the `get_property` request.
+                @"type": Atom,
+                values: Slice(u16, [*]const T),
+            };
+            pub fn serialize(buf: [*]u8, args: Args) void {
+                buf[0] = @intFromEnum(Opcode.change_property);
+                buf[1] = @intFromEnum(args.mode);
+                const request_len = getLen(args.values.len);
+                std.debug.assert(request_len & 0x3 == 0);
+                writeIntNative(u16, buf + 2, request_len >> 2);
+                writeIntNative(u32, buf + 4, args.window_id);
+                writeIntNative(u32, buf + 8, @intFromEnum(args.property));
+                writeIntNative(u32, buf + 12, @intFromEnum(args.type));
+                writeIntNative(u32, buf + 16, @sizeOf(T) * 8);
+                buf[17] = 0; // unused
+                buf[18] = 0; // unused
+                buf[19] = 0; // unused
+                writeIntNative(u32, buf + 20, args.values.len);
+                @memcpy(
+                    @as([*]align(1) T, @ptrCast(buf + 24))[0..args.values.len],
+                    args.values.nativeSlice(),
+                );
+            }
+        };
+    }
+};
+
+pub const get_property = struct {
+    pub const len = 24;
+    pub const Args = struct {
+        window_id: u32,
+        property: Atom,
+        /// Atom or AnyPropertyType (0)
+        ///
+        /// The expected type of the property. If the actual property is a different
+        /// type, the return type is the actual type of the property, the format is the
+        /// actual format of the property, the bytes-after is the length of the property
+        /// in bytes (even if the format is 16 or 32), and the value is empty.
+        @"type": Atom,
+        /// The returned value starts at this offset in 4-byte units
+        offset: u32,
+        /// The number of 4-byte units to read from the offset
+        len: u32,
+        /// This delete argument is ignored if the `property` doesn't exist or if the
+        /// `type` doesn't match
+        delete: bool,
+    };
+    pub fn serialize(buf: [*]u8, args: Args) void {
+        buf[0] = @intFromEnum(Opcode.get_property);
+        buf[1] = @intFromBool(args.delete);
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, args.window_id);
+        writeIntNative(u32, buf + 8, @intFromEnum(args.property));
+        writeIntNative(u32, buf + 12, @intFromEnum(args.type));
+        writeIntNative(u32, buf + 16, args.offset);
+        writeIntNative(u32, buf + 20, args.len);
+    }
+    pub const Reply = extern struct {
+        response_type: ReplyKind,
+        value_format: u8,
+        sequence: u16,
+        word_len: u32,
+        @"type": Atom,
+        bytes_after: u32,
+        /// Length of the value in `value_format` units
+        value_count: u32,
+        unused: [12]u8,
+        _values_list_start: [0]u8,
+
+        pub fn getValueBytes(self: *@This()) !?[]align(4) const u8 {
+            const num_bytes_in_value: u8 = switch (self.value_format) {
+                0 => 0,
+                8 => 1,
+                16 => 2,
+                32 => 4,
+                else => return error.BadValueFormat,
+            };
+
+            // This will only be 0 if the property doesn't exist or there is a type mismatch
+            if (num_bytes_in_value == 0) {
+                return null;
+            }
+
+            const values_ptr_list: [*]align(4) u8 = @ptrFromInt(@intFromPtr(&self._values_list_start));
+            return values_ptr_list[0..(self.value_count * num_bytes_in_value)];
+        }
+    };
+    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
 };
 
 pub const SyncMode = enum(u1) { synchronous = 0, asynchronous = 1 };
@@ -1866,6 +1991,11 @@ pub const Atom = enum(u32) {
     VISUALID = 32,
     WINDOW = 33,
     WM_COMMAND = 34,
+    WM_HINTS = 35,
+    WM_CLIENT_MACHINE = 36,
+    WM_ICON_NAME = 37,
+    WM_ICON_SIZE = 38,
+    WM_NAME = 39,
     WM_NORMAL_HINTS = 40,
     WM_SIZE_HINTS = 41,
     WM_ZOOM_HINTS = 42,
