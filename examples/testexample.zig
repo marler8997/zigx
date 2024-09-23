@@ -307,33 +307,33 @@ pub fn main() !u8 {
     }
 
     // Send a fake mouse left-click event
-    if (opt_test_ext) |test_ext| {
-        {
-            var msg: [x.testext.fake_input.len]u8 = undefined;
-            x.testext.fake_input.serialize(&msg, test_ext.opcode, .{
-                .button_press = .{
-                    .event_type = x.testext.FakeEventType.button_press,
-                    .detail = 1,
-                    .delay_ms = 0,
-                    .device_id = null,
-                },
-            });
-            try conn.send(&msg);
-        }
+    // if (opt_test_ext) |test_ext| {
+    //     {
+    //         var msg: [x.testext.fake_input.len]u8 = undefined;
+    //         x.testext.fake_input.serialize(&msg, test_ext.opcode, .{
+    //             .button_press = .{
+    //                 .event_type = x.testext.FakeEventType.button_press,
+    //                 .detail = 1,
+    //                 .delay_ms = 0,
+    //                 .device_id = null,
+    //             },
+    //         });
+    //         try conn.send(&msg);
+    //     }
 
-        {
-            var msg: [x.testext.fake_input.len]u8 = undefined;
-            x.testext.fake_input.serialize(&msg, test_ext.opcode, .{
-                .button_press = .{
-                    .event_type = x.testext.FakeEventType.button_release,
-                    .detail = 1,
-                    .delay_ms = 0,
-                    .device_id = null,
-                },
-            });
-            try conn.send(&msg);
-        }
-    }
+    //     {
+    //         var msg: [x.testext.fake_input.len]u8 = undefined;
+    //         x.testext.fake_input.serialize(&msg, test_ext.opcode, .{
+    //             .button_press = .{
+    //                 .event_type = x.testext.FakeEventType.button_release,
+    //                 .detail = 1,
+    //                 .delay_ms = 0,
+    //                 .device_id = null,
+    //             },
+    //         });
+    //         try conn.send(&msg);
+    //     }
+    // }
 
     while (true) {
         {
