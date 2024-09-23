@@ -762,6 +762,7 @@ pub const Opcode = enum(u8) {
     change_window_attributes = 2,
     map_window = 8,
     configure_window = 12,
+    query_tree = 15,
     intern_atom = 16,
     grab_pointer = 26,
     ungrab_pointer = 27,
@@ -1140,6 +1141,33 @@ pub const configure_window = struct {
         writeIntNative(u16, buf + 2, request_len >> 2);
         return request_len;
     }
+};
+
+pub const query_tree = struct {
+    pub const len = 8;
+    pub fn serialize(buf: [*]u8, window_id: u32) void {
+        buf[0] = @intFromEnum(Opcode.query_tree);
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, window_id);
+    }
+
+    pub const Reply = extern struct {
+        response_type: ReplyKind,
+        _unused_pad: u8,
+        sequence: u16,
+        word_len: u32,
+        root_window_id: u32,
+        parent_window_id: u32,
+        num_windows: u16,
+        _unused_pad2: [14]u8,
+        _window_list_start: [0]u8,
+
+        pub fn getWindowList(self: *@This()) []align(4) const u32 {
+            const window_ptr_list: [*]align(4) u32 = @ptrFromInt(@intFromPtr(&self._window_list_start));
+            return window_ptr_list[0..self.num_windows];
+        }
+    };
 };
 
 pub const intern_atom = struct {

@@ -150,6 +150,43 @@ pub fn main() !u8 {
         try conn.send(msg_buf[0..len]);
     }
 
+    const double_buf = try x.DoubleBuffer.init(
+        std.mem.alignForward(usize, 1000, std.heap.page_size_min),
+        .{ .memfd_name = "ZigX11DoubleBuffer" },
+    );
+    defer double_buf.deinit(); // not necessary but good to test
+    std.log.info("read buffer capacity is {}", .{double_buf.half_len});
+    var buf = double_buf.contiguousReadBuffer();
+
+    // Test `query_tree` by finding our own window in the list of children of the root
+    // window
+    {
+        var msg_buf: [x.query_tree.len]u8 = undefined;
+        x.query_tree.serialize(&msg_buf, screen.root);
+        try conn.send(msg_buf[0..]);
+    }
+    _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+    switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+        .reply => |msg_reply| {
+            const msg: *x.query_tree.Reply = @ptrCast(msg_reply);
+            std.log.debug("query_tree found {d} child windows", .{msg.num_windows});
+
+            // Try to find our own window in the list just to sanity check that query_tree works
+            var found_window: bool = false;
+            for (msg.getWindowList()) |window_id| {
+                if (window_id == ids.window()) {
+                    found_window = true;
+                    break;
+                }
+            }
+            std.log.debug("Found our window in query_tree response? {}", .{found_window});
+        },
+        else => |msg| {
+            std.log.err("expected a reply for `x.query_tree` but got {}", .{msg});
+            return error.ExpectedReplyForQueryTree;
+        },
+    }
+
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
@@ -182,14 +219,6 @@ pub fn main() !u8 {
         x.query_text_extents.serialize(&msg, ids.fg_gc(), text);
         try conn.send(&msg);
     }
-
-    const double_buf = try x.DoubleBuffer.init(
-        std.mem.alignForward(usize, 1000, std.heap.page_size_min),
-        .{ .memfd_name = "ZigX11DoubleBuffer" },
-    );
-    defer double_buf.deinit(); // not necessary but good to test
-    std.log.info("read buffer capacity is {}", .{double_buf.half_len});
-    var buf = double_buf.contiguousReadBuffer();
 
     const font_dims: FontDims = blk: {
         _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
