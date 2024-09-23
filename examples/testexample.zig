@@ -593,40 +593,6 @@ fn render(
             try common.send(sock, &msg);
         }
     }
-
-    // Draw a representation of the click-through area
-    {
-        try changeGcColor(sock, ids.fg_gc(), x.rgb24To(0x963b3b, depth));
-        {
-            const rectangles = [_]x.Rectangle{
-                .{ .x = 0, .y = window_height - 50, .width = window_width, .height = 50 },
-            };
-            var msg: [x.poly_fill_rectangle.getLen(rectangles.len)]u8 = undefined;
-            x.poly_fill_rectangle.serialize(&msg, .{
-                .drawable_id = ids.window(),
-                .gc_id = ids.fg_gc(),
-            }, &rectangles);
-            try common.send(sock, &msg);
-        }
-
-        try changeGcColor(sock, ids.fg_gc(), x.rgb24To(0xffaadd, depth));
-        {
-            const text_literal: []const u8 = "Click-through area!";
-            const text = x.Slice(u8, [*]const u8) { .ptr = text_literal.ptr, .len = text_literal.len };
-            var msg: [x.image_text8.getLen(text.len)]u8 = undefined;
-
-            const text_width = font_dims.width * text_literal.len;
-
-            x.image_text8.serialize(&msg, text, .{
-                .drawable_id = ids.window(),
-                .gc_id = ids.fg_gc(),
-                .x = @divTrunc((window_width - @as(i16, @intCast(text_width))),  2) + font_dims.font_left,
-                .y = window_height - 50 + @divTrunc(50 - @as(i16, @intCast(font_dims.height)), 2) + font_dims.font_ascent,
-            });
-            try common.send(sock, &msg);
-        }
-    }
-
 }
 
 fn changeGcColor(sock: std.posix.socket_t, gc_id: u32, color: u32) !void {
