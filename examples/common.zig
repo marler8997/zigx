@@ -216,7 +216,7 @@ pub const ExtensionVersion = struct {
 
 /// Determines whether the extension is available on the server.
 pub fn getExtensionInfo(
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     buffer: *x.ContiguousReadBuffer,
     comptime extension_name: []const u8,
 ) !?ExtensionInfo {
