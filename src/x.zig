@@ -2543,7 +2543,16 @@ pub fn rgb24To(color: u24, depth_bits: u8) u32 {
     return switch (depth_bits) {
         16 => rgb24To16(color),
         24 => color,
-        32 => color,
+        32 => {
+            // Add an opaque alpha component (0xAARRGGBB)
+            const alpha = 0xff;
+            // Shift the alpha component all the way up to the top
+            // 0x000000ff -> 0xff000000
+            const alpha_shifted: u32 = alpha << 24;
+
+            // Combine the color and alpha component
+            return alpha_shifted | color;
+        },
         else => @panic("todo"),
     };
 }

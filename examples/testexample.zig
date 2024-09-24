@@ -577,7 +577,7 @@ fn populateTestImage(
                 32 => std.mem.writeInt(
                     u32,
                     data[data_off..][0..4],
-                    color,
+                    x.rgb24To(color, 32),
                     image_format.endian,
                 ),
                 else => std.debug.panic("TODO: implement image depth {}", .{image_format.depth}),
