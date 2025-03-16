@@ -1,7 +1,7 @@
 .{
-    .name = .zigx,
+    .name = .x,
     .version = "0.0.0",
-    .fingerprint = 0x16a26b254befcb3f,
+    .fingerprint = 0x8cdc16832b06463e,
     .minimum_zig_version = "0.14.0",
     .dependencies = .{},
     .paths = .{"."},
