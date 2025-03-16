@@ -1,5 +1,5 @@
 const std = @import("std");
-const x = @import("x.zig");
+const x = @import("x");
 const common = @import("common.zig");
 
 pub const log_level = std.log.Level.info;
@@ -14,7 +14,7 @@ pub fn main() !void {
 
     {
         const pattern_string = "*";
-        const pattern = x.Slice(u16, [*]const u8) { .ptr = pattern_string, .len = pattern_string.len };
+        const pattern = x.Slice(u16, [*]const u8){ .ptr = pattern_string, .len = pattern_string.len };
         var msg: [x.list_fonts.getLen(pattern.len)]u8 = undefined;
         x.list_fonts.serialize(&msg, 0xffff, pattern);
         try conn.send(&msg);

@@ -1,5 +1,5 @@
 const std = @import("std");
-const x = @import("x.zig");
+const x = @import("x");
 const common = @import("common.zig");
 
 pub const log_level = std.log.Level.info;
@@ -22,12 +22,12 @@ pub fn main() !u8 {
 
     try x.wsaStartup();
     const conn = try common.connect(allocator);
-    defer std.os.shutdown(conn.sock, .both) catch {};
+    defer std.posix.shutdown(conn.sock, .both) catch {};
 
     const font_id = conn.setup.fixed().resource_id_base;
 
     {
-        const font_name_slice = x.Slice(u16, [*]const u8) { .ptr = font_name.ptr, .len = @intCast(font_name.len) };
+        const font_name_slice = x.Slice(u16, [*]const u8){ .ptr = font_name.ptr, .len = @intCast(font_name.len) };
         const msg = try allocator.alloc(u8, x.open_font.getLen(font_name_slice.len));
         defer allocator.free(msg);
         x.open_font.serialize(msg.ptr, font_id, font_name_slice);

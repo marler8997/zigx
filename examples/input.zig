@@ -1,5 +1,5 @@
 const std = @import("std");
-const x = @import("./x.zig");
+const x = @import("x");
 const common = @import("common.zig");
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -10,7 +10,11 @@ const window_height = 400;
 
 const Key = enum {
     escape,
-    w, i, d, g, c,
+    w,
+    i,
+    d,
+    g,
+    c,
 };
 
 const bg_color = 0x231a20;
@@ -21,7 +25,7 @@ pub fn main() !u8 {
     const conn = try common.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
-    var msg_sequencer = MsgSequencer { .sock = conn.sock };
+    var msg_sequencer = MsgSequencer{ .sock = conn.sock };
 
     var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
     {
@@ -38,7 +42,7 @@ pub fn main() !u8 {
         defer keymap.deinit(allocator);
         // NOTE: this is brittle, keymap.request doesn't necessarilly guarantee it sends 1 message
         msg_sequencer.addSequence(1);
-        std.log.info("Keymap: syms_per_code={} total_syms={}", .{keymap.syms_per_code, keymap.syms.len});
+        std.log.info("Keymap: syms_per_code={} total_syms={}", .{ keymap.syms_per_code, keymap.syms.len });
         {
             var i: usize = 0;
             var sym_offset: usize = 0;
@@ -59,20 +63,20 @@ pub fn main() !u8 {
 
     const screen = blk: {
         const fixed = conn.setup.fixed();
-        inline for (@typeInfo(@TypeOf(fixed.*)).Struct.fields) |field| {
-            std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
+        inline for (@typeInfo(@TypeOf(fixed.*)).@"struct".fields) |field| {
+            std.log.debug("{s}: {any}", .{ field.name, @field(fixed, field.name) });
         }
         std.log.debug("vendor: {s}", .{try conn.setup.getVendorSlice(fixed.vendor_len)});
         const format_list_offset = x.ConnectSetup.getFormatListOffset(fixed.vendor_len);
         const format_list_limit = x.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
-        std.log.debug("fmt list off={} limit={}", .{format_list_offset, format_list_limit});
+        std.log.debug("fmt list off={} limit={}", .{ format_list_offset, format_list_limit });
         const formats = try conn.setup.getFormatList(format_list_offset, format_list_limit);
         for (formats, 0..) |format, i| {
-            std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
+            std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{ i, format.depth, format.bits_per_pixel, format.scanline_pad });
         }
         const screen = conn.setup.getFirstScreenPtr(format_list_limit);
-        inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
-            std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
+        inline for (@typeInfo(@TypeOf(screen.*)).@"struct".fields) |field| {
+            std.log.debug("SCREEN 0| {s}: {any}", .{ field.name, @field(screen, field.name) });
         }
         break :blk screen;
     };
@@ -85,42 +89,35 @@ pub fn main() !u8 {
             .window_id = window_id,
             .parent_window_id = screen.root,
             .depth = 0, // dont care, inherit from parent
-            .x = 0, .y = 0,
-            .width = window_width, .height = window_height,
+            .x = 0,
+            .y = 0,
+            .width = window_width,
+            .height = window_height,
             .border_width = 0, // TODO: what is this?
             .class = .input_output,
             .visual_id = screen.root_visual,
         }, .{
-//            .bg_pixmap = .copy_from_parent,
+            //            .bg_pixmap = .copy_from_parent,
             .bg_pixel = bg_color,
-//            //.border_pixmap =
-//            .border_pixel = 0x01fa8ec9,
-//            .bit_gravity = .north_west,
-//            .win_gravity = .east,
-//            .backing_store = .when_mapped,
-//            .backing_planes = 0x1234,
-//            .backing_pixel = 0xbbeeeeff,
-//            .override_redirect = true,
-//            .save_under = true,
-            .event_mask =
-                  x.event.key_press
-                | x.event.key_release
-                | x.event.button_press
-                | x.event.button_release
-                | x.event.enter_window
-                | x.event.leave_window
-                | x.event.pointer_motion
-//                | x.event.pointer_motion_hint WHAT THIS DO?
-//                | x.event.button1_motion  WHAT THIS DO?
-//                | x.event.button2_motion  WHAT THIS DO?
-//                | x.event.button3_motion  WHAT THIS DO?
-//                | x.event.button4_motion  WHAT THIS DO?
-//                | x.event.button5_motion  WHAT THIS DO?
-//                | x.event.button_motion  WHAT THIS DO?
-                | x.event.keymap_state
-                | x.event.exposure
-                ,
-//            .dont_propagate = 1,
+            //            //.border_pixmap =
+            //            .border_pixel = 0x01fa8ec9,
+            //            .bit_gravity = .north_west,
+            //            .win_gravity = .east,
+            //            .backing_store = .when_mapped,
+            //            .backing_planes = 0x1234,
+            //            .backing_pixel = 0xbbeeeeff,
+            //            .override_redirect = true,
+            //            .save_under = true,
+            .event_mask = x.event.key_press | x.event.key_release | x.event.button_press | x.event.button_release | x.event.enter_window | x.event.leave_window | x.event.pointer_motion
+                //                | x.event.pointer_motion_hint WHAT THIS DO?
+                //                | x.event.button1_motion  WHAT THIS DO?
+                //                | x.event.button2_motion  WHAT THIS DO?
+                //                | x.event.button3_motion  WHAT THIS DO?
+                //                | x.event.button4_motion  WHAT THIS DO?
+                //                | x.event.button5_motion  WHAT THIS DO?
+                //                | x.event.button_motion  WHAT THIS DO?
+            | x.event.keymap_state | x.event.exposure,
+            //            .dont_propagate = 1,
         });
         try msg_sequencer.send(msg_buf[0..len], 1);
     }
@@ -152,15 +149,15 @@ pub fn main() !u8 {
 
     // get some font information
     {
-        const text_literal = [_]u16 { 'm' };
-        const text = x.Slice(u16, [*]const u16) { .ptr = &text_literal, .len = text_literal.len };
+        const text_literal = [_]u16{'m'};
+        const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
         x.query_text_extents.serialize(&msg, fg_gc_id, text);
         try msg_sequencer.send(&msg, 1);
     }
 
     const double_buf = try x.DoubleBuffer.init(
-        std.mem.alignForward(usize, 1000, std.mem.page_size),
+        std.mem.alignForward(usize, 1000, std.heap.pageSize()),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
     // double_buf.deinit() (not necessary)
@@ -191,7 +188,7 @@ pub fn main() !u8 {
         x.map_window.serialize(&msg, window_id);
         try msg_sequencer.send(&msg, 1);
     }
-    var state = State { };
+    var state = State{};
 
     while (true) {
         {
@@ -342,7 +339,7 @@ fn handleReply(
                     4 => "frozen",
                     else => "unknown error code",
                 };
-                std.log.info("grab failed with '{s}' ({})", .{error_msg, status});
+                std.log.info("grab failed with '{s}' ({})", .{ error_msg, status });
                 state.grab = .disabled;
             }
             try render(msg_sequencer, window_id, bg_gc_id, fg_gc_id, font_dims, state.*);
@@ -366,7 +363,7 @@ fn handleReply(
                 state.disable_input_device = .{ .get_version = .{
                     .sequence = msg_sequencer.last_sequence,
                     .ext_opcode = msg_ext.major_opcode,
-                }};
+                } };
             }
             return true; // handled
         },
@@ -377,21 +374,20 @@ fn handleReply(
             const minor = x.readIntNative(u16, ptr + 2);
             const present = msg.reserve_min[4];
             if (opcode != @intFromEnum(x.inputext.ExtOpcode.get_extension_version))
-                std.debug.panic("invalid opcode in reply {}, expected {}", .{
-                    opcode, @intFromEnum(x.inputext.ExtOpcode.get_extension_version)});
+                std.debug.panic("invalid opcode in reply {}, expected {}", .{ opcode, @intFromEnum(x.inputext.ExtOpcode.get_extension_version) });
             if (present == 0)
                 std.debug.panic("XInputExtension is not present, but it was before?", .{});
             if (major != 2)
-                std.debug.panic("XInputExtension major version is {} but need {}", .{major, 2});
+                std.debug.panic("XInputExtension major version is {} but need {}", .{ major, 2 });
             if (minor < 3)
-                std.debug.panic("XInputExtension minor version is {} but I've only tested >= {}", .{minor, 3});
+                std.debug.panic("XInputExtension minor version is {} but I've only tested >= {}", .{ minor, 3 });
             var list_devices_msg: [x.inputext.list_input_devices.len]u8 = undefined;
             x.inputext.list_input_devices.serialize(&list_devices_msg, info.ext_opcode);
             try msg_sequencer.send(&list_devices_msg, 1);
             state.disable_input_device = .{ .list_devices = .{
                 .sequence = msg_sequencer.last_sequence,
                 .ext_opcode = info.ext_opcode,
-            }};
+            } };
             return true; // handled
         },
         .list_devices => |state_info| if (msg.sequence == state_info.sequence) {
@@ -407,7 +403,7 @@ fn handleReply(
                     }
                     selected_pointer_id = device.id;
                 }
-                std.log.info("Device {} '{s}', type={}, use={s}:", .{device.id, name, device.device_type, @tagName(device.use)});
+                std.log.info("Device {} '{s}', type={}, use={s}:", .{ device.id, name, device.device_type, @tagName(device.use) });
                 var info_index: u8 = 0;
                 while (info_index < device.class_count) : (info_index += 1) {
                     std.log.info("  Input: {}", .{input_info_it.front()});
@@ -428,7 +424,7 @@ fn handleReply(
                     .sequence = msg_sequencer.last_sequence,
                     .ext_opcode = state_info.ext_opcode,
                     .pointer_id = pointer_id,
-                }};
+                } };
             } else {
                 state.disable_input_device = .no_pointer_to_disable;
             }
@@ -440,7 +436,7 @@ fn handleReply(
             x.inputext.get_property.serialize(&get_prop_msg, info.ext_opcode, .{
                 .device_id = info.pointer_id,
                 .property = atom,
-                .@"type" = 0,
+                .type = 0,
                 .offset = 0,
                 .len = 0,
                 .delete = false,
@@ -451,7 +447,7 @@ fn handleReply(
                 .ext_opcode = info.ext_opcode,
                 .pointer_id = info.pointer_id,
                 .atom = atom,
-            }};
+            } };
             return true;
         },
         .get_prop => |info| if (msg.sequence == info.sequence) {
@@ -464,15 +460,15 @@ fn handleReply(
                 .device_id = info.pointer_id,
                 .mode = .replace,
                 .property = info.atom,
-                .@"type" = @intFromEnum(x.Atom.INTEGER),
-                .values = x.Slice(u16, [*]const u8).initComptime(&[_]u8 { 0 }),
+                .type = @intFromEnum(x.Atom.INTEGER),
+                .values = x.Slice(u16, [*]const u8).initComptime(&[_]u8{0}),
             });
             try msg_sequencer.send(&change_prop_msg, 1);
             state.disable_input_device = .{ .disabled = .{
                 .ext_opcode = info.ext_opcode,
                 .pointer_id = info.pointer_id,
                 .atom = info.atom,
-            }};
+            } };
             return true;
         },
     }
@@ -515,43 +511,45 @@ fn createWindow(msg_sequencer: *MsgSequencer, parent_window_id: u32, window_id: 
             .window_id = window_id,
             .parent_window_id = parent_window_id,
             .depth = 0, // dont care, inherit from parent
-            .x = 0, .y = 0,
-            .width = 500, .height = 500,
+            .x = 0,
+            .y = 0,
+            .width = 500,
+            .height = 500,
             .border_width = 0, // TODO: what is this?
             .class = .input_output,
             //.class = .input_only,
             .visual_id = 0, // copy from parent
         }, .{
-//            .bg_pixmap = .copy_from_parent,
-//            .bg_pixel = bg_color,
-//            //.border_pixmap =
-//            .border_pixel = 0x01fa8ec9,
-//            .bit_gravity = .north_west,
-//            .win_gravity = .east,
-//            .backing_store = .when_mapped,
-//            .backing_planes = 0x1234,
-//            .backing_pixel = 0xbbeeeeff,
-//            .override_redirect = true,
-//            .save_under = true,
-//            .event_mask =
-//                  x.event.key_press
-//                | x.event.key_release
-//                | x.event.button_press
-//                | x.event.button_release
-//                | x.event.enter_window
-//                | x.event.leave_window
-//                | x.event.pointer_motion
-////                | x.event.pointer_motion_hint WHAT THIS DO?
-////                | x.event.button1_motion  WHAT THIS DO?
-////                | x.event.button2_motion  WHAT THIS DO?
-////                | x.event.button3_motion  WHAT THIS DO?
-////                | x.event.button4_motion  WHAT THIS DO?
-////                | x.event.button5_motion  WHAT THIS DO?
-////                | x.event.button_motion  WHAT THIS DO?
-//                | x.event.keymap_state
-//                | x.event.exposure
-//                ,
-////            .dont_propagate = 1,
+            //            .bg_pixmap = .copy_from_parent,
+            //            .bg_pixel = bg_color,
+            //            //.border_pixmap =
+            //            .border_pixel = 0x01fa8ec9,
+            //            .bit_gravity = .north_west,
+            //            .win_gravity = .east,
+            //            .backing_store = .when_mapped,
+            //            .backing_planes = 0x1234,
+            //            .backing_pixel = 0xbbeeeeff,
+            //            .override_redirect = true,
+            //            .save_under = true,
+            //            .event_mask =
+            //                  x.event.key_press
+            //                | x.event.key_release
+            //                | x.event.button_press
+            //                | x.event.button_release
+            //                | x.event.enter_window
+            //                | x.event.leave_window
+            //                | x.event.pointer_motion
+            ////                | x.event.pointer_motion_hint WHAT THIS DO?
+            ////                | x.event.button1_motion  WHAT THIS DO?
+            ////                | x.event.button2_motion  WHAT THIS DO?
+            ////                | x.event.button3_motion  WHAT THIS DO?
+            ////                | x.event.button4_motion  WHAT THIS DO?
+            ////                | x.event.button5_motion  WHAT THIS DO?
+            ////                | x.event.button_motion  WHAT THIS DO?
+            //                | x.event.keymap_state
+            //                | x.event.exposure
+            //                ,
+            ////            .dont_propagate = 1,
         });
         try msg_sequencer.send(msg_buf[0..len], 1);
     }
@@ -598,8 +596,8 @@ fn Pos(comptime T: type) type {
     };
 }
 const State = struct {
-    pointer_root_pos: Pos(i16) = .{ .x = -1, .y = -1},
-    pointer_event_pos: Pos(i16) = .{ .x = -1, .y = -1},
+    pointer_root_pos: Pos(i16) = .{ .x = -1, .y = -1 },
+    pointer_event_pos: Pos(i16) = .{ .x = -1, .y = -1 },
     grab: union(enum) {
         disabled: void,
         requested: struct { confined: bool, sequence: u16 },
@@ -693,7 +691,7 @@ fn renderString(
         .x = pos_x,
         .y = pos_y,
     });
-    try msg_sequencer.send(msg[0 .. x.image_text8.getLen(text_len)], 1);
+    try msg_sequencer.send(msg[0..x.image_text8.getLen(text_len)], 1);
 }
 
 fn render(
@@ -708,7 +706,10 @@ fn render(
     {
         var msg: [x.clear_area.len]u8 = undefined;
         x.clear_area.serialize(&msg, false, drawable_id, .{
-            .x = 0, .y = 0, .width = window_width, .height = window_height,
+            .x = 0,
+            .y = 0,
+            .width = window_width,
+            .height = window_height,
         });
         try msg_sequencer.send(&msg, 1);
     }
@@ -718,7 +719,8 @@ fn render(
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (0 * font_dims.height),
-        "root: {} x {}", .{
+        "root: {} x {}",
+        .{
             state.pointer_root_pos.x,
             state.pointer_root_pos.y,
         },
@@ -729,7 +731,8 @@ fn render(
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (1 * font_dims.height),
-        "event: {} x {}", .{
+        "event: {} x {}",
+        .{
             state.pointer_event_pos.x,
             state.pointer_event_pos.y,
         },
@@ -737,7 +740,7 @@ fn render(
     const grab_suffix: []const u8 = switch (state.grab) {
         .disabled => "",
         .requested => |c| if (c.confined) " confined=true" else " confined=false",
-        .enabled   => |c| if (c.confined) " confined=true" else " confined=false",
+        .enabled => |c| if (c.confined) " confined=true" else " confined=false",
     };
     try renderString(
         msg_sequencer,
@@ -745,7 +748,8 @@ fn render(
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (2 * font_dims.height),
-        "(G)rab: {s}{s}", .{ @tagName(state.grab), grab_suffix },
+        "(G)rab: {s}{s}",
+        .{ @tagName(state.grab), grab_suffix },
     );
     try renderString(
         msg_sequencer,
@@ -753,7 +757,8 @@ fn render(
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (3 * font_dims.height),
-        "(C)onfine Grab: {}", .{ state.confine_grab },
+        "(C)onfine Grab: {}",
+        .{state.confine_grab},
     );
     try renderString(
         msg_sequencer,
@@ -761,7 +766,8 @@ fn render(
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (4 * font_dims.height),
-        "(W)arp", .{},
+        "(W)arp",
+        .{},
     );
     try renderString(
         msg_sequencer,
@@ -769,7 +775,8 @@ fn render(
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (5 * font_dims.height),
-        "Create W(i)ndow", .{},
+        "Create W(i)ndow",
+        .{},
     );
     {
         const suffix: []const u8 = switch (state.disable_input_device) {
@@ -789,7 +796,8 @@ fn render(
             fg_gc_id,
             font_dims.font_left,
             font_dims.font_ascent + (6 * font_dims.height),
-            "(D)isable Input Device{s}", .{suffix},
+            "(D)isable Input Device{s}",
+            .{suffix},
         );
     }
 }

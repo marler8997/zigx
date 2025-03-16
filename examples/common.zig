@@ -1,5 +1,5 @@
 const std = @import("std");
-const x = @import("x.zig");
+const x = @import("x");
 const common = @This();
 
 pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocket);
@@ -7,7 +7,7 @@ pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromErr
 pub fn send(sock: std.posix.socket_t, data: []const u8) !void {
     const sent = try x.writeSock(sock, data, 0);
     if (sent != data.len) {
-        std.log.err("send {} only sent {}\n", .{data.len, sent});
+        std.log.err("send {} only sent {}\n", .{ data.len, sent });
         return error.DidNotSendAllData;
     }
 }
@@ -33,7 +33,7 @@ pub fn connectSetupMaxAuth(
     const len = x.connect_setup.getLen(auth_name.len, auth_data.len);
     if (len > max_auth_len)
         return error.AuthTooBig;
-    return connectSetup(sock, buf[0 .. len], auth_name, auth_data);
+    return connectSetup(sock, buf[0..len], auth_name, auth_data);
 }
 
 pub fn connectSetup(
@@ -47,7 +47,7 @@ pub fn connectSetup(
     x.connect_setup.serialize(msg.ptr, 11, 0, auth_name, auth_data);
     try send(sock, msg);
 
-    const reader = SocketReader { .context = sock };
+    const reader = SocketReader{ .context = sock };
     const connect_setup_header = try x.readConnectSetupHeader(reader, .{});
     switch (connect_setup_header.status) {
         .failed => {
@@ -64,13 +64,13 @@ pub fn connectSetup(
         },
         .success => {
             // TODO: check version?
-            std.log.debug("SUCCESS! version {}.{}", .{connect_setup_header.proto_major_ver, connect_setup_header.proto_minor_ver});
+            std.log.debug("SUCCESS! version {}.{}", .{ connect_setup_header.proto_major_ver, connect_setup_header.proto_minor_ver });
             return connect_setup_header.getReplyLen();
         },
         else => |status| {
             std.log.err("Error: expected 0, 1 or 2 as first byte of connect setup reply, but got {}", .{status});
             return error.MalformedXReply;
-        }
+        },
     }
 }
 
@@ -89,7 +89,7 @@ fn connectSetupAuth(
     defer auth_mapped.unmap();
 
     var auth_filter = x.AuthFilter{
-        .addr = .{ .family = .wild, .data = &[0]u8{ } },
+        .addr = .{ .family = .wild, .data = &[0]u8{} },
         .display_num = display_num,
     };
 
@@ -107,7 +107,7 @@ fn connectSetupAuth(
         return null;
     }) |entry| {
         if (auth_filter.isFiltered(auth_mapped.mem, entry)) |reason| {
-            std.log.debug("ignoring auth because {s} does not match: {}", .{@tagName(reason), entry.fmt(auth_mapped.mem)});
+            std.log.debug("ignoring auth because {s} does not match: {}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
             continue;
         }
         const name = entry.name(auth_mapped.mem);
@@ -131,12 +131,12 @@ fn connectSetupAuth(
 pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
     const display = x.getDisplay();
     const parsed_display = x.parseDisplay(display) catch |err| {
-        std.log.err("invalid display '{s}': {s}", .{display, @errorName(err)});
+        std.log.err("invalid display '{s}': {s}", .{ display, @errorName(err) });
         std.process.exit(0xff);
     };
 
     const sock = x.connect(display, parsed_display) catch |err| {
-        std.log.err("failed to connect to display '{s}': {s}", .{display, @errorName(err)});
+        std.log.err("failed to connect to display '{s}': {s}", .{ display, @errorName(err) });
         std.process.exit(0xff);
     };
     errdefer x.disconnect(sock);
@@ -164,11 +164,11 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
         std.process.exit(0xff);
     };
 
-    const connect_setup = x.ConnectSetup {
+    const connect_setup = x.ConnectSetup{
         .buf = try allocator.allocWithOptions(u8, setup_reply_len, 4, null),
     };
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
-    const reader = SocketReader { .context = sock };
+    const reader = SocketReader{ .context = sock };
     try x.readFull(reader, connect_setup.buf);
 
     return ConnectResult{ .sock = sock, .setup = connect_setup };

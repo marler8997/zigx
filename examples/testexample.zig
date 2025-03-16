@@ -1,6 +1,6 @@
 // A working example to test various parts of the API
 const std = @import("std");
-const x = @import("./x.zig");
+const x = @import("x");
 const common = @import("common.zig");
 
 const Endian = std.builtin.Endian;
@@ -13,10 +13,18 @@ const window_height = 400;
 
 pub const Ids = struct {
     base: u32,
-    pub fn window(self: Ids) u32 { return self.base; }
-    pub fn bg_gc(self: Ids) u32 { return self.base + 1; }
-    pub fn fg_gc(self: Ids) u32 { return self.base + 2; }
-    pub fn pixmap(self: Ids) u32 { return self.base + 3; }
+    pub fn window(self: Ids) u32 {
+        return self.base;
+    }
+    pub fn bg_gc(self: Ids) u32 {
+        return self.base + 1;
+    }
+    pub fn fg_gc(self: Ids) u32 {
+        return self.base + 2;
+    }
+    pub fn pixmap(self: Ids) u32 {
+        return self.base + 3;
+    }
 };
 
 // ZFormat
@@ -35,7 +43,7 @@ const ImageFormat = struct {
 };
 fn getImageFormat(
     endian: Endian,
-    formats: []const align(4) x.Format,
+    formats: []align(4) const x.Format,
     root_depth: u8,
 ) !ImageFormat {
     var opt_match_index: ?usize = null;
@@ -48,7 +56,7 @@ fn getImageFormat(
     }
     const match_index = opt_match_index orelse
         return error.MissingPixmapFormat;
-    return ImageFormat {
+    return ImageFormat{
         .endian = endian,
         .depth = root_depth,
         .bits_per_pixel = formats[match_index].bits_per_pixel,
@@ -63,8 +71,8 @@ pub fn main() !u8 {
 
     const conn_setup_result = blk: {
         const fixed = conn.setup.fixed();
-        inline for (@typeInfo(@TypeOf(fixed.*)).Struct.fields) |field| {
-            std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
+        inline for (@typeInfo(@TypeOf(fixed.*)).@"struct".fields) |field| {
+            std.log.debug("{s}: {any}", .{ field.name, @field(fixed, field.name) });
         }
         const image_endian: Endian = switch (fixed.image_byte_order) {
             .lsb_first => .little,
@@ -77,14 +85,14 @@ pub fn main() !u8 {
         std.log.debug("vendor: {s}", .{try conn.setup.getVendorSlice(fixed.vendor_len)});
         const format_list_offset = x.ConnectSetup.getFormatListOffset(fixed.vendor_len);
         const format_list_limit = x.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
-        std.log.debug("fmt list off={} limit={}", .{format_list_offset, format_list_limit});
+        std.log.debug("fmt list off={} limit={}", .{ format_list_offset, format_list_limit });
         const formats = try conn.setup.getFormatList(format_list_offset, format_list_limit);
         for (formats, 0..) |format, i| {
-            std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
+            std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{ i, format.depth, format.bits_per_pixel, format.scanline_pad });
         }
         const screen = conn.setup.getFirstScreenPtr(format_list_limit);
-        inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
-            std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
+        inline for (@typeInfo(@TypeOf(screen.*)).@"struct".fields) |field| {
+            std.log.debug("SCREEN 0| {s}: {any}", .{ field.name, @field(screen, field.name) });
         }
         break :blk .{
             .screen = screen,
@@ -93,7 +101,7 @@ pub fn main() !u8 {
                 formats,
                 screen.root_depth,
             ) catch |err| {
-                std.log.err("can't resolve root depth {} format: {s}", .{screen.root_depth, @errorName(err)});
+                std.log.err("can't resolve root depth {} format: {s}", .{ screen.root_depth, @errorName(err) });
                 return 0xff;
             },
         };
@@ -109,43 +117,35 @@ pub fn main() !u8 {
             .window_id = ids.window(),
             .parent_window_id = screen.root,
             .depth = 0, // we don't care, just inherit from the parent
-            .x = 0, .y = 0,
-            .width = window_width, .height = window_height,
+            .x = 0,
+            .y = 0,
+            .width = window_width,
+            .height = window_height,
             .border_width = 0, // TODO: what is this?
             .class = .input_output,
             .visual_id = screen.root_visual,
         }, .{
-//            .bg_pixmap = .copy_from_parent,
+            //            .bg_pixmap = .copy_from_parent,
             .bg_pixel = x.rgb24To(0xbbccdd, screen.root_depth),
-//            //.border_pixmap =
-//            .border_pixel = 0x01fa8ec9,
-//            .bit_gravity = .north_west,
-//            .win_gravity = .east,
-//            .backing_store = .when_mapped,
-//            .backing_planes = 0x1234,
-//            .backing_pixel = 0xbbeeeeff,
-//            .override_redirect = true,
-//            .save_under = true,
-            .event_mask =
-                  x.event.key_press
-                | x.event.key_release
-                | x.event.button_press
-                | x.event.button_release
-                | x.event.enter_window
-                | x.event.leave_window
-                | x.event.pointer_motion
-//                | x.event.pointer_motion_hint WHAT THIS DO?
-//                | x.event.button1_motion  WHAT THIS DO?
-//                | x.event.button2_motion  WHAT THIS DO?
-//                | x.event.button3_motion  WHAT THIS DO?
-//                | x.event.button4_motion  WHAT THIS DO?
-//                | x.event.button5_motion  WHAT THIS DO?
-//                | x.event.button_motion  WHAT THIS DO?
-                | x.event.keymap_state
-                | x.event.exposure
-                | x.event.structure_notify
-                ,
-//            .dont_propagate = 1,
+            //            //.border_pixmap =
+            //            .border_pixel = 0x01fa8ec9,
+            //            .bit_gravity = .north_west,
+            //            .win_gravity = .east,
+            //            .backing_store = .when_mapped,
+            //            .backing_planes = 0x1234,
+            //            .backing_pixel = 0xbbeeeeff,
+            //            .override_redirect = true,
+            //            .save_under = true,
+            .event_mask = x.event.key_press | x.event.key_release | x.event.button_press | x.event.button_release | x.event.enter_window | x.event.leave_window | x.event.pointer_motion
+                //                | x.event.pointer_motion_hint WHAT THIS DO?
+                //                | x.event.button1_motion  WHAT THIS DO?
+                //                | x.event.button2_motion  WHAT THIS DO?
+                //                | x.event.button3_motion  WHAT THIS DO?
+                //                | x.event.button4_motion  WHAT THIS DO?
+                //                | x.event.button5_motion  WHAT THIS DO?
+                //                | x.event.button_motion  WHAT THIS DO?
+            | x.event.keymap_state | x.event.exposure | x.event.structure_notify,
+            //            .dont_propagate = 1,
         });
         try conn.send(msg_buf[0..len]);
     }
@@ -176,15 +176,15 @@ pub fn main() !u8 {
 
     // get some font information
     {
-        const text_literal = [_]u16 { 'm' };
-        const text = x.Slice(u16, [*]const u16) { .ptr = &text_literal, .len = text_literal.len };
+        const text_literal = [_]u16{'m'};
+        const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
         x.query_text_extents.serialize(&msg, ids.fg_gc(), text);
         try conn.send(&msg);
     }
 
     const double_buf = try x.DoubleBuffer.init(
-        std.mem.alignForward(usize, 1000, std.mem.page_size),
+        std.mem.alignForward(usize, 1000, std.heap.page_size_min),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
     defer double_buf.deinit(); // not necessary but good to test
@@ -210,7 +210,6 @@ pub fn main() !u8 {
         }
     };
 
-
     {
         const ext_name = comptime x.Slice(u16, [*]const u8).initComptime("RENDER");
         var msg: [x.query_extension.getLen(ext_name.len)]u8 = undefined;
@@ -234,7 +233,6 @@ pub fn main() !u8 {
                 std.log.err("expected a reply but got {}", .{msg});
                 return 1;
             },
-
         }
     };
     if (opt_render_ext) |render_ext| {
@@ -250,7 +248,7 @@ pub fn main() !u8 {
         switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 const msg: *x.render.query_version.Reply = @ptrCast(msg_reply);
-                std.log.info("RENDER extension: version {}.{}", .{msg.major_version, msg.minor_version});
+                std.log.info("RENDER extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != 0) {
                     std.log.err("xrender extension major version {} too new", .{msg.major_version});
                     return 1;
@@ -376,7 +374,7 @@ fn render(
         x.poly_fill_rectangle.serialize(&msg, .{
             .drawable_id = ids.window(),
             .gc_id = ids.bg_gc(),
-        }, &[_]x.Rectangle {
+        }, &[_]x.Rectangle{
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
         });
         try common.send(sock, &msg);
@@ -384,7 +382,10 @@ fn render(
     {
         var msg: [x.clear_area.len]u8 = undefined;
         x.clear_area.serialize(&msg, false, ids.window(), .{
-            .x = 150, .y = 150, .width = 100, .height = 100,
+            .x = 150,
+            .y = 150,
+            .width = 100,
+            .height = 100,
         });
         try common.send(sock, &msg);
     }
@@ -392,7 +393,7 @@ fn render(
     try changeGcColor(sock, ids.fg_gc(), x.rgb24To(0xffaadd, depth));
     {
         const text_literal: []const u8 = "Hello X!";
-        const text = x.Slice(u8, [*]const u8) { .ptr = text_literal.ptr, .len = text_literal.len };
+        const text = x.Slice(u8, [*]const u8){ .ptr = text_literal.ptr, .len = text_literal.len };
         var msg: [x.image_text8.getLen(text.len)]u8 = undefined;
 
         const text_width = font_dims.width * text_literal.len;
@@ -400,7 +401,7 @@ fn render(
         x.image_text8.serialize(&msg, text, .{
             .drawable_id = ids.window(),
             .gc_id = ids.fg_gc(),
-            .x = @divTrunc((window_width - @as(i16, @intCast(text_width))),  2) + font_dims.font_left,
+            .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
         });
         try common.send(sock, &msg);
@@ -479,7 +480,7 @@ fn render(
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.send(sock, put_image_msg[0 .. x.put_image.getLen(test_image_data_len)]);
+        try common.send(sock, put_image_msg[0..x.put_image.getLen(test_image_data_len)]);
 
         // test a pixmap
         {
@@ -504,7 +505,7 @@ fn render(
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.send(sock, put_image_msg[0 .. x.put_image.getLen(test_image_data_len)]);
+        try common.send(sock, put_image_msg[0..x.put_image.getLen(test_image_data_len)]);
 
         {
             var msg: [x.copy_area.len]u8 = undefined;
@@ -528,7 +529,6 @@ fn render(
             try common.send(sock, &msg);
         }
     }
-
 }
 
 fn changeGcColor(sock: std.posix.socket_t, gc_id: u32, color: u32) !void {
@@ -551,28 +551,32 @@ fn populateTestImage(
         var data_off: usize = row * stride;
 
         var color: u24 = 0;
-        if (row < 5) { color |= 0xff0000; }
-        else if (row < 10) { color |= 0xff00; }
-        else { color |= 0xff; }
+        if (row < 5) {
+            color |= 0xff0000;
+        } else if (row < 10) {
+            color |= 0xff00;
+        } else {
+            color |= 0xff;
+        }
 
         var col: usize = 0;
         while (col < width) : (col += 1) {
             switch (image_format.depth) {
                 16 => std.mem.writeInt(
                     u16,
-                    data[data_off..][0 .. 2],
+                    data[data_off..][0..2],
                     x.rgb24To16(color),
                     image_format.endian,
                 ),
                 24 => std.mem.writeInt(
                     u24,
-                    data[data_off..][0 .. 3],
+                    data[data_off..][0..3],
                     color,
                     image_format.endian,
                 ),
                 32 => std.mem.writeInt(
                     u32,
-                    data[data_off..][0 .. 4],
+                    data[data_off..][0..4],
                     color,
                     image_format.endian,
                 ),
