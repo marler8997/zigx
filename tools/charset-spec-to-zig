@@ -163,7 +163,7 @@ for line in content.splitlines():
 repo_dir = os.path.dirname(script_dir)
 zig_charset_dir = os.path.join(repo_dir, "src", "charset")
 
-with open(os.path.join(repo_dir, "charset.zig"), "w") as zig_charset_file:
+with open(os.path.join(repo_dir, "src", "charset.zig"), "w") as zig_charset_file:
     for charset in charsets:
         zig_charset_file.write("pub const {0} = @import(\"charset/{1}.zig\").{0};\n".format(charset.type_name, charset.name))
         zig_file = os.path.join(zig_charset_dir, charset.name + ".zig")
