@@ -2,6 +2,7 @@
     .name = .zigx,
     .version = "0.0.0",
     .fingerprint = 0x16a26b254befcb3f,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{},
     .paths = .{"."},
 }

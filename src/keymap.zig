@@ -5,7 +5,7 @@ const x = @import("x.zig");
 pub fn send(sock: std.posix.socket_t, data: []const u8) !void {
     const sent = try x.writeSock(sock, data, 0);
     if (sent != data.len) {
-        std.log.err("send {} only sent {}\n", .{data.len, sent});
+        std.log.err("send {} only sent {}\n", .{ data.len, sent });
         return error.DidNotSendAllData;
     }
 }

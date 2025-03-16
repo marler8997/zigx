@@ -20,7 +20,7 @@ fn readSocket(sock: std.posix.socket_t, buffer: []u8) !usize {
     return x.readSock(sock, buffer, 0);
 }
 
-export fn ZigXSetErrorHandler(handler: *const fn(*anyopaque, [*:0]const u8) callconv(.C) void, ctx: *anyopaque) void {
+export fn ZigXSetErrorHandler(handler: *const fn (*anyopaque, [*:0]const u8) callconv(.C) void, ctx: *anyopaque) void {
     _ = handler;
     _ = ctx;
     std.log.err("TODO: set error handler!", .{});
@@ -53,34 +53,34 @@ const Display = struct {
 export fn XOpenDisplay(display_opt: ?[*:0]const u8) ?*c.Display {
     return openDisplay(display_opt) catch return null;
 }
-fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c.Display {
+fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!*c.Display {
     // TODO: x.getDisplay allocates on windows, maybe we cache it on windows?
     // TODO: should an empty string be handled like null as well?
     const display_spec = if (display_spec_opt) |d| std.mem.span(d) else x.getDisplay();
     std.log.info("connecting to DISPLAY '{s}'", .{display_spec});
 
     const parsed_display = x.parseDisplay(display_spec) catch |err|
-        return reportError("invalid DISPLAY '{s}': {s}", .{display_spec, @errorName(err)});
+        return reportError("invalid DISPLAY '{s}': {s}", .{ display_spec, @errorName(err) });
 
     const sock = x.connect(display_spec, parsed_display) catch |err|
-        return reportError("failed to connect to DISPLAY '{s}': {s}", .{display_spec, @errorName(err)});
+        return reportError("failed to connect to DISPLAY '{s}': {s}", .{ display_spec, @errorName(err) });
     errdefer x.disconnect(sock);
 
     const setup_header = blk: {
         if (x.getAuthFilename(c_allocator) catch |err|
-                return reportError("failed to get auth filename with {s}", .{@errorName(err)})
-        ) |auth_filename| {
+            return reportError("failed to get auth filename with {s}", .{@errorName(err)})) |auth_filename|
+        {
             defer auth_filename.deinit(c_allocator);
             if (try connectSetupAuth(parsed_display.display_num, sock, auth_filename.str)) |hdr|
                 break :blk hdr;
         }
 
         var msg: [x.connect_setup.getLen(0, 0)]u8 = undefined;
-        x.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0}, .{ .ptr = undefined, .len = 0 });
+        x.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
         sendAll(sock, &msg) catch |err|
             return reportError("send connect setup failed with {s}", .{@errorName(err)});
 
-        const reader = SocketReader { .context = sock };
+        const reader = SocketReader{ .context = sock };
         const connect_setup_header = x.readConnectSetupHeader(reader, .{}) catch |err|
             return reportError("failed to read connect setup with {s}", .{@errorName(err)});
         switch (connect_setup_header.status) {
@@ -96,7 +96,8 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
             },
             .success => break :blk connect_setup_header,
             else => |status| return reportError(
-                "expected 0, 1 or 2 as first byte of connect setup reply, but got {}", .{status},
+                "expected 0, 1 or 2 as first byte of connect setup reply, but got {}",
+                .{status},
             ),
         }
         return reportError("the X server rejected our connect setup message", .{});
@@ -105,20 +106,20 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
     const buf = try c_allocator.allocWithOptions(u8, setup_header.getReplyLen(), 4, null);
     defer c_allocator.free(buf);
 
-    const connect_setup = x.ConnectSetup { .buf = buf };
+    const connect_setup = x.ConnectSetup{ .buf = buf };
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
-    const reader = SocketReader { .context = sock };
+    const reader = SocketReader{ .context = sock };
     x.readFull(reader, connect_setup.buf) catch |err|
         return reportError("failed to read connect setup with {s}", .{@errorName(err)});
 
     const fixed = connect_setup.fixed();
     inline for (@typeInfo(@TypeOf(fixed.*)).Struct.fields) |field| {
-        std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
+        std.log.debug("{s}: {any}", .{ field.name, @field(fixed, field.name) });
     }
     //std.log.debug("vendor: {s}", .{try connect_setup.getVendorSlice(fixed.vendor_len)});
     const format_list_offset = x.ConnectSetup.getFormatListOffset(fixed.vendor_len);
     const format_list_limit = x.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
-    std.log.debug("fmt list off={} limit={}", .{format_list_offset, format_list_limit});
+    std.log.debug("fmt list off={} limit={}", .{ format_list_offset, format_list_limit });
     //const formats = try connect_setup.getFormatList(format_list_offset, format_list_limit);
     //for (formats) |format, i| {
     //    std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
@@ -134,7 +135,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{Reported, OutOfMemory}!*c
     for (screens, 0..) |*screen_dst, screen_index| {
         const screen_src = &setup_screens_ptr[screen_index];
         inline for (@typeInfo(@TypeOf(screen_src.*)).Struct.fields) |field| {
-            std.log.debug("SCREEN {}| {s}: {any}", .{screen_index, field.name, @field(screen_src, field.name)});
+            std.log.debug("SCREEN {}| {s}: {any}", .{ screen_index, field.name, @field(screen_src, field.name) });
         }
         std.log.debug("screen_ptr is 0x{x}", .{@intFromPtr(screen_dst)});
         screen_dst.* = .{
@@ -170,13 +171,13 @@ fn connectSetupAuth(
     display_num: ?u32,
     sock: std.posix.socket_t,
     auth_filename: []const u8,
-) error{Reported,OutOfMemory}!?x.ConnectSetup.Header {
+) error{ Reported, OutOfMemory }!?x.ConnectSetup.Header {
     const auth_mapped = x.MappedFile.init(auth_filename, .{}) catch |err|
-        return reportError("failed to mmap auth file '{s}' with {s}", .{auth_filename, @errorName(err)});
+        return reportError("failed to mmap auth file '{s}' with {s}", .{ auth_filename, @errorName(err) });
     defer auth_mapped.unmap();
 
     var auth_filter = x.AuthFilter{
-        .addr = .{ .family = .wild, .data = &[0]u8{ } },
+        .addr = .{ .family = .wild, .data = &[0]u8{} },
         .display_num = display_num,
     };
 
@@ -191,7 +192,7 @@ fn connectSetupAuth(
         return null;
     }) |entry| {
         if (auth_filter.isFiltered(auth_mapped.mem, entry)) |reason| {
-            std.log.debug("ignoring auth because {s} does not match: {}", .{@tagName(reason), entry.fmt(auth_mapped.mem)});
+            std.log.debug("ignoring auth because {s} does not match: {}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
             continue;
         }
         const name = entry.name(auth_mapped.mem);
@@ -212,7 +213,7 @@ fn connectSetupAuth(
         sendAll(sock, msg) catch |err|
             return reportError("send connect setup failed with {s}", .{@errorName(err)});
 
-        const reader = SocketReader { .context = sock };
+        const reader = SocketReader{ .context = sock };
         const connect_setup_header = x.readConnectSetupHeader(reader, .{}) catch |err|
             return reportError("failed to read connect setup with {s}", .{@errorName(err)});
         switch (connect_setup_header.status) {
@@ -230,11 +231,12 @@ fn connectSetupAuth(
             },
             .success => {
                 // TODO: check version?
-                std.log.debug("SUCCESS! version {}.{}", .{connect_setup_header.proto_major_ver, connect_setup_header.proto_minor_ver});
+                std.log.debug("SUCCESS! version {}.{}", .{ connect_setup_header.proto_major_ver, connect_setup_header.proto_minor_ver });
                 return connect_setup_header;
             },
             else => |status| return reportError(
-                "expected 0, 1 or 2 as first byte of connect setup reply, but got {}", .{status},
+                "expected 0, 1 or 2 as first byte of connect setup reply, but got {}",
+                .{status},
             ),
         }
     }
@@ -254,7 +256,7 @@ export fn XCloseDisplay(display_opt: ?*c.Display) c_int {
     }
 
     c_allocator.free(display_full.read_buf);
-    c_allocator.free(display.screens[0 .. @intCast(display.nscreens)]);
+    c_allocator.free(display.screens[0..@intCast(display.nscreens)]);
     //c_allocator.free(@ptrCast([*]u8, display.connect_setup)[0 .. display.connect_setup_len]);
     c_allocator.destroy(display);
     return 0;
@@ -285,44 +287,46 @@ export fn XCreateSimpleWindow(
         .parent_window_id = root_window,
         // TODO: set this correctly
         .depth = 0,
-        .x = @intCast(x_pos), .y = @intCast(y),
-        .width = @intCast(width), .height = @intCast(height),
+        .x = @intCast(x_pos),
+        .y = @intCast(y),
+        .width = @intCast(width),
+        .height = @intCast(height),
         .border_width = @intCast(border_width),
         // TODO
         .class = .copy_from_parent,
-//        .class = .input_output,
+        //        .class = .input_output,
         .visual_id = display.screens[0].root_visual_num,
     }, .{
-//        //            .bg_pixmap = .copy_from_parent,
-//        .bg_pixel = 0xaabbccdd,
-////            //.border_pixmap =
-////            .border_pixel = 0x01fa8ec9,
-////            .bit_gravity = .north_west,
-////            .win_gravity = .east,
-////            .backing_store = .when_mapped,
-////            .backing_planes = 0x1234,
-////            .backing_pixel = 0xbbeeeeff,
-////            .override_redirect = true,
-////            .save_under = true,
-//        .event_mask =
-//            x.event.key_press
-//            | x.event.key_release
-//            | x.event.button_press
-//            | x.event.button_release
-//            | x.event.enter_window
-//            | x.event.leave_window
-//            | x.event.pointer_motion
-//            //                | x.event.pointer_motion_hint WHAT THIS DO?
-//            //                | x.event.button1_motion  WHAT THIS DO?
-//            //                | x.event.button2_motion  WHAT THIS DO?
-//            //                | x.event.button3_motion  WHAT THIS DO?
-//            //                | x.event.button4_motion  WHAT THIS DO?
-//            //                | x.event.button5_motion  WHAT THIS DO?
-//            //                | x.event.button_motion  WHAT THIS DO?
-//            | x.event.keymap_state
-//            | x.event.exposure
-//            ,
-//        //            .dont_propagate = 1,
+        //        //            .bg_pixmap = .copy_from_parent,
+        //        .bg_pixel = 0xaabbccdd,
+        ////            //.border_pixmap =
+        ////            .border_pixel = 0x01fa8ec9,
+        ////            .bit_gravity = .north_west,
+        ////            .win_gravity = .east,
+        ////            .backing_store = .when_mapped,
+        ////            .backing_planes = 0x1234,
+        ////            .backing_pixel = 0xbbeeeeff,
+        ////            .override_redirect = true,
+        ////            .save_under = true,
+        //        .event_mask =
+        //            x.event.key_press
+        //            | x.event.key_release
+        //            | x.event.button_press
+        //            | x.event.button_release
+        //            | x.event.enter_window
+        //            | x.event.leave_window
+        //            | x.event.pointer_motion
+        //            //                | x.event.pointer_motion_hint WHAT THIS DO?
+        //            //                | x.event.button1_motion  WHAT THIS DO?
+        //            //                | x.event.button2_motion  WHAT THIS DO?
+        //            //                | x.event.button3_motion  WHAT THIS DO?
+        //            //                | x.event.button4_motion  WHAT THIS DO?
+        //            //                | x.event.button5_motion  WHAT THIS DO?
+        //            //                | x.event.button_motion  WHAT THIS DO?
+        //            | x.event.keymap_state
+        //            | x.event.exposure
+        //            ,
+        //        //            .dont_propagate = 1,
     });
     sendAll(display.fd, msg_buf[0..len]) catch |err| {
         reportErrorRaw("failed to send CreateWindow message with {s}", .{@errorName(err)});
@@ -399,7 +403,7 @@ fn handleReadError(err: anytype) noreturn {
         error.SocketNotBound,
         error.SocketNotConnected,
         error.Unexpected,
-            => unreachable,
+        => unreachable,
     }
 }
 
@@ -412,7 +416,7 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
     if (len > display_full.read_buf.len) {
         std.log.err("TODO: realloc read_buf len to be bigger", .{});
         //c_allocator.realloc();
-        x.readOneMsgFinish(SocketReader{ .context = display.fd}, display_full.read_buf) catch |err| handleReadError(err);
+        x.readOneMsgFinish(SocketReader{ .context = display.fd }, display_full.read_buf) catch |err| handleReadError(err);
         @panic("todo");
     }
 
@@ -420,13 +424,15 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
         .expose => |e| {
             event.* = .{
                 .xexpose = .{
-                    .@"type" = c.Expose,
+                    .type = c.Expose,
                     .serial = e.sequence,
                     .send_event = @intFromBool((display_full.read_buf[0] & 0x80) != 0),
                     .display = display,
                     .window = e.window,
-                    .x = e.x, .y = e.y,
-                    .width = e.width, .height = e.height,
+                    .x = e.x,
+                    .y = e.y,
+                    .width = e.width,
+                    .height = e.height,
                     .count = e.count,
                 },
             };
@@ -436,7 +442,6 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
     return 0;
 }
 
-
 // ChangeWindowAttributes(window=w#0A000001, event-mask=KeyPress|ButtonPress|Exposure)
 export fn XSelectInput(display: *c.Display, window: c.Window, event_mask: c_ulong) c_int {
     const display_full: *Display = @fieldParentPtr("public", display);
@@ -445,7 +450,7 @@ export fn XSelectInput(display: *c.Display, window: c.Window, event_mask: c_ulon
     const len = x.change_window_attributes.serialize(&msg_buf, window, .{
         .event_mask = @intCast(event_mask),
     });
-    sendAll(display.fd, msg_buf[0 .. len]) catch |err| {
+    sendAll(display.fd, msg_buf[0..len]) catch |err| {
         reportErrorRaw("failed to send ChangeWindowAttributes message with {s}", .{@errorName(err)});
         generateErrorEvent(display_full);
     };

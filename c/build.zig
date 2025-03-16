@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const x_mod = b.createModule(.{
-        .root_source_file = b.path("../x.zig" ),
+        .root_source_file = b.path("../x.zig"),
     });
 
     const x11_lib = b.addStaticLibrary(.{
@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         exe.addCSourceFiles(.{
-            .files = &.{ "example/hellox11.c" },
+            .files = &.{"example/hellox11.c"},
         });
         exe.addIncludePath(b.path("include"));
         exe.linkLibC();

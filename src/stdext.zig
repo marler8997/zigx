@@ -1,4 +1,3 @@
-
 pub const enums = struct {
     /// Returns true if `enum_value` has a name. This function always returns true
     /// for exhaustive enums.  It will return false if the enum is non-exhaustive

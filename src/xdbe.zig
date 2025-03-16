@@ -9,14 +9,14 @@ pub const ExtOpcode = enum(u8) {
     allocate = 1,
     swap = 3,
 };
-    
+
 pub const get_version = struct {
     pub const len =
-          2 // extension and command opcodes
+        2 // extension and command opcodes
         + 2 // request length
         + 2 // wanted major/minor version
         + 2 // unused
-        ;
+    ;
     pub const Args = struct {
         ext_opcode: u8,
         wanted_major_version: u8,
@@ -25,7 +25,9 @@ pub const get_version = struct {
     pub fn serialize(buf: [*]u8, args: Args) void {
         buf[0] = args.ext_opcode;
         buf[1] = @intFromEnum(ExtOpcode.get_version);
-        comptime { std.debug.assert(len & 0x3 == 0); }
+        comptime {
+            std.debug.assert(len & 0x3 == 0);
+        }
         x.writeIntNative(u16, buf + 2, len >> 2);
         buf[4] = args.wanted_major_version;
         buf[5] = args.wanted_minor_version;
@@ -33,7 +35,9 @@ pub const get_version = struct {
         buf[7] = 0; // unused
     }
 
-    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+    comptime {
+        std.debug.assert(@sizeOf(Reply) == 32);
+    }
     pub const Reply = extern struct {
         response_type: x.ReplyKind,
         unused: u8,
@@ -55,13 +59,13 @@ pub const SwapAction = enum(u8) {
 
 pub const allocate = struct {
     pub const len =
-          2 // extension and command opcodes
+        2 // extension and command opcodes
         + 2 // request length
         + 4 // window
         + 4 // backbuffer
         + 1 // swapaction
         + 3 // pad
-        ;
+    ;
     pub const Args = struct {
         ext_opcode: u8,
         window: u32,
@@ -71,7 +75,9 @@ pub const allocate = struct {
     pub fn serialize(buf: [*]u8, args: Args) void {
         buf[0] = args.ext_opcode;
         buf[1] = @intFromEnum(ExtOpcode.allocate);
-        comptime { std.debug.assert(len & 0x3 == 0); }
+        comptime {
+            std.debug.assert(len & 0x3 == 0);
+        }
         x.writeIntNative(u16, buf + 2, len >> 2);
         x.writeIntNative(u32, buf + 4, args.window);
         x.writeIntNative(u32, buf + 8, args.backbuffer);
@@ -89,10 +95,10 @@ pub const SwapInfo = struct {
 
 pub const swap = struct {
     pub const non_list_len =
-          2 // extension and command opcodes
+        2 // extension and command opcodes
         + 2 // request length
         + 4 // swap info count
-        ;
+    ;
     pub fn getLen(swap_info_count: u32) u18 {
         return @intCast(non_list_len + (swap_info_count * 8));
     }
@@ -104,7 +110,7 @@ pub const swap = struct {
         buf[1] = @intFromEnum(ExtOpcode.swap);
         x.writeIntNative(u32, buf + 4, swap_infos.len);
 
-        var i : usize = non_list_len;
+        var i: usize = non_list_len;
         for (swap_infos.nativeSlice()) |info| {
             x.writeIntNative(u32, buf + i + 0, info.window);
             buf[i + 4] = @intFromEnum(info.action);
