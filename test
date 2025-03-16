@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 set -ex
 
-zig build
+rm -rf zig-out
+zig build examples
 
 ./zig-out/bin/getserverfontnames > fontnames.txt
 font=$(head -n 1 fontnames.txt)

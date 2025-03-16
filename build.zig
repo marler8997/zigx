@@ -21,6 +21,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/x.zig"),
     });
 
+    const examples_step = b.step("examples", "");
+
     for (examples) |example_file| {
         const basename = std.fs.path.basename(example_file);
         const name = basename[0 .. basename.len - std.fs.path.extension(basename).len];
@@ -39,7 +41,9 @@ pub fn build(b: *std.Build) void {
             .root_module = example_mod,
         });
 
-        b.installArtifact(exe);
+        const install = b.addInstallArtifact(exe, .{});
+        examples_step.dependOn(&install.step);
+        b.getInstallStep().dependOn(&install.step);
     }
 
     // This library is for C programs, not Zig programs
