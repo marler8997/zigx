@@ -1087,28 +1087,30 @@ pub const StackMode = enum(u8) {
 
 pub const configure_window = struct {
     pub const non_option_len =
-          2 // opcode and unused
+        2 // opcode and unused
         + 2 // request length
         + 4 // window id
         + 2 // bitmask
         + 2 // unused
-        ;
+    ;
     pub const max_len = non_option_len + (std.meta.fields(Options).len * 4);
     // 7 possible 4-byte options
-    comptime { std.debug.assert(7 == std.meta.fields(Options).len); }
+    comptime {
+        std.debug.assert(7 == std.meta.fields(Options).len);
+    }
 
     pub const Args = struct {
         window_id: u32,
     };
 
     pub const option_flags = struct {
-        pub const x             : u16 = (1 <<  0);
-        pub const y             : u16 = (1 <<  1);
-        pub const width         : u16 = (1 <<  2);
-        pub const height        : u16 = (1 <<  3);
-        pub const border_width  : u16 = (1 <<  4);
-        pub const sibling       : u16 = (1 <<  5);
-        pub const stack_mode    : u16 = (1 <<  6);
+        pub const x: u16 = (1 << 0);
+        pub const y: u16 = (1 << 1);
+        pub const width: u16 = (1 << 2);
+        pub const height: u16 = (1 << 3);
+        pub const border_width: u16 = (1 << 4);
+        pub const sibling: u16 = (1 << 5);
+        pub const stack_mode: u16 = (1 << 6);
     };
     pub const Options = struct {
         x: ?i16 = null,
@@ -1198,7 +1200,7 @@ pub const intern_atom = struct {
 
 pub const change_property = struct {
     pub const non_list_len =
-          2 // opcode and mode
+        2 // opcode and mode
         + 2 // request length
         + 4 // window ID
         + 4 // property atom
@@ -1206,7 +1208,7 @@ pub const change_property = struct {
         + 1 // value format
         + 3 // unused
         + 4 // value length
-        ;
+    ;
     pub const Mode = enum(u8) {
         replace = 0,
         prepend = 1,
@@ -1215,7 +1217,7 @@ pub const change_property = struct {
     pub fn withFormat(comptime T: type) type {
         switch (T) {
             u8, u16, u32 => {},
-            else => @compileError("change_property is only compatible with u8, u16, u32 value formats but saw " ++ @typeName(T))
+            else => @compileError("change_property is only compatible with u8, u16, u32 value formats but saw " ++ @typeName(T)),
         }
 
         return struct {
@@ -1230,7 +1232,7 @@ pub const change_property = struct {
                 ///
                 /// This value isn't interpreted by the X server. It's just passed back
                 /// to the client application when using the `get_property` request.
-                @"type": Atom,
+                type: Atom,
                 values: Slice(u16, [*]const T),
             };
             pub fn serialize(buf: [*]u8, args: Args) void {
@@ -1267,7 +1269,7 @@ pub const get_property = struct {
         /// type, the return type is the actual type of the property, the format is the
         /// actual format of the property, the bytes-after is the length of the property
         /// in bytes (even if the format is 16 or 32), and the value is empty.
-        @"type": Atom,
+        type: Atom,
         /// The returned value starts at this offset in 4-byte units
         offset: u32,
         /// The number of 4-byte units to read from the offset
@@ -1291,7 +1293,7 @@ pub const get_property = struct {
         value_format: u8,
         sequence: u16,
         word_len: u32,
-        @"type": Atom,
+        type: Atom,
         bytes_after: u32,
         /// Length of the value in `value_format` units
         value_count: u32,
@@ -1316,7 +1318,9 @@ pub const get_property = struct {
             return values_ptr_list[0..(self.value_count * num_bytes_in_value)];
         }
     };
-    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+    comptime {
+        std.debug.assert(@sizeOf(Reply) == 32);
+    }
 };
 
 pub const SyncMode = enum(u1) { synchronous = 0, asynchronous = 1 };

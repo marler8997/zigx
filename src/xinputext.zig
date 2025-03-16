@@ -38,9 +38,9 @@ pub const ExtOpcode = enum(u8) {
 pub const get_extension_version = struct {
     pub const non_list_len =
         2 // extension and command opcodes
-    + 2 // request length
-    + 2 // name length
-    + 2 // unused
+        + 2 // request length
+        + 2 // name length
+        + 2 // unused
     ;
     pub fn getLen(name_len: u16) u16 {
         return non_list_len + std.mem.alignForward(u16, name_len, 4);
@@ -75,12 +75,12 @@ pub const list_input_devices = struct {
 pub const change_property = struct {
     pub const non_list_len =
         2 // extension and command opcodes
-    + 2 // request length
-    + 2 // device id
-    + 2 // mode and format
-    + 4 // property atom
-    + 4 // type
-    + 4 // value length
+        + 2 // request length
+        + 2 // device id
+        + 2 // mode and format
+        + 4 // property atom
+        + 4 // type
+        + 4 // value length
     ;
     pub const Mode = enum(u8) {
         replace = 0,

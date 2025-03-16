@@ -7,7 +7,7 @@ pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromErr
 /// Sanity check that we're not running into data integrity (corruption) issues caused
 /// by overflowing and wrapping around to the front ofq the buffer.
 fn checkMessageLengthFitsInBuffer(message_length: usize, buffer_limit: usize) !void {
-    if(message_length > buffer_limit) {
+    if (message_length > buffer_limit) {
         std.debug.panic("Reply is bigger than our buffer (data corruption will ensue) {} > {}. In order to fix, increase the buffer size.", .{
             message_length,
             buffer_limit,

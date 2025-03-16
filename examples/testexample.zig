@@ -179,7 +179,7 @@ pub fn main() !u8 {
         x.get_property.serialize(&msg_buf, .{
             .window_id = ids.window(),
             .property = x.Atom.WM_NAME,
-            .@"type" = x.Atom.STRING,
+            .type = x.Atom.STRING,
             .offset = 0,
             .len = 64,
             .delete = false,
@@ -285,12 +285,7 @@ pub fn main() !u8 {
         }
     };
 
-
-    const opt_render_ext = try common.getExtensionInfo(
-        conn.sock,
-        &buf,
-        "RENDER"
-    );
+    const opt_render_ext = try common.getExtensionInfo(conn.sock, &buf, "RENDER");
     if (opt_render_ext) |render_ext| {
         const expected_version: common.ExtensionVersion = .{ .major_version = 0, .minor_version = 11 };
         {
@@ -305,7 +300,7 @@ pub fn main() !u8 {
         switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 const msg: *x.render.query_version.Reply = @ptrCast(msg_reply);
-                std.log.info("X RENDER extension: version {}.{}", .{msg.major_version, msg.minor_version});
+                std.log.info("X RENDER extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
                     std.log.err("X RENDER extension major version is {} but we expect {}", .{
                         msg.major_version,
@@ -330,11 +325,7 @@ pub fn main() !u8 {
         }
     }
 
-    const opt_test_ext = try common.getExtensionInfo(
-        conn.sock,
-        &buf,
-        "XTEST"
-    );
+    const opt_test_ext = try common.getExtensionInfo(conn.sock, &buf, "XTEST");
     if (opt_test_ext) |test_ext| {
         const expected_version: common.ExtensionVersion = .{ .major_version = 2, .minor_version = 2 };
         {
@@ -350,7 +341,7 @@ pub fn main() !u8 {
         switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 const msg: *x.testext.get_version.Reply = @ptrCast(msg_reply);
-                std.log.info("XTEST extension: version {}.{}", .{msg.major_version, msg.minor_version});
+                std.log.info("XTEST extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
                     std.log.err("XTEST extension major version is {} but we expect {}", .{
                         msg.major_version,
