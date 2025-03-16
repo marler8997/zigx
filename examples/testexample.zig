@@ -857,11 +857,12 @@ fn checkTestImageIsDrawnToWindow(
         //std.debug.print("pixel_value=0x{x}\n", .{pixel_value});
 
         // Assert test image pattern
+        const actual_pixel = 0xffffff & pixel_value;
         const expected_pixel = getTestImagePixel(height_index);
-        if (pixel_value != expected_pixel) {
-            std.log.err(
+        if (actual_pixel != expected_pixel) {
+            std.debug.panic(
                 "expected pixel at row {} to be 0x{x} but got 0x{x}",
-                .{ height_index, expected_pixel, pixel_value },
+                .{ height_index, expected_pixel, actual_pixel },
             );
         }
         //std.debug.assert(pixel_value == expected_pixel);
