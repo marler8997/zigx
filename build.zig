@@ -2,13 +2,13 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 const examples = [_][]const u8{
-    "examples/getserverfontnames.zig",
-    "examples/testexample.zig",
-    "examples/graphics.zig",
-    "examples/queryfont.zig",
-    "examples/example.zig",
-    "examples/fontviewer.zig",
-    "examples/input.zig",
+    "getserverfontnames",
+    "testexample",
+    "graphics",
+    "queryfont",
+    "example",
+    "fontviewer",
+    "input",
 };
 
 pub fn build(b: *std.Build) void {
@@ -23,12 +23,11 @@ pub fn build(b: *std.Build) void {
 
     const examples_step = b.step("examples", "");
 
-    for (examples) |example_file| {
-        const basename = std.fs.path.basename(example_file);
-        const name = basename[0 .. basename.len - std.fs.path.extension(basename).len];
-
+    inline for (examples) |example_name| {
+        // const basename = std.fs.path.basename(example_file);
+        // const name = basename[0 .. basename.len - std.fs.path.extension(basename).len];
         const example_mod = b.createModule(.{
-            .root_source_file = b.path(example_file),
+            .root_source_file = b.path("examples/" ++ example_name ++ ".zig"),
             .optimize = optimize,
             .target = target,
             .imports = &.{
@@ -37,13 +36,20 @@ pub fn build(b: *std.Build) void {
         });
 
         const exe = b.addExecutable(.{
-            .name = name,
+            .name = example_name,
             .root_module = example_mod,
         });
 
         const install = b.addInstallArtifact(exe, .{});
         examples_step.dependOn(&install.step);
         b.getInstallStep().dependOn(&install.step);
+
+        const run = b.addRunArtifact(exe);
+        run.step.dependOn(&install.step);
+        if (b.args) |args| {
+            run.addArgs(args);
+        }
+        b.step(example_name, "").dependOn(&run.step);
     }
 
     // This library is for C programs, not Zig programs
