@@ -1,15 +1,17 @@
 #!/usr/bin/env sh
 set -ex
 
-zig run getserverfontnames.zig > fontnames.txt
+zig build
+
+./zig-out/bin/getserverfontnames > fontnames.txt
 font=$(head -n 1 fontnames.txt)
 rm fontnames.txt
 
-zig run testexample.zig
-zig run graphics.zig
-zig run queryfont.zig -- $font > /dev/null
-zig run example.zig
-zig run fontviewer.zig
-zig run input.zig
+./zig-out/bin/testexample
+./zig-out/bin/graphics
+./zig-out/bin/queryfont $font > /dev/null
+./zig-out/bin/example
+./zig-out/bin/fontviewer
+./zig-out/bin/input
 
 echo Success
