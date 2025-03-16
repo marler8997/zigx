@@ -27,7 +27,7 @@ class Keysym:
             self.combined_name = name[2:len(name)-1]
         else:
             self.combined_name = name
-    
+
 class Charset:
     def __init__(self, name, code, spec_name, combined_prefix):
         self.name = name
@@ -60,7 +60,7 @@ charsets = (
     Charset("keyboardxkb", 254, "", "kbdxkb"),
     Charset("keyboard", 255, "Keyboard", "kbd"),
 )
-    
+
 def findCharset(spec_name):
     for charset in charsets:
         if charset.spec_name == spec_name:
@@ -127,7 +127,7 @@ def descToName(desc):
         return "_" + name
 
     return name_transforms.get(name, name)
-    
+
 lineno = 0
 for line in content.splitlines():
     lineno += 1
@@ -161,7 +161,7 @@ for line in content.splitlines():
     charset.keysyms.append(Keysym(code, desc, name))
 
 repo_dir = os.path.dirname(script_dir)
-zig_charset_dir = os.path.join(repo_dir, "charset")
+zig_charset_dir = os.path.join(repo_dir, "src", "charset")
 
 with open(os.path.join(repo_dir, "charset.zig"), "w") as zig_charset_file:
     for charset in charsets:
@@ -173,6 +173,8 @@ with open(os.path.join(repo_dir, "charset.zig"), "w") as zig_charset_file:
             out_file.write("pub const {} = enum(u8) {{\n".format(charset.type_name))
             for keysym in charset.keysyms:
                 out_file.write("    {} = {},\n".format(keysym.name, keysym.code))
+            if charset.keysyms:
+                out_file.write("\n")
             out_file.write(f"""
     pub fn toCombined(self: {charset.type_name}) Combined {{
         return @enumFromInt((@as(u16, {charset.code}) << 8) | @intFromEnum(self));
@@ -180,7 +182,7 @@ with open(os.path.join(repo_dir, "charset.zig"), "w") as zig_charset_file:
     pub fn next(self: {charset.type_name}) {charset.type_name} {{
         return @enumFromInt(@intFromEnum(self) + 1);
     }}
-""")
+"""[1:])
             out_file.write("};\n")
     zig_charset_file.write("pub const Combined = @import(\"charset/combined.zig\").Combined;\n");
     zig_charset_file.write("\n")
@@ -207,7 +209,7 @@ with open(os.path.join(repo_dir, "charset.zig"), "w") as zig_charset_file:
 #    }
 #""")
     zig_charset_file.write("};\n")
-    
+
 with open(os.path.join(zig_charset_dir, "combined.zig"), "w") as out_file:
     out_file.write("const Charset = @import(\"../charset.zig\").Charset;\n")
     out_file.write("pub const Combined = enum(u16) {\n")
