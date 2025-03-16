@@ -113,7 +113,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
         return reportError("failed to read connect setup with {s}", .{@errorName(err)});
 
     const fixed = connect_setup.fixed();
-    inline for (@typeInfo(@TypeOf(fixed.*)).Struct.fields) |field| {
+    inline for (@typeInfo(@TypeOf(fixed.*)).@"struct".fields) |field| {
         std.log.debug("{s}: {any}", .{ field.name, @field(fixed, field.name) });
     }
     //std.log.debug("vendor: {s}", .{try connect_setup.getVendorSlice(fixed.vendor_len)});
@@ -134,7 +134,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
     errdefer c_allocator.free(screens);
     for (screens, 0..) |*screen_dst, screen_index| {
         const screen_src = &setup_screens_ptr[screen_index];
-        inline for (@typeInfo(@TypeOf(screen_src.*)).Struct.fields) |field| {
+        inline for (@typeInfo(@TypeOf(screen_src.*)).@"struct".fields) |field| {
             std.log.debug("SCREEN {}| {s}: {any}", .{ screen_index, field.name, @field(screen_src, field.name) });
         }
         std.log.debug("screen_ptr is 0x{x}", .{@intFromPtr(screen_dst)});
