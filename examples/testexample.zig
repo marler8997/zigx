@@ -325,6 +325,49 @@ pub fn main() !u8 {
         }
     }
 
+    const opt_shape_ext = try common.getExtensionInfo(
+        conn.sock,
+        &buf,
+        "SHAPE"
+    );
+    if (opt_shape_ext) |shape_ext| {
+        const expected_version: common.ExtensionVersion = .{ .major_version = 1, .minor_version = 1 };
+
+        {
+            var msg: [x.shape.query_version.len]u8 = undefined;
+            x.shape.query_version.serialize(&msg, shape_ext.opcode);
+            try conn.send(&msg);
+        }
+
+        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+            .reply => |msg_reply| {
+                const msg: *x.shape.query_version.Reply = @ptrCast(msg_reply);
+                std.log.info("X SHAPE extension: version {}.{}", .{msg.major_version, msg.minor_version});
+                if (msg.major_version != expected_version.major_version) {
+                    std.log.err("X SHAPE extension major version is {} but we expect {}", .{
+                        msg.major_version,
+                        expected_version.major_version,
+                    });
+                    return 1;
+                }
+                if (msg.minor_version < expected_version.minor_version) {
+                    std.log.err("X SHAPE extension minor version is {}.{} but I've only tested >= {}.{})", .{
+                        msg.major_version,
+                        msg.minor_version,
+                        expected_version.major_version,
+                        expected_version.minor_version,
+                    });
+                    return 1;
+                }
+            },
+            else => |msg| {
+                std.log.err("expected a reply but got {}", .{msg});
+                return 1;
+            },
+        }
+    }
+
     const opt_test_ext = try common.getExtensionInfo(conn.sock, &buf, "XTEST");
     if (opt_test_ext) |test_ext| {
         const expected_version: common.ExtensionVersion = .{ .major_version = 2, .minor_version = 2 };

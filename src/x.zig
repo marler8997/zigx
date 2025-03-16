@@ -35,6 +35,7 @@ const windows = std.os.windows;
 pub const inputext = @import("xinputext.zig");
 pub const render = @import("xrender.zig");
 pub const dbe = @import("xdbe.zig");
+pub const shape = @import("xshape.zig");
 pub const testext = @import("xtest.zig");
 
 // Expose some helpful stuff
@@ -1749,12 +1750,13 @@ pub const poly_line = struct {
     }
 };
 
-pub const Rectangle = struct {
+pub const Rectangle = extern struct {
     x: i16,
     y: i16,
     width: u16,
     height: u16,
 };
+comptime { std.debug.assert(@sizeOf(Rectangle) == 8); }
 
 const poly_rectangle_common = struct {
     pub const non_list_len =
