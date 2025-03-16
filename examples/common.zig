@@ -15,12 +15,16 @@ fn checkMessageLengthFitsInBuffer(message_length: usize, buffer_limit: usize) !v
     }
 }
 
-pub fn send(sock: std.posix.socket_t, data: []const u8) !void {
+pub fn sendNoSequencing(sock: std.posix.socket_t, data: []const u8) !void {
     const sent = try x.writeSock(sock, data, 0);
     if (sent != data.len) {
         std.log.err("send {} only sent {}\n", .{ data.len, sent });
         return error.DidNotSendAllData;
     }
+}
+pub fn sendOne(sock: std.posix.socket_t, sequence: *u16, data: []const u8) !void {
+    try sendNoSequencing(sock, data);
+    sequence.* +%= 1;
 }
 
 pub const ConnectResult = struct {
@@ -29,8 +33,12 @@ pub const ConnectResult = struct {
     pub fn reader(self: ConnectResult) SocketReader {
         return .{ .context = self.sock };
     }
-    pub fn send(self: ConnectResult, data: []const u8) !void {
-        try common.send(self.sock, data);
+    pub fn sendOne(self: *const ConnectResult, sequence: *u16, data: []const u8) !void {
+        try common.sendNoSequencing(self.sock, data);
+        sequence.* +%= 1;
+    }
+    pub fn sendNoSequencing(self: *const ConnectResult, data: []const u8) !void {
+        try common.sendNoSequencing(self.sock, data);
     }
 };
 
@@ -56,7 +64,7 @@ pub fn connectSetup(
     std.debug.assert(msg.len == x.connect_setup.getLen(auth_name.len, auth_data.len));
 
     x.connect_setup.serialize(msg.ptr, 11, 0, auth_name, auth_data);
-    try send(sock, msg);
+    try sendNoSequencing(sock, msg);
 
     const reader = SocketReader{ .context = sock };
     const connect_setup_header = try x.readConnectSetupHeader(reader, .{});
@@ -217,6 +225,7 @@ pub const ExtensionVersion = struct {
 /// Determines whether the extension is available on the server.
 pub fn getExtensionInfo(
     sock: std.posix.socket_t,
+    sequence: *u16,
     buffer: *x.ContiguousReadBuffer,
     comptime extension_name: []const u8,
 ) !?ExtensionInfo {
@@ -227,7 +236,7 @@ pub fn getExtensionInfo(
         const ext_name = comptime x.Slice(u16, [*]const u8).initComptime(extension_name);
         var message_buffer: [x.query_extension.getLen(ext_name.len)]u8 = undefined;
         x.query_extension.serialize(&message_buffer, ext_name);
-        try common.send(sock, &message_buffer);
+        try common.sendOne(sock, sequence, &message_buffer);
     }
     const message_length = try x.readOneMsg(reader, @alignCast(buffer.nextReadBuffer()));
     try checkMessageLengthFitsInBuffer(message_length, buffer_limit);

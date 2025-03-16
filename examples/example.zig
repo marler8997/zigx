@@ -34,6 +34,7 @@ pub fn main() !u8 {
     };
 
     // TODO: maybe need to call conn.setup.verify or something?
+    var sequence: u16 = 0;
 
     const window_id = conn.setup.fixed().resource_id_base;
     {
@@ -72,7 +73,7 @@ pub fn main() !u8 {
             | x.event.keymap_state | x.event.exposure,
             //            .dont_propagate = 1,
         });
-        try conn.send(msg_buf[0..len]);
+        try conn.sendOne(&sequence, msg_buf[0..len]);
     }
 
     const bg_gc_id = window_id + 1;
@@ -84,7 +85,7 @@ pub fn main() !u8 {
         }, .{
             .foreground = screen.black_pixel,
         });
-        try conn.send(msg_buf[0..len]);
+        try conn.sendOne(&sequence, msg_buf[0..len]);
     }
     const fg_gc_id = window_id + 2;
     {
@@ -96,7 +97,7 @@ pub fn main() !u8 {
             .background = screen.black_pixel,
             .foreground = 0xffaadd,
         });
-        try conn.send(msg_buf[0..len]);
+        try conn.sendOne(&sequence, msg_buf[0..len]);
     }
 
     // get some font information
@@ -105,7 +106,7 @@ pub fn main() !u8 {
         const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
         x.query_text_extents.serialize(&msg, fg_gc_id, text);
-        try conn.send(&msg);
+        try conn.sendOne(&sequence, &msg);
     }
 
     const double_buf = try x.DoubleBuffer.init(
@@ -138,7 +139,7 @@ pub fn main() !u8 {
     {
         var msg: [x.map_window.len]u8 = undefined;
         x.map_window.serialize(&msg, window_id);
-        try conn.send(&msg);
+        try conn.sendOne(&sequence, &msg);
     }
 
     while (true) {
@@ -201,7 +202,7 @@ pub fn main() !u8 {
                 },
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
-                    try render(conn.sock, window_id, bg_gc_id, fg_gc_id, font_dims);
+                    try render(conn.sock, &sequence, window_id, bg_gc_id, fg_gc_id, font_dims);
                 },
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
@@ -227,7 +228,14 @@ const FontDims = struct {
     font_ascent: i16, // pixels up from the text basepoint to the top of the text
 };
 
-fn render(sock: std.posix.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u32, font_dims: FontDims) !void {
+fn render(
+    sock: std.posix.socket_t,
+    sequence: *u16,
+    drawable_id: u32,
+    bg_gc_id: u32,
+    fg_gc_id: u32,
+    font_dims: FontDims,
+) !void {
     {
         var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
         x.poly_fill_rectangle.serialize(&msg, .{
@@ -236,7 +244,7 @@ fn render(sock: std.posix.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u
         }, &[_]x.Rectangle{
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
         });
-        try common.send(sock, &msg);
+        try common.sendOne(sock, sequence, &msg);
     }
     {
         var msg: [x.clear_area.len]u8 = undefined;
@@ -246,7 +254,7 @@ fn render(sock: std.posix.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u
             .width = 100,
             .height = 100,
         });
-        try common.send(sock, &msg);
+        try common.sendOne(sock, sequence, &msg);
     }
     {
         const text_literal: []const u8 = "Hello X!";
@@ -261,6 +269,6 @@ fn render(sock: std.posix.socket_t, drawable_id: u32, bg_gc_id: u32, fg_gc_id: u
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
         });
-        try common.send(sock, &msg);
+        try common.sendOne(sock, sequence, &msg);
     }
 }

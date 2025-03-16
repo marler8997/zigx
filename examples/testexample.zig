@@ -64,15 +64,18 @@ fn getImageFormat(
     };
 }
 
-// const Conn = struct {
-//     sock: std.posix.socket_t,
-//     setup: x.ConnectSetup,
-// };
+fn expectSequence(expected_sequence: u16, reply: *const x.ServerMsg.Reply) void {
+    if (expected_sequence != reply.sequence) std.debug.panic(
+        "expected reply sequence {} but got {}",
+        .{ expected_sequence, reply },
+    );
+}
 
 pub fn main() !u8 {
     try x.wsaStartup();
     const conn = try common.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
+    var sequence: u16 = 0;
 
     const conn_setup_result = blk: {
         const fixed = conn.setup.fixed();
@@ -152,7 +155,7 @@ pub fn main() !u8 {
             | x.event.keymap_state | x.event.exposure | x.event.structure_notify,
             //            .dont_propagate = 1,
         });
-        try conn.send(msg_buf[0..len]);
+        try conn.sendOne(&sequence, msg_buf[0..len]);
     }
 
     const double_buf = try x.DoubleBuffer.init(
@@ -175,7 +178,7 @@ pub fn main() !u8 {
             .type = x.Atom.STRING,
             .values = window_name,
         });
-        try conn.send(msg_buf[0..]);
+        try conn.sendOne(&sequence, msg_buf[0..]);
     }
 
     // Test `get_property` by retrieving the property we just set
@@ -189,11 +192,12 @@ pub fn main() !u8 {
             .len = 64,
             .delete = false,
         });
-        try conn.send(msg_buf[0..]);
+        try conn.sendOne(&sequence, msg_buf[0..]);
     }
     _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
     switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
         .reply => |msg_reply| {
+            expectSequence(sequence, msg_reply);
             const msg: *x.get_property.Reply = @ptrCast(msg_reply);
             std.log.debug("get_property responded with: {}", .{msg});
             const opt_window_name = try msg.getValueBytes();
@@ -214,11 +218,12 @@ pub fn main() !u8 {
     {
         var msg_buf: [x.query_tree.len]u8 = undefined;
         x.query_tree.serialize(&msg_buf, screen.root);
-        try conn.send(msg_buf[0..]);
+        try conn.sendOne(&sequence, msg_buf[0..]);
     }
     _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
     switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
         .reply => |msg_reply| {
+            expectSequence(sequence, msg_reply);
             const msg: *x.query_tree.Reply = @ptrCast(msg_reply);
             std.log.debug("query_tree found {d} child windows", .{msg.num_windows});
 
@@ -246,7 +251,7 @@ pub fn main() !u8 {
         }, .{
             .foreground = screen.black_pixel,
         });
-        try conn.send(msg_buf[0..len]);
+        try conn.sendOne(&sequence, msg_buf[0..len]);
     }
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
@@ -259,7 +264,7 @@ pub fn main() !u8 {
             // prevent NoExposure events when we send CopyArea
             .graphics_exposures = false,
         });
-        try conn.send(msg_buf[0..len]);
+        try conn.sendOne(&sequence, msg_buf[0..len]);
     }
 
     // get some font information
@@ -268,13 +273,14 @@ pub fn main() !u8 {
         const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
         x.query_text_extents.serialize(&msg, ids.fg_gc(), text);
-        try conn.send(&msg);
+        try conn.sendOne(&sequence, &msg);
     }
 
     const font_dims: FontDims = blk: {
         _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
         switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
+                expectSequence(sequence, msg_reply);
                 const msg: *x.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
                 break :blk .{
                     .width = @intCast(msg.overall_width),
@@ -290,7 +296,7 @@ pub fn main() !u8 {
         }
     };
 
-    const opt_render_ext = try common.getExtensionInfo(conn.sock, &buf, "RENDER");
+    const opt_render_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, "RENDER");
     if (opt_render_ext) |render_ext| {
         const expected_version: common.ExtensionVersion = .{ .major_version = 0, .minor_version = 11 };
         {
@@ -299,11 +305,12 @@ pub fn main() !u8 {
                 .major_version = expected_version.major_version,
                 .minor_version = expected_version.minor_version,
             });
-            try conn.send(&msg);
+            try conn.sendOne(&sequence, &msg);
         }
         _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
         switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
+                expectSequence(sequence, msg_reply);
                 const msg: *x.render.query_version.Reply = @ptrCast(msg_reply);
                 std.log.info("X RENDER extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
@@ -330,25 +337,22 @@ pub fn main() !u8 {
         }
     }
 
-    const opt_shape_ext = try common.getExtensionInfo(
-        conn.sock,
-        &buf,
-        "SHAPE"
-    );
+    const opt_shape_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, "SHAPE");
     if (opt_shape_ext) |shape_ext| {
         const expected_version: common.ExtensionVersion = .{ .major_version = 1, .minor_version = 1 };
 
         {
             var msg: [x.shape.query_version.len]u8 = undefined;
             x.shape.query_version.serialize(&msg, shape_ext.opcode);
-            try conn.send(&msg);
+            try conn.sendOne(&sequence, &msg);
         }
 
         _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
         switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
+                expectSequence(sequence, msg_reply);
                 const msg: *x.shape.query_version.Reply = @ptrCast(msg_reply);
-                std.log.info("X SHAPE extension: version {}.{}", .{msg.major_version, msg.minor_version});
+                std.log.info("X SHAPE extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
                     std.log.err("X SHAPE extension major version is {} but we expect {}", .{
                         msg.major_version,
@@ -373,7 +377,7 @@ pub fn main() !u8 {
         }
     }
 
-    const opt_test_ext = try common.getExtensionInfo(conn.sock, &buf, "XTEST");
+    const opt_test_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, "XTEST");
     if (opt_test_ext) |test_ext| {
         const expected_version: common.ExtensionVersion = .{ .major_version = 2, .minor_version = 2 };
         {
@@ -383,11 +387,12 @@ pub fn main() !u8 {
                 .wanted_major_version = expected_version.major_version,
                 .wanted_minor_version = expected_version.minor_version,
             });
-            try conn.send(&msg);
+            try conn.sendOne(&sequence, &msg);
         }
         _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
         switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
+                expectSequence(sequence, msg_reply);
                 const msg: *x.testext.get_version.Reply = @ptrCast(msg_reply);
                 std.log.info("XTEST extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
@@ -417,7 +422,7 @@ pub fn main() !u8 {
     {
         var msg: [x.map_window.len]u8 = undefined;
         x.map_window.serialize(&msg, ids.window());
-        try conn.send(&msg);
+        try conn.sendOne(&sequence, &msg);
     }
 
     // Send a fake mouse left-click event
@@ -432,7 +437,7 @@ pub fn main() !u8 {
     //                 .device_id = null,
     //             },
     //         });
-    //         try conn.send(&msg);
+    //         try conn.sendOne(&sequence, &msg);
     //     }
 
     //     {
@@ -445,7 +450,7 @@ pub fn main() !u8 {
     //                 .device_id = null,
     //             },
     //         });
-    //         try conn.send(&msg);
+    //         try conn.sendOne(&sequence, &msg);
     //     }
     // }
 
@@ -459,8 +464,10 @@ pub fn main() !u8 {
         }, .{
             .stack_mode = .above,
         });
-        try conn.send(msg[0..len]);
+        try conn.sendOne(&sequence, msg[0..len]);
     }
+
+    var maybe_get_img_sequence: ?u16 = null;
 
     while (true) {
         {
@@ -491,12 +498,18 @@ pub fn main() !u8 {
                     return 1;
                 },
                 .reply => |msg| {
-                    if (true) @panic("todo: verify what request this is for");
+                    var handled = false;
+                    if (maybe_get_img_sequence) |s| {
+                        if (s == msg.sequence) {
+                            try checkTestImageIsDrawnToWindow(msg, conn_setup_result.image_format);
+                            maybe_get_img_sequence = null;
+                            handled = true;
+                        }
+                    }
 
-                    // We assume any reply here will be to the `get_image` request but
-                    // normally you would want some state machine sequencer to match up
-                    // requests with replies.
-                    try checkTestImageIsDrawnToWindow(msg, conn_setup_result.image_format);
+                    if (!handled) {
+                        std.debug.panic("unexpected reply {}", .{msg});
+                    }
                 },
                 .key_press => |msg| {
                     std.log.info("key_press: keycode={}", .{msg.keycode});
@@ -528,13 +541,14 @@ pub fn main() !u8 {
                     std.log.info("expose: {}", .{msg});
                     try render(
                         conn.sock,
+                        &sequence,
                         screen.root_depth,
                         conn_setup_result.image_format,
                         ids,
                         font_dims,
                     );
 
-                    {
+                    if (maybe_get_img_sequence == null) {
                         var get_image_msg: [x.get_image.len]u8 = undefined;
                         x.get_image.serialize(&get_image_msg, .{
                             .format = .z_pixmap,
@@ -546,10 +560,9 @@ pub fn main() !u8 {
                             .height = test_image.height,
                             .plane_mask = 0xffffffff,
                         });
-                        // We handle the reply to this request above (see `checkTestImageIsDrawnToWindow`)
-                        try common.send(conn.sock, &get_image_msg);
+                        try conn.sendOne(&sequence, &get_image_msg);
+                        maybe_get_img_sequence = sequence;
                     }
-
                 },
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
@@ -590,6 +603,7 @@ const FontDims = struct {
 
 fn render(
     sock: std.posix.socket_t,
+    sequence: *u16,
     depth: u8,
     image_format: ImageFormat,
     ids: Ids,
@@ -603,7 +617,7 @@ fn render(
         }, &[_]x.Rectangle{
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
         });
-        try common.send(sock, &msg);
+        try common.sendOne(sock, sequence, &msg);
     }
     {
         var msg: [x.clear_area.len]u8 = undefined;
@@ -613,10 +627,10 @@ fn render(
             .width = 100,
             .height = 100,
         });
-        try common.send(sock, &msg);
+        try common.sendOne(sock, sequence, &msg);
     }
 
-    try changeGcColor(sock, ids.fg_gc(), x.rgb24To(0xffaadd, depth));
+    try changeGcColor(sock, sequence, ids.fg_gc(), x.rgb24To(0xffaadd, depth));
     {
         const text_literal: []const u8 = "Hello X!";
         const text = x.Slice(u8, [*]const u8){ .ptr = text_literal.ptr, .len = text_literal.len };
@@ -630,10 +644,10 @@ fn render(
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
         });
-        try common.send(sock, &msg);
+        try common.sendOne(sock, sequence, &msg);
     }
 
-    try changeGcColor(sock, ids.fg_gc(), x.rgb24To(0x00ff00, depth));
+    try changeGcColor(sock, sequence, ids.fg_gc(), x.rgb24To(0x00ff00, depth));
     {
         const rectangles = [_]x.Rectangle{
             .{ .x = 20, .y = 20, .width = 15, .height = 15 },
@@ -644,9 +658,9 @@ fn render(
             .drawable_id = ids.window(),
             .gc_id = ids.fg_gc(),
         }, &rectangles);
-        try common.send(sock, &msg);
+        try common.sendOne(sock, sequence, &msg);
     }
-    try changeGcColor(sock, ids.fg_gc(), x.rgb24To(0x0000ff, depth));
+    try changeGcColor(sock, sequence, ids.fg_gc(), x.rgb24To(0x0000ff, depth));
     {
         const rectangles = [_]x.Rectangle{
             .{ .x = 60, .y = 20, .width = 15, .height = 15 },
@@ -657,7 +671,7 @@ fn render(
             .drawable_id = ids.window(),
             .gc_id = ids.fg_gc(),
         }, &rectangles);
-        try common.send(sock, &msg);
+        try common.sendOne(sock, sequence, &msg);
     }
 
     const test_image_scanline_len = blk: {
@@ -692,7 +706,7 @@ fn render(
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.send(sock, put_image_msg[0..x.put_image.getLen(test_image_data_len)]);
+        try common.sendOne(sock, sequence, put_image_msg[0..x.put_image.getLen(test_image_data_len)]);
 
         // test a pixmap
         {
@@ -704,7 +718,7 @@ fn render(
                 .width = test_image.width,
                 .height = test_image.height,
             });
-            try common.send(sock, &msg);
+            try common.sendOne(sock, sequence, &msg);
         }
         x.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
             .format = .z_pixmap,
@@ -717,7 +731,7 @@ fn render(
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.send(sock, put_image_msg[0..x.put_image.getLen(test_image_data_len)]);
+        try common.sendOne(sock, sequence, put_image_msg[0..x.put_image.getLen(test_image_data_len)]);
 
         {
             var msg: [x.copy_area.len]u8 = undefined;
@@ -732,23 +746,23 @@ fn render(
                 .width = test_image.width,
                 .height = test_image.height,
             });
-            try common.send(sock, &msg);
+            try common.sendOne(sock, sequence, &msg);
         }
 
         {
             var msg: [x.free_pixmap.len]u8 = undefined;
             x.free_pixmap.serialize(&msg, ids.pixmap());
-            try common.send(sock, &msg);
+            try common.sendOne(sock, sequence, &msg);
         }
     }
 }
 
-fn changeGcColor(sock: std.posix.socket_t, gc_id: u32, color: u32) !void {
+fn changeGcColor(sock: std.posix.socket_t, sequence: *u16, gc_id: u32, color: u32) !void {
     var msg_buf: [x.change_gc.max_len]u8 = undefined;
     const len = x.change_gc.serialize(&msg_buf, gc_id, .{
         .foreground = color,
     });
-    try common.send(sock, msg_buf[0..len]);
+    try common.sendOne(sock, sequence, msg_buf[0..len]);
 }
 
 fn getTestImagePixel(row: usize) u24 {
@@ -847,7 +861,7 @@ fn checkTestImageIsDrawnToWindow(
         if (pixel_value != expected_pixel) {
             std.log.err(
                 "expected pixel at row {} to be 0x{x} but got 0x{x}",
-                .{ height_index, expected_pixel, pixel_value},
+                .{ height_index, expected_pixel, pixel_value },
             );
         }
         //std.debug.assert(pixel_value == expected_pixel);

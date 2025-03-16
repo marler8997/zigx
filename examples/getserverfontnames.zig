@@ -17,7 +17,7 @@ pub fn main() !void {
         const pattern = x.Slice(u16, [*]const u8){ .ptr = pattern_string, .len = pattern_string.len };
         var msg: [x.list_fonts.getLen(pattern.len)]u8 = undefined;
         x.list_fonts.serialize(&msg, 0xffff, pattern);
-        try conn.send(&msg);
+        try conn.sendNoSequencing(&msg);
     }
 
     {

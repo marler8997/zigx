@@ -25,19 +25,20 @@ pub fn main() !u8 {
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     const font_id = conn.setup.fixed().resource_id_base;
+    var sequence: u16 = 0;
 
     {
         const font_name_slice = x.Slice(u16, [*]const u8){ .ptr = font_name.ptr, .len = @intCast(font_name.len) };
         const msg = try allocator.alloc(u8, x.open_font.getLen(font_name_slice.len));
         defer allocator.free(msg);
         x.open_font.serialize(msg.ptr, font_id, font_name_slice);
-        try conn.send(msg);
+        try conn.sendOne(&sequence, msg);
     }
 
     {
         var msg: [x.query_font.len]u8 = undefined;
         x.query_font.serialize(&msg, font_id);
-        try conn.send(&msg);
+        try conn.sendOne(&sequence, &msg);
     }
 
     const stdout = std.io.getStdOut().writer();
@@ -46,6 +47,7 @@ pub fn main() !u8 {
         defer allocator.free(msg_bytes);
         const msg = try common.asReply(x.ServerMsg.QueryFont, msg_bytes);
         try stdout.print("{}\n", .{msg});
+        std.debug.assert(sequence == msg.sequence);
         const lists = msg.lists();
         if (!lists.inBounds(msg.*)) {
             std.log.info("malformed QueryFont reply, list counts are not in bounds of the reply", .{});

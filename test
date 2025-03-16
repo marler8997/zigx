@@ -1,18 +1,16 @@
 #!/usr/bin/env sh
 set -ex
 
-rm -rf zig-out
-zig build examples
+rm -f zig-out/fontnames.txt
+zig build getserverfontnames > zig-out/fontnames.txt
+font=$(head -n 1 zig-out/fontnames.txt)
 
-./zig-out/bin/getserverfontnames > fontnames.txt
-font=$(head -n 1 fontnames.txt)
-rm fontnames.txt
+zig build queryfont -- $font > /dev/null
 
-./zig-out/bin/testexample
-./zig-out/bin/graphics
-./zig-out/bin/queryfont $font > /dev/null
-./zig-out/bin/example
-./zig-out/bin/fontviewer
-./zig-out/bin/input
+zig build example
+zig build fontviewer
+zig build input
+zig build graphics
+zig build testexample
 
 echo Success
