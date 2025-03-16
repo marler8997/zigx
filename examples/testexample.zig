@@ -64,6 +64,11 @@ fn getImageFormat(
     };
 }
 
+// const Conn = struct {
+//     sock: std.posix.socket_t,
+//     setup: x.ConnectSetup,
+// };
+
 pub fn main() !u8 {
     try x.wsaStartup();
     const conn = try common.connect(allocator);
@@ -486,8 +491,12 @@ pub fn main() !u8 {
                     return 1;
                 },
                 .reply => |msg| {
-                    std.log.info("todo: handle a reply message {}", .{msg});
-                    return error.TodoHandleReplyMessage;
+                    if (true) @panic("todo: verify what request this is for");
+
+                    // We assume any reply here will be to the `get_image` request but
+                    // normally you would want some state machine sequencer to match up
+                    // requests with replies.
+                    try checkTestImageIsDrawnToWindow(msg, conn_setup_result.image_format);
                 },
                 .key_press => |msg| {
                     std.log.info("key_press: keycode={}", .{msg.keycode});
@@ -524,6 +533,23 @@ pub fn main() !u8 {
                         ids,
                         font_dims,
                     );
+
+                    {
+                        var get_image_msg: [x.get_image.len]u8 = undefined;
+                        x.get_image.serialize(&get_image_msg, .{
+                            .format = .z_pixmap,
+                            .drawable_id = ids.window(),
+                            // Coords match where we drew the test image
+                            .x = 100,
+                            .y = 20,
+                            .width = test_image.width,
+                            .height = test_image.height,
+                            .plane_mask = 0xffffffff,
+                        });
+                        // We handle the reply to this request above (see `checkTestImageIsDrawnToWindow`)
+                        try common.send(conn.sock, &get_image_msg);
+                    }
+
                 },
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
@@ -540,6 +566,20 @@ pub fn main() !u8 {
         }
     }
 }
+
+const test_image = struct {
+    pub const width = 15;
+    pub const height = 15;
+
+    pub const max_bytes_per_pixel = 4;
+    const max_scanline_pad = 32;
+    pub const max_scanline_len = std.mem.alignForward(
+        u16,
+        max_bytes_per_pixel * width,
+        max_scanline_pad / 8, // max scanline pad
+    );
+    const max_data_len = height * max_scanline_len;
+};
 
 const FontDims = struct {
     width: u8,
@@ -619,20 +659,6 @@ fn render(
         }, &rectangles);
         try common.send(sock, &msg);
     }
-
-    const test_image = struct {
-        pub const width = 15;
-        pub const height = 15;
-
-        pub const max_bytes_per_pixel = 4;
-        const max_scanline_pad = 32;
-        pub const max_scanline_len = std.mem.alignForward(
-            u16,
-            max_bytes_per_pixel * width,
-            max_scanline_pad / 8, // max scanline pad
-        );
-        const max_data_len = height * max_scanline_len;
-    };
 
     const test_image_scanline_len = blk: {
         const bytes_per_pixel = image_format.bits_per_pixel / 8;
@@ -725,6 +751,12 @@ fn changeGcColor(sock: std.posix.socket_t, gc_id: u32, color: u32) !void {
     try common.send(sock, msg_buf[0..len]);
 }
 
+fn getTestImagePixel(row: usize) u24 {
+    if (row < 5) return 0xff0000;
+    if (row < 10) return 0xff00;
+    return 0xff;
+}
+
 fn populateTestImage(
     image_format: ImageFormat,
     width: u16,
@@ -736,14 +768,7 @@ fn populateTestImage(
     while (row < height) : (row += 1) {
         var data_off: usize = row * stride;
 
-        var color: u24 = 0;
-        if (row < 5) {
-            color |= 0xff0000;
-        } else if (row < 10) {
-            color |= 0xff00;
-        } else {
-            color |= 0xff;
-        }
+        const color: u24 = getTestImagePixel(row);
 
         var col: usize = 0;
         while (col < width) : (col += 1) {
@@ -770,5 +795,66 @@ fn populateTestImage(
             }
             data_off += (image_format.bits_per_pixel / 8);
         }
+    }
+}
+
+/// Grab the pixels from the window after we've rendered to it using `get_image` and
+/// check that the test image pattern was *actually* drawn to the window.
+fn checkTestImageIsDrawnToWindow(
+    msg_reply: *x.ServerMsg.Reply,
+    image_format: ImageFormat,
+) !void {
+    const msg: *x.get_image.Reply = @ptrCast(msg_reply);
+    const image_data = msg.getData();
+
+    // Given our request for an image with the width/height specified,
+    // make sure we got at least the right amount of data back to
+    // represent that size of image (there may also be padding at the
+    // end).
+    std.debug.assert(image_data.len >= (test_image.width * test_image.height * x.get_image.Reply.scanline_pad_bytes));
+    // Currently, we only support one image format that matches the root window depth
+    std.debug.assert(msg.depth == image_format.depth);
+
+    const bytes_per_pixel_in_data = x.get_image.Reply.scanline_pad_bytes;
+
+    var width_index: u16 = 0;
+    var height_index: u16 = 0;
+    var image_data_index: u32 = 0;
+    while ((image_data_index + bytes_per_pixel_in_data) < image_data.len) : (image_data_index += bytes_per_pixel_in_data) {
+        if (width_index >= test_image.width) {
+            // For Debugging: Print a newline after each row
+            // std.debug.print("\n", .{});
+            width_index = 0;
+            height_index += 1;
+        }
+
+        //  The image data might have padding on the end so make sure to stop when we expect the image to end
+        if (height_index >= test_image.height) {
+            break;
+        }
+
+        const padded_pixel_value = image_data[image_data_index..(image_data_index + bytes_per_pixel_in_data)];
+        const pixel_value = std.mem.readVarInt(
+            u32,
+            padded_pixel_value,
+            image_format.endian,
+        );
+        // For Debugging: Print out the pixels
+        //std.debug.print("pixel_value=0x{x}\n", .{pixel_value});
+
+        // Assert test image pattern
+        const expected_pixel = getTestImagePixel(height_index);
+        if (pixel_value != expected_pixel) {
+            std.log.err(
+                "expected pixel at row {} to be 0x{x} but got 0x{x}",
+                .{ height_index, expected_pixel, pixel_value},
+            );
+        }
+        //std.debug.assert(pixel_value == expected_pixel);
+        // if (height_index < 5) { std.debug.assert(pixel_value == 0xffff0000); }
+        // else if (height_index < 10) { std.debug.assert(pixel_value == 0xff00ff00); }
+        // else { std.debug.assert(pixel_value == 0xff0000ff); }
+
+        width_index += 1;
     }
 }
