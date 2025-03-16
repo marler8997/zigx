@@ -68,7 +68,11 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
 
             const fd = std.c.shm_open(
                 unique_name,
-                std.posix.O.RDWR | std.posix.O.CREAT | std.posix.O.EXCL,
+                @bitCast(std.posix.O{
+                    .ACCMODE = .RDWR,
+                    .CREAT = true,
+                    .EXCL = true,
+                }),
                 std.posix.S.IRUSR | std.posix.S.IWUSR,
             );
             if (fd == -1) switch (@as(std.posix.E, @enumFromInt(std.c._errno().*))) {

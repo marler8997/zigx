@@ -259,7 +259,7 @@ const State = struct {
         fonts: []x.Slice(u8, [*]const u8),
     ) !void {
         switch (self.exposed) {
-            .yes => @panic("not impl"),
+            .yes => {},
             .no => {
                 std.log.info("expose: {}", .{msg});
                 self.exposed = .{ .yes = .{ .idle = .{ .open_font_index = null } } };
