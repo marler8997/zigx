@@ -12,5 +12,6 @@ zig build fontviewer
 zig build input
 zig build graphics
 zig build testexample
+zig build hellox11
 
 echo Success

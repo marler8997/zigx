@@ -448,7 +448,7 @@ export fn XSelectInput(display: *c.Display, window: c.Window, event_mask: c_ulon
 
     var msg_buf: [x.change_window_attributes.max_len]u8 = undefined;
     const len = x.change_window_attributes.serialize(&msg_buf, window, .{
-        .event_mask = @intCast(event_mask),
+        .event_mask = @bitCast(@as(u32, @truncate(event_mask))),
     });
     sendAll(display.fd, msg_buf[0..len]) catch |err| {
         reportErrorRaw("failed to send ChangeWindowAttributes message with {s}", .{@errorName(err)});

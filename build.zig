@@ -85,6 +85,15 @@ pub fn build(b: *std.Build) void {
         exe.addIncludePath(b.path("include"));
         exe.linkLibC();
         exe.linkLibrary(x11_lib);
-        b.installArtifact(exe);
+
+        const install = b.addInstallArtifact(exe, .{});
+        b.getInstallStep().dependOn(&install.step);
+
+        const run = b.addRunArtifact(exe);
+        run.step.dependOn(&install.step);
+        if (b.args) |args| {
+            run.addArgs(args);
+        }
+        b.step("hellox11", "").dependOn(&run.step);
     }
 }
