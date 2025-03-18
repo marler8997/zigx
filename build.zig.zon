@@ -3,6 +3,11 @@
     .version = "0.0.0",
     .fingerprint = 0x8cdc16832b06463e,
     .minimum_zig_version = "0.14.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .celltype = .{
+            .url = "git+https://github.com/marler8997/CellType#8836a2e3d793bb8062890af071845b41c5b3f26b",
+            .hash = "celltype-0.0.0-hmHVU4JgAgC--FJ5ibbZKcHJBTERK0Y5gwh_ySRHZQV5",
+        },
+    },
     .paths = .{"."},
 }

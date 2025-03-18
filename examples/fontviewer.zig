@@ -1,6 +1,7 @@
 const std = @import("std");
 const x = @import("x");
 const common = @import("common.zig");
+const celltype = @import("celltype");
 
 pub const log_level = std.log.Level.info;
 
@@ -392,6 +393,7 @@ fn render(
     sock: std.posix.socket_t,
     sequence: *u16,
     ids: Ids,
+    image_format: ImageFormat,
     fonts: []x.Slice(u8, [*]const u8),
     font_index: usize,
     font_info: *const x.ServerMsg.QueryFont,
@@ -419,6 +421,27 @@ fn render(
     }
 
     const font_height = font_info.font_ascent + font_info.font_descent;
+
+    {
+        const width = 15;
+        const height = width * 2;
+        var grayscale: [width * height]u8 = undefined;
+        const config = celltype.Config{};
+        const len = celltype.renderText(
+            &config,
+            u16,
+            width,
+            height,
+            celltype.calcStrokeWidth(u16, width, height, celltype.default_weight),
+            &grayscale,
+            width,
+            .{ .output_precleared = false },
+            "A",
+        ) catch |err| switch (err) {
+            error.Utf8Decode => unreachable,
+        };
+        std.debug.assert(len == 1);
+    }
 
     try renderText(sock, sequence, ids.window(), ids.gcText(), 10, 10 + (font_height * 1), "font {}/{}", .{ font_index + 1, fonts.len });
     try renderText(sock, sequence, ids.window(), ids.gcText(), 10, 10 + (font_height * 2), "{s}", .{font_name});
