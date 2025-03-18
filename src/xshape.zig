@@ -37,8 +37,8 @@ pub const Ordering = enum(u8) {
 
 pub const query_version = struct {
     pub const len =
-              2 // extension and command opcodes
-            + 2 // request length
+        2 // extension and command opcodes
+        + 2 // request length
     ;
     pub fn serialize(buf: [*]u8, ext_opcode: u8) void {
         buf[0] = ext_opcode;
@@ -54,21 +54,22 @@ pub const query_version = struct {
         minor_version: u16,
         reserved: [20]u8,
     };
-    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+    comptime {
+        std.debug.assert(@sizeOf(Reply) == 32);
+    }
 };
-
 
 pub const rectangles = struct {
     pub const non_list_len =
-              2 // extension and command opcodes
-            + 2 // request length
-            + 1 // operation
-            + 1 // destination kind
-            + 1 // ordering
-            + 1 // unused
-            + 4 // destination window
-            + 2 // x offset
-            + 2 // y offset
+        2 // extension and command opcodes
+        + 2 // request length
+        + 1 // operation
+        + 1 // destination kind
+        + 1 // ordering
+        + 1 // unused
+        + 4 // destination window
+        + 2 // x offset
+        + 2 // y offset
     ;
     pub fn getLen(number_of_rectangles: u16) u16 {
         return non_list_len + (@sizeOf(x.Rectangle) * number_of_rectangles);
@@ -89,7 +90,7 @@ pub const rectangles = struct {
         x.writeIntNative(u16, buf + 2, len >> 2);
         buf[4] = @intFromEnum(args.operation);
         buf[5] = @intFromEnum(args.destination_kind);
-        buf[6] = @intFromEnum( args.ordering);
+        buf[6] = @intFromEnum(args.ordering);
         buf[7] = 0; // unused
         x.writeIntNative(u32, buf + 8, args.destination_window_id);
         x.writeIntNative(i16, buf + 12, args.x_offset);

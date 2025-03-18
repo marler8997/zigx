@@ -95,27 +95,29 @@ pub fn main() !u8 {
             .class = .input_output,
             .visual_id = screen.root_visual,
         }, .{
-            //            .bg_pixmap = .copy_from_parent,
+            // .bg_pixmap = .copy_from_parent,
             .bg_pixel = bg_color,
-            //            //.border_pixmap =
-            //            .border_pixel = 0x01fa8ec9,
-            //            .bit_gravity = .north_west,
-            //            .win_gravity = .east,
-            //            .backing_store = .when_mapped,
-            //            .backing_planes = 0x1234,
-            //            .backing_pixel = 0xbbeeeeff,
-            //            .override_redirect = true,
-            //            .save_under = true,
-            .event_mask = x.event.key_press | x.event.key_release | x.event.button_press | x.event.button_release | x.event.enter_window | x.event.leave_window | x.event.pointer_motion
-                //                | x.event.pointer_motion_hint WHAT THIS DO?
-                //                | x.event.button1_motion  WHAT THIS DO?
-                //                | x.event.button2_motion  WHAT THIS DO?
-                //                | x.event.button3_motion  WHAT THIS DO?
-                //                | x.event.button4_motion  WHAT THIS DO?
-                //                | x.event.button5_motion  WHAT THIS DO?
-                //                | x.event.button_motion  WHAT THIS DO?
-            | x.event.keymap_state | x.event.exposure,
-            //            .dont_propagate = 1,
+            // .border_pixmap =
+            // .border_pixel = 0x01fa8ec9,
+            // .bit_gravity = .north_west,
+            // .win_gravity = .east,
+            // .backing_store = .when_mapped,
+            // .backing_planes = 0x1234,
+            // .backing_pixel = 0xbbeeeeff,
+            // .override_redirect = true,
+            // .save_under = true,
+            .event_mask = .{
+                .key_press = 1,
+                .key_release = 1,
+                .button_press = 1,
+                .button_release = 1,
+                .enter_window = 1,
+                .leave_window = 1,
+                .pointer_motion = 1,
+                .keymap_state = 1,
+                .exposure = 1,
+            },
+            // .dont_propagate = 1,
         });
         try common.sendOne(conn.sock, &sequence, msg_buf[0..len]);
     }
@@ -632,7 +634,7 @@ const State = struct {
                     //.owner_events = true,
                     .owner_events = false,
                     .grab_window = grab_window,
-                    .event_mask = x.pointer_event.pointer_motion,
+                    .event_mask = .{ .pointer_motion = 1 },
                     .pointer_mode = .synchronous,
                     .keyboard_mode = .asynchronous,
                     .confine_to = if (self.confine_grab) grab_window else 0,

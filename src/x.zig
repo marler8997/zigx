@@ -851,6 +851,7 @@ fn optionToU32(value: anytype) u32 {
         else => {},
     }
     if (T == u32) return value;
+    if (T == EventMask) return @bitCast(value);
     if (T == ?u32) return value.?;
     if (T == u16) return @intCast(value);
     if (T == ?u16) return @intCast(value.?);
@@ -859,50 +860,52 @@ fn optionToU32(value: anytype) u32 {
     @compileError("TODO: implement optionToU32 for type: " ++ @typeName(T));
 }
 
-pub const event = struct {
-    pub const key_press = (1 << 0);
-    pub const key_release = (1 << 1);
-    pub const button_press = (1 << 2);
-    pub const button_release = (1 << 3);
-    pub const enter_window = (1 << 4);
-    pub const leave_window = (1 << 5);
-    pub const pointer_motion = (1 << 6);
-    pub const pointer_motion_hint = (1 << 7);
-    pub const button1_motion = (1 << 8);
-    pub const button2_motion = (1 << 9);
-    pub const button3_motion = (1 << 10);
-    pub const button4_motion = (1 << 11);
-    pub const button5_motion = (1 << 12);
-    pub const button_motion = (1 << 13);
-    pub const keymap_state = (1 << 14);
-    pub const exposure = (1 << 15);
-    pub const visibility_change = (1 << 16);
-    pub const structure_notify = (1 << 17);
-    pub const resize_redirect = (1 << 18);
-    pub const substructure_notify = (1 << 19);
-    pub const substructure_redirect = (1 << 20);
-    pub const focus_change = (1 << 21);
-    pub const property_change = (1 << 22);
-    pub const colormap_change = (1 << 23);
-    pub const owner_grab_button = (1 << 24);
-    pub const unused_mask: u32 = (0x7f << 25);
+pub const EventMask = packed struct(u32) {
+    key_press: u1 = 0,
+    key_release: u1 = 0,
+    button_press: u1 = 0,
+    button_release: u1 = 0,
+    enter_window: u1 = 0,
+    leave_window: u1 = 0,
+    pointer_motion: u1 = 0,
+    pointer_motion_hint: u1 = 0,
+    button1_motion: u1 = 0,
+    button2_motion: u1 = 0,
+    button3_motion: u1 = 0,
+    button4_motion: u1 = 0,
+    button5_motion: u1 = 0,
+    button_motion: u1 = 0,
+    keymap_state: u1 = 0,
+    exposure: u1 = 0,
+    visibility_change: u1 = 0,
+    structure_notify: u1 = 0,
+    resize_redirect: u1 = 0,
+    substructure_notify: u1 = 0,
+    substructure_redirect: u1 = 0,
+    focus_change: u1 = 0,
+    property_change: u1 = 0,
+    colormap_change: u1 = 0,
+    owner_grab_button: u1 = 0,
+    _reserved: u7 = 0,
 };
 
-pub const pointer_event = struct {
-    pub const button_press = event.button_press;
-    pub const button_release = event.button_release;
-    pub const enter_window = event.enter_window;
-    pub const leave_window = event.leave_window;
-    pub const pointer_motion = event.pointer_motion;
-    pub const pointer_motion_hint = event.pointer_motion_hint;
-    pub const button1_motion = event.button1_motion;
-    pub const button2_motion = event.button2_motion;
-    pub const button3_motion = event.button3_motion;
-    pub const button4_motion = event.button4_motion;
-    pub const button5_motion = event.button5_motion;
-    pub const button_motion = event.button_motion;
-    pub const keymap_state = event.keymap_state;
-    pub const unused_mask: u32 = 0xFFFF8003;
+pub const PointerEventMask = packed struct(u16) {
+    _unused_key_press: u1 = 0,
+    _unused_key_release: u1 = 0,
+    button_press: u1 = 0,
+    button_release: u1 = 0,
+    enter_window: u1 = 0,
+    leave_window: u1 = 0,
+    pointer_motion: u1 = 0,
+    pointer_motion_hint: u1 = 0,
+    button1_motion: u1 = 0,
+    button2_motion: u1 = 0,
+    button3_motion: u1 = 0,
+    button4_motion: u1 = 0,
+    button5_motion: u1 = 0,
+    button_motion: u1 = 0,
+    keymap_state: u1 = 0,
+    _unused_exposure: u1 = 0,
 };
 
 pub const window = struct {
@@ -941,7 +944,7 @@ pub const window = struct {
         backing_pixel: u32 = 0,
         override_redirect: bool = false,
         save_under: bool = false,
-        event_mask: u32 = 0,
+        event_mask: EventMask = .{},
         dont_propagate: u32 = 0,
         colormap: NonExhaustive(Colormap) = .copy_from_parent,
         cursor: Cursor = .none,
@@ -1332,7 +1335,7 @@ pub const grab_pointer = struct {
     pub const Args = struct {
         owner_events: bool,
         grab_window: u32,
-        event_mask: u16,
+        event_mask: PointerEventMask,
         pointer_mode: SyncMode,
         keyboard_mode: SyncMode,
         confine_to: u32, // 0 is none
@@ -1344,7 +1347,7 @@ pub const grab_pointer = struct {
         buf[1] = if (args.owner_events) 1 else 0;
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, args.grab_window);
-        writeIntNative(u16, buf + 8, args.event_mask);
+        writeIntNative(u16, buf + 8, @bitCast(args.event_mask));
         buf[10] = @intFromEnum(args.pointer_mode);
         buf[11] = @intFromEnum(args.keyboard_mode);
         writeIntNative(u32, buf + 12, args.confine_to);
@@ -1757,7 +1760,9 @@ pub const Rectangle = extern struct {
     width: u16,
     height: u16,
 };
-comptime { std.debug.assert(@sizeOf(Rectangle) == 8); }
+comptime {
+    std.debug.assert(@sizeOf(Rectangle) == 8);
+}
 
 const poly_rectangle_common = struct {
     pub const non_list_len =
@@ -1868,7 +1873,7 @@ pub const put_image = struct {
 
 pub const get_image = struct {
     pub const len =
-          1 // opcode
+        1 // opcode
         + 1 // format
         + 2 // request length
         + 4 // drawable id
@@ -1877,7 +1882,7 @@ pub const get_image = struct {
         + 2 // width
         + 2 // height
         + 4 // plane-mask
-        ;
+    ;
     pub const Args = struct {
         format: enum(u8) {
             xy_pixmap = 1,
@@ -1920,7 +1925,9 @@ pub const get_image = struct {
             return ptr[0..(self.reply_len * scanline_pad_bytes)];
         }
     };
-    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+    comptime {
+        std.debug.assert(@sizeOf(Reply) == 32);
+    }
 };
 
 pub const image_text8 = struct {

@@ -109,7 +109,7 @@ pub fn main() !u8 {
             .visual_id = screen.root_visual,
         }, .{
             .bg_pixel = 0xffffff,
-            .event_mask = x.event.key_press | x.event.exposure,
+            .event_mask = .{ .key_press = 1, .exposure = 1 },
         });
         try conn.sendOne(&sequence, msg_buf[0..len]);
     }
