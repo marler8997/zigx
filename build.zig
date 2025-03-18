@@ -21,6 +21,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/x.zig"),
     });
 
+    const celltype_dep = b.dependency("celltype", .{});
+    const celltype_mod = celltype_dep.module("celltype");
+
     const examples_step = b.step("examples", "");
 
     inline for (examples) |example_name| {
@@ -32,6 +35,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .imports = &.{
                 .{ .name = "x", .module = x_mod },
+                .{ .name = "celltype", .module = celltype_mod },
             },
         });
 
