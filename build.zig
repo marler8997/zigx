@@ -5,6 +5,7 @@ const examples = [_][]const u8{
     "getserverfontnames",
     "testexample",
     "graphics",
+    "images",
     "queryfont",
     "example",
     "fontviewer",
