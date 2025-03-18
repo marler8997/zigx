@@ -730,35 +730,45 @@ test "ConnectSetupMessage" {
     connect_setup.serialize(&buf, 1, 1, auth_name, auth_data);
 }
 
+pub const ResourceBase = enum(u32) {
+    _,
+
+    pub fn add(r: ResourceBase, offset: u32) Resource {
+        return @enumFromInt(@intFromEnum(r) + offset);
+    }
+
+    pub fn format(v: ResourceBase, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        try writer.print("ResourceBase({})", .{@intFromEnum(v)});
+    }
+};
+
 pub const Resource = enum(u32) {
     none = 0,
     _,
 
-    pub fn add(r: Resource, offset: u32) Resource {
-        return @enumFromInt(@intFromEnum(r) + offset);
-    }
-
-    pub fn asWindow(r: Resource) Window {
+    pub fn window(r: Resource) Window {
         return @enumFromInt(@intFromEnum(r));
     }
 
-    pub fn asDrawable(r: Resource) Drawable {
+    pub fn drawable(r: Resource) Drawable {
         return @enumFromInt(@intFromEnum(r));
     }
 
-    pub fn asFont(r: Resource) Font {
+    pub fn font(r: Resource) Font {
         return @enumFromInt(@intFromEnum(r));
     }
 
-    pub fn asFontable(r: Resource) Fontable {
+    pub fn fontable(r: Resource) Fontable {
         return @enumFromInt(@intFromEnum(r));
     }
 
-    pub fn asGraphicsContext(r: Resource) GraphicsContext {
+    pub fn graphicsContext(r: Resource) GraphicsContext {
         return @enumFromInt(@intFromEnum(r));
     }
 
-    pub fn asPixMap(r: Resource) PixMap {
+    pub fn pixmap(r: Resource) Pixmap {
         return @enumFromInt(@intFromEnum(r));
     }
 
@@ -804,7 +814,7 @@ pub const Window = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub fn asDrawable(w: Window) Drawable {
+    pub fn drawable(w: Window) Drawable {
         return @enumFromInt(@intFromEnum(w));
     }
 
@@ -846,7 +856,7 @@ pub const Font = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub fn asFontable(f: Font) Fontable {
+    pub fn fontable(f: Font) Fontable {
         return @enumFromInt(@intFromEnum(f));
     }
 
@@ -869,11 +879,11 @@ pub const Fontable = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub fn asGraphicsContext(f: Fontable) GraphicsContext {
+    pub fn graphicsContext(f: Fontable) GraphicsContext {
         return @enumFromInt(@intFromEnum(f));
     }
 
-    pub fn asFont(f: Fontable) Font {
+    pub fn font(f: Fontable) Font {
         return @enumFromInt(@intFromEnum(f));
     }
 
@@ -926,25 +936,25 @@ pub const Visual = enum(u32) {
     }
 };
 
-pub const PixMap = enum(u32) {
+pub const Pixmap = enum(u32) {
     none = 0,
     _,
 
-    pub fn fromInt(i: u32) PixMap {
+    pub fn fromInt(i: u32) Pixmap {
         return @enumFromInt(i);
     }
 
-    pub fn asDrawable(p: PixMap) Drawable {
+    pub fn drawable(p: Pixmap) Drawable {
         return @enumFromInt(@intFromEnum(p));
     }
 
-    pub fn format(v: PixMap, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(v: Pixmap, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = opt;
         if (v == .none) {
-            try writer.writeAll("PixMap(<none>)");
+            try writer.writeAll("Pixmap(<none>)");
         } else {
-            try writer.print("PixMap({})", .{@intFromEnum(v)});
+            try writer.print("Pixmap({})", .{@intFromEnum(v)});
         }
     }
 };
@@ -959,7 +969,7 @@ pub const GraphicsContext = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub fn asFontable(g: GraphicsContext) Fontable {
+    pub fn fontable(g: GraphicsContext) Fontable {
         return @enumFromInt(@intFromEnum(g));
     }
 
@@ -1779,8 +1789,8 @@ pub const GcOptions = struct {
     // fill_style solid
     // fill_rule even_odd
     // arc_mode pie_slice
-    // tile: ?PixMap = null,
-    // stipple: ?PixMap = null,
+    // tile: ?Pixmap = null,
+    // stipple: ?Pixmap = null,
     // tile_stipple_x_origin 0
     // tile_stipple_y_origin 0
     font: ?Font = null,
@@ -1836,7 +1846,7 @@ pub fn createOrChangeGcSerialize(buf: [*]u8, gc_id: GraphicsContext, variant: Gc
 pub const create_pixmap = struct {
     pub const len = 16;
     pub const Args = struct {
-        id: PixMap,
+        id: Pixmap,
         drawable_id: Drawable,
         depth: u8,
         width: u16,
@@ -1855,7 +1865,7 @@ pub const create_pixmap = struct {
 
 pub const free_pixmap = struct {
     pub const len = 8;
-    pub fn serialize(buf: [*]u8, id: PixMap) void {
+    pub fn serialize(buf: [*]u8, id: Pixmap) void {
         buf[0] = @intFromEnum(Opcode.free_pixmap);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
@@ -3105,7 +3115,7 @@ pub const ConnectSetup = struct {
     /// All the connect setup fields that are at fixed offsets
     pub const Fixed = extern struct {
         release_number: u32,
-        resource_id_base: Resource,
+        resource_id_base: ResourceBase,
         resource_id_mask: u32,
         motion_buffer_size: u32,
         vendor_len: u16,

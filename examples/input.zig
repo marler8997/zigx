@@ -20,6 +20,23 @@ const Key = enum {
 const bg_color = 0x231a20;
 const fg_color = 0xadccfa;
 
+const Ids = struct {
+    base: x.ResourceBase,
+
+    pub fn window(self: Ids) x.Window {
+        return self.base.add(0).window();
+    }
+    pub fn bg(self: Ids) x.GraphicsContext {
+        return self.base.add(1).graphicsContext();
+    }
+    pub fn fg(self: Ids) x.GraphicsContext {
+        return self.base.add(2).graphicsContext();
+    }
+    pub fn childWindow(self: Ids) x.Window {
+        return self.base.add(3).window();
+    }
+};
+
 pub fn main() !u8 {
     try x.wsaStartup();
     const conn = try common.connect(allocator);
@@ -80,12 +97,12 @@ pub fn main() !u8 {
     };
 
     // TODO: maybe need to call conn.setup.verify or something?
-    const base_resource = conn.setup.fixed().resource_id_base;
-    const window_id = base_resource.asWindow();
+    const ids: Ids = .{ .base = conn.setup.fixed().resource_id_base };
+
     {
         var msg_buf: [x.create_window.max_len]u8 = undefined;
         const len = x.create_window.serialize(&msg_buf, .{
-            .window_id = window_id,
+            .window_id = ids.window(),
             .parent_window_id = screen.root,
             .depth = 0, // dont care, inherit from parent
             .x = 0,
@@ -123,14 +140,11 @@ pub fn main() !u8 {
         try common.sendOne(conn.sock, &sequence, msg_buf[0..len]);
     }
 
-    const bg_gc_id = base_resource.add(1).asGraphicsContext();
-    const fg_gc_id = base_resource.add(2).asGraphicsContext();
-    const child_window_id = base_resource.add(3).asWindow();
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
-            .gc_id = bg_gc_id,
-            .drawable_id = window_id.asDrawable(),
+            .gc_id = ids.bg(),
+            .drawable_id = ids.window().drawable(),
         }, .{
             .foreground = fg_color,
         });
@@ -139,8 +153,8 @@ pub fn main() !u8 {
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
-            .gc_id = fg_gc_id,
-            .drawable_id = window_id.asDrawable(),
+            .gc_id = ids.fg(),
+            .drawable_id = ids.window().drawable(),
         }, .{
             .background = bg_color,
             .foreground = fg_color,
@@ -153,7 +167,7 @@ pub fn main() !u8 {
         const text_literal = [_]u16{'m'};
         const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
-        x.query_text_extents.serialize(&msg, fg_gc_id.asFontable(), text);
+        x.query_text_extents.serialize(&msg, ids.fg().fontable(), text);
         try common.sendOne(conn.sock, &sequence, &msg);
     }
 
@@ -186,7 +200,7 @@ pub fn main() !u8 {
 
     {
         var msg: [x.map_window.len]u8 = undefined;
-        x.map_window.serialize(&msg, window_id);
+        x.map_window.serialize(&msg, ids.window());
         try common.sendOne(conn.sock, &sequence, &msg);
     }
     var state = State{};
@@ -225,9 +239,9 @@ pub fn main() !u8 {
                         &sequence,
                         &state,
                         msg,
-                        window_id,
-                        bg_gc_id,
-                        fg_gc_id,
+                        ids.window(),
+                        ids.bg(),
+                        ids.fg(),
                         font_dims,
                     );
                     if (!handled) {
@@ -235,14 +249,14 @@ pub fn main() !u8 {
                         std.process.exit(0xff);
                     }
                     // just always do another render, it's *probably* needed
-                    try render(conn.sock, &sequence, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                    try render(conn.sock, &sequence, ids.window(), ids.bg(), ids.fg(), font_dims, state);
                 },
                 .key_press => |msg| {
                     var do_render = true;
                     if (keycode_map.get(msg.keycode)) |key| switch (key) {
                         .g => {
                             //try state.toggleGrab(conn.sock, screen.root);
-                            try state.toggleGrab(conn.sock, &sequence, window_id);
+                            try state.toggleGrab(conn.sock, &sequence, ids.window());
                         },
                         .w => {
                             try warpPointer(conn.sock, &sequence);
@@ -251,7 +265,7 @@ pub fn main() !u8 {
                             state.confine_grab = !state.confine_grab;
                         },
                         .i => {
-                            try createWindow(conn.sock, &sequence, screen.root, child_window_id);
+                            try createWindow(conn.sock, &sequence, screen.root, ids.childWindow());
                         },
                         .d => {
                             try disableInputDevice(conn.sock, &sequence, &state);
@@ -265,7 +279,7 @@ pub fn main() !u8 {
                         do_render = false;
                     }
                     if (do_render) {
-                        try render(conn.sock, &sequence, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                        try render(conn.sock, &sequence, ids.window(), ids.bg(), ids.fg(), font_dims, state);
                     }
                 },
                 .key_release => |msg| {
@@ -290,14 +304,14 @@ pub fn main() !u8 {
                     state.pointer_root_pos.y = msg.root_y;
                     state.pointer_event_pos.x = msg.event_x;
                     state.pointer_event_pos.y = msg.event_y;
-                    try render(conn.sock, &sequence, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                    try render(conn.sock, &sequence, ids.window(), ids.bg(), ids.fg(), font_dims, state);
                 },
                 .keymap_notify => |msg| {
                     std.log.info("keymap_state: {}", .{msg});
                 },
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
-                    try render(conn.sock, &sequence, window_id, bg_gc_id, fg_gc_id, font_dims, state);
+                    try render(conn.sock, &sequence, ids.window(), ids.bg(), ids.fg(), font_dims, state);
                 },
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
@@ -709,7 +723,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        window_id.asDrawable(),
+        window_id.drawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (0 * font_dims.height),
@@ -722,7 +736,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        window_id.asDrawable(),
+        window_id.drawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (1 * font_dims.height),
@@ -740,7 +754,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        window_id.asDrawable(),
+        window_id.drawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (2 * font_dims.height),
@@ -750,7 +764,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        window_id.asDrawable(),
+        window_id.drawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (3 * font_dims.height),
@@ -760,7 +774,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        window_id.asDrawable(),
+        window_id.drawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (4 * font_dims.height),
@@ -770,7 +784,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        window_id.asDrawable(),
+        window_id.drawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (5 * font_dims.height),
@@ -792,7 +806,7 @@ fn render(
         try renderString(
             sock,
             sequence,
-            window_id.asDrawable(),
+            window_id.drawable(),
             fg_gc_id,
             font_dims.font_left,
             font_dims.font_ascent + (6 * font_dims.height),

@@ -8,6 +8,19 @@ const allocator = arena.allocator();
 const window_width = 400;
 const window_height = 400;
 
+const Ids = struct {
+    base: x.ResourceBase,
+    pub fn window(self: Ids) x.Window {
+        return self.base.add(0).window();
+    }
+    pub fn bg_gc(self: Ids) x.GraphicsContext {
+        return self.base.add(1).graphicsContext();
+    }
+    pub fn fg_gc(self: Ids) x.GraphicsContext {
+        return self.base.add(2).graphicsContext();
+    }
+};
+
 pub fn main() !u8 {
     try x.wsaStartup();
     const conn = try common.connect(allocator);
@@ -36,12 +49,12 @@ pub fn main() !u8 {
     // TODO: maybe need to call conn.setup.verify or something?
     var sequence: u16 = 0;
 
-    const resource_base = conn.setup.fixed().resource_id_base;
-    const window_id = resource_base.asWindow();
+    const ids: Ids = .{ .base = conn.setup.fixed().resource_id_base };
+
     {
         var msg_buf: [x.create_window.max_len]u8 = undefined;
         const len = x.create_window.serialize(&msg_buf, .{
-            .window_id = window_id,
+            .window_id = ids.window(),
             .parent_window_id = screen.root,
             .depth = 0, // we don't care, just inherit from the parent
             .x = 0,
@@ -79,23 +92,21 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, msg_buf[0..len]);
     }
 
-    const bg_gc_id = resource_base.add(1).asGraphicsContext();
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
-            .gc_id = bg_gc_id,
-            .drawable_id = window_id.asDrawable(),
+            .gc_id = ids.bg_gc(),
+            .drawable_id = ids.window().drawable(),
         }, .{
             .foreground = screen.black_pixel,
         });
         try conn.sendOne(&sequence, msg_buf[0..len]);
     }
-    const fg_gc_id = resource_base.add(2).asGraphicsContext();
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
-            .gc_id = fg_gc_id,
-            .drawable_id = window_id.asDrawable(),
+            .gc_id = ids.fg_gc(),
+            .drawable_id = ids.window().drawable(),
         }, .{
             .background = screen.black_pixel,
             .foreground = 0xffaadd,
@@ -108,7 +119,7 @@ pub fn main() !u8 {
         const text_literal = [_]u16{'m'};
         const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
-        x.query_text_extents.serialize(&msg, fg_gc_id.asFontable(), text);
+        x.query_text_extents.serialize(&msg, ids.fg_gc().fontable(), text);
         try conn.sendOne(&sequence, &msg);
     }
 
@@ -141,7 +152,7 @@ pub fn main() !u8 {
 
     {
         var msg: [x.map_window.len]u8 = undefined;
-        x.map_window.serialize(&msg, window_id);
+        x.map_window.serialize(&msg, ids.window());
         try conn.sendOne(&sequence, &msg);
     }
 
@@ -205,7 +216,7 @@ pub fn main() !u8 {
                 },
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
-                    try render(conn.sock, &sequence, window_id, bg_gc_id, fg_gc_id, font_dims);
+                    try render(conn.sock, &sequence, ids.window(), ids.bg_gc(), ids.fg_gc(), font_dims);
                 },
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
@@ -242,7 +253,7 @@ fn render(
     {
         var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
         x.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = window_id.asDrawable(),
+            .drawable_id = window_id.drawable(),
             .gc_id = bg_gc_id,
         }, &[_]x.Rectangle{
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
@@ -267,7 +278,7 @@ fn render(
         const text_width = font_dims.width * text_literal.len;
 
         x.image_text8.serialize(&msg, text, .{
-            .drawable_id = window_id.asDrawable(),
+            .drawable_id = window_id.drawable(),
             .gc_id = fg_gc_id,
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
