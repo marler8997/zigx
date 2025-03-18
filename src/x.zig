@@ -881,22 +881,23 @@ pub const PointerEventMask = packed struct(u16) {
 };
 
 pub const window = struct {
-    pub const option_flags = struct {
-        pub const bg_pixmap: u32 = (1 << 0);
-        pub const bg_pixel: u32 = (1 << 1);
-        pub const border_pixmap: u32 = (1 << 2);
-        pub const border_pixel: u32 = (1 << 3);
-        pub const bit_gravity: u32 = (1 << 4);
-        pub const win_gravity: u32 = (1 << 5);
-        pub const backing_store: u32 = (1 << 6);
-        pub const backing_planes: u32 = (1 << 7);
-        pub const backing_pixel: u32 = (1 << 8);
-        pub const override_redirect: u32 = (1 << 9);
-        pub const save_under: u32 = (1 << 10);
-        pub const event_mask: u32 = (1 << 11);
-        pub const dont_propagate: u32 = (1 << 12);
-        pub const colormap: u32 = (1 << 13);
-        pub const cursor: u32 = (1 << 14);
+    pub const OptionMask = packed struct(u32) {
+        bg_pixmap: u1 = 0,
+        bg_pixel: u1 = 0,
+        border_pixmap: u1 = 0,
+        border_pixel: u1 = 0,
+        bit_gravity: u1 = 0,
+        win_gravity: u1 = 0,
+        backing_store: u1 = 0,
+        backing_planes: u1 = 0,
+        backing_pixel: u1 = 0,
+        override_redirect: u1 = 0,
+        save_under: u1 = 0,
+        event_mask: u1 = 0,
+        dont_propagate: u1 = 0,
+        colormap: u1 = 0,
+        cursor: u1 = 0,
+        _unused: u17 = 0,
     };
 
     pub const BgPixmap = enum(u32) { none = 0, copy_from_parent = 1 };
@@ -971,17 +972,17 @@ pub const create_window = struct {
         writeIntNative(u32, buf + 24, args.visual_id);
 
         var request_len: u16 = non_option_len;
-        var option_mask: u32 = 0;
+        var option_mask: window.OptionMask = .{};
 
         inline for (std.meta.fields(window.Options)) |field| {
             if (!isDefaultValue(options, field)) {
                 writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
-                option_mask |= @field(window.option_flags, field.name);
+                @field(option_mask, field.name) = 1;
                 request_len += 4;
             }
         }
 
-        writeIntNative(u32, buf + 28, option_mask);
+        writeIntNative(u32, buf + 28, @bitCast(option_mask));
         std.debug.assert((request_len & 0x3) == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
         return request_len;
@@ -1004,17 +1005,17 @@ pub const change_window_attributes = struct {
 
         writeIntNative(u32, buf + 4, window_id);
         var request_len: u16 = non_option_len;
-        var option_mask: u32 = 0;
+        var option_mask: window.OptionMask = .{};
 
         inline for (std.meta.fields(window.Options)) |field| {
             if (!isDefaultValue(options, field)) {
                 writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
-                option_mask |= @field(window.option_flags, field.name);
+                @field(option_mask, field.name) = 1;
                 request_len += 4;
             }
         }
 
-        writeIntNative(u32, buf + 8, option_mask);
+        writeIntNative(u32, buf + 8, @bitCast(option_mask));
         std.debug.assert((request_len & 0x3) == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
         return request_len;
@@ -1080,14 +1081,15 @@ pub const configure_window = struct {
         window_id: u32,
     };
 
-    pub const option_flags = struct {
-        pub const x: u16 = (1 << 0);
-        pub const y: u16 = (1 << 1);
-        pub const width: u16 = (1 << 2);
-        pub const height: u16 = (1 << 3);
-        pub const border_width: u16 = (1 << 4);
-        pub const sibling: u16 = (1 << 5);
-        pub const stack_mode: u16 = (1 << 6);
+    pub const OptionMask = packed struct(u32) {
+        x: u1 = 0,
+        y: u1 = 0,
+        width: u1 = 0,
+        height: u1 = 0,
+        border_width: u1 = 0,
+        sibling: u1 = 0,
+        stack_mode: u1 = 0,
+        _unused: u25 = 0,
     };
     pub const Options = struct {
         x: ?i16 = null,
@@ -1107,17 +1109,17 @@ pub const configure_window = struct {
         // buf[8-9] is the option_mask, set at the end of the function
 
         var request_len: u16 = non_option_len;
-        var option_mask: u32 = 0;
+        var option_mask: OptionMask = .{};
 
         inline for (std.meta.fields(Options)) |field| {
             if (!isDefaultValue(options, field)) {
                 writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
-                option_mask |= @field(option_flags, field.name);
+                @field(option_mask, field.name) = 1;
                 request_len += 4;
             }
         }
 
-        writeIntNative(u32, buf + 8, option_mask);
+        writeIntNative(u32, buf + 8, @bitCast(option_mask));
         std.debug.assert((request_len & 0x3) == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
         return request_len;
@@ -1466,30 +1468,31 @@ pub const get_font_path = struct {
 };
 
 pub const gc_option_count = 23;
-pub const gc_option_flag = struct {
-    pub const function: u32 = (1 << 0);
-    pub const plane_mask: u32 = (1 << 1);
-    pub const foreground: u32 = (1 << 2);
-    pub const background: u32 = (1 << 3);
-    pub const line_width: u32 = (1 << 4);
-    pub const line_style: u32 = (1 << 5);
-    pub const cap_style: u32 = (1 << 6);
-    pub const join_style: u32 = (1 << 7);
-    pub const fill_style: u32 = (1 << 8);
-    pub const fill_rule: u32 = (1 << 9);
-    pub const title: u32 = (1 << 10);
-    pub const stipple: u32 = (1 << 11);
-    pub const tile_stipple_x_origin: u32 = (1 << 12);
-    pub const tile_stipple_y_origin: u32 = (1 << 13);
-    pub const font: u32 = (1 << 14);
-    pub const subwindow_mode: u32 = (1 << 15);
-    pub const graphics_exposures: u32 = (1 << 16);
-    pub const clip_x_origin: u32 = (1 << 17);
-    pub const clip_y_origin: u32 = (1 << 18);
-    pub const clip_mask: u32 = (1 << 19);
-    pub const dash_offset: u32 = (1 << 20);
-    pub const dashes: u32 = (1 << 21);
-    pub const arc_mode: u32 = (1 << 22);
+pub const GcOptionMask = packed struct(u32) {
+    function: u1 = 0,
+    plane_mask: u1 = 0,
+    foreground: u1 = 0,
+    background: u1 = 0,
+    line_width: u1 = 0,
+    line_style: u1 = 0,
+    cap_style: u1 = 0,
+    join_style: u1 = 0,
+    fill_style: u1 = 0,
+    fill_rule: u1 = 0,
+    title: u1 = 0,
+    stipple: u1 = 0,
+    tile_stipple_x_origin: u1 = 0,
+    tile_stipple_y_origin: u1 = 0,
+    font: u1 = 0,
+    subwindow_mode: u1 = 0,
+    graphics_exposures: u1 = 0,
+    clip_x_origin: u1 = 0,
+    clip_y_origin: u1 = 0,
+    clip_mask: u1 = 0,
+    dash_offset: u1 = 0,
+    dashes: u1 = 0,
+    arc_mode: u1 = 0,
+    _unused: u9 = 0,
 };
 pub const GcOptions = struct {
     // TODO: add all the options
@@ -1542,18 +1545,18 @@ pub fn createOrChangeGcSerialize(buf: [*]u8, gc_id: u32, variant: GcVariant, opt
             .change => break :blk change_gc.non_option_len,
         }
     };
-    var option_mask: u32 = 0;
+    var option_mask: GcOptionMask = .{};
     var request_len: u16 = non_option_len;
 
     inline for (std.meta.fields(GcOptions)) |field| {
         if (!isDefaultValue(options, field)) {
             writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
-            option_mask |= @field(gc_option_flag, field.name);
+            @field(option_mask, field.name) = 1;
             request_len += 4;
         }
     }
 
-    writeIntNative(u32, buf + non_option_len - 4, option_mask);
+    writeIntNative(u32, buf + non_option_len - 4, @bitCast(option_mask));
     std.debug.assert((request_len & 0x3) == 0);
     writeIntNative(u16, buf + 2, request_len >> 2);
     return request_len;
