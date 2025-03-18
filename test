@@ -2,6 +2,7 @@
 set -ex
 
 rm -f zig-out/fontnames.txt
+mkdir -p zig-out
 zig build getserverfontnames > zig-out/fontnames.txt
 font=$(head -n 1 zig-out/fontnames.txt)
 

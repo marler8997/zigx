@@ -15,7 +15,9 @@ const empty_mem: [0]u8 align(std.heap.page_size_min) = .{};
 pub fn init(filename: []const u8, opt: Options) !MappedFile {
     var file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
-    const file_size = try file.getEndPos();
+    const file_size_u64: u64 = try file.getEndPos();
+
+    const file_size: usize = std.math.cast(usize, file_size_u64) orelse return error.FileTooBig;
 
     if (builtin.os.tag == .windows) {
         if (file_size == 0) return MappedFile{
