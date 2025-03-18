@@ -105,16 +105,6 @@ pub fn getDisplay() []const u8 {
     return posix.getenv("DISPLAY") orelse ":0";
 }
 
-// Return: display if set, otherwise the environment variable DISPLAY
-//pub fn getDisplay(display: anytype) @TypeOf(display) {
-//    if (display.length == 0) {
-//        const env = posix.getenv("DISPLAY");
-//        if (@TypeOf(display) == []const u8)
-//            return env else "";
-//        @compileError("display string type not implemented");
-//    }
-//}
-
 pub const InvalidDisplayError = error{
     IsEmpty, // TODO: is this an error?
     HasMultipleProtocols,
@@ -241,15 +231,10 @@ pub fn isUnixProtocol(optionalProtocol: ?[]const u8) bool {
     return false;
 }
 
-// The application should probably have access to the DISPLAY
-// for logging purposes.  This might be too much abstraction.
-//pub fn connect() !posix.socket_t {
-//    const display = posix.getenv("DISPLAY") orelse
-//        return connectExplicit(null, null, 0);
-//    return connectDisplay(display);
-//}
-
-//pub const ConnectDisplayError = InvalidDisplayError;
+// NOTE: this function takes the display/parsed display because the app
+//       should know the display to provide to the user in case of an error
+//       and should also have handled an invalid display error before
+//       calling connect.
 pub fn connect(display: []const u8, parsed: ParsedDisplay) !posix.socket_t {
     const optional_host: ?[]const u8 = blk: {
         const host_slice = parsed.hostSlice(display.ptr);
@@ -380,12 +365,6 @@ pub fn connectUnixAddr(addr: *const posix.sockaddr.un, path_len: usize) !posix.s
     return sock;
 }
 
-//pub const ClientHello = extern struct {
-//    byte_order : u8 = if (builtin.endian == .Big) BigEndian else LittleEndian,
-//    proto_major_version : u16,
-//    proto_minor_version : u16,
-//};
-
 pub fn ArrayPointer(comptime T: type) type {
     const err = "ArrayPointer not implemented for " ++ @typeName(T);
     switch (@typeInfo(T)) {
@@ -456,13 +435,6 @@ pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@Ty
         else => @compileError("cannot slice"),
     }
 }
-
-// returns the number of padding bytes to add to `value` to get to a multiple of 4
-// TODO: profile this? is % operator expensive?
-// NOTE: using std.mem.alignForward instead
-//fn pad4(comptime T: type, value: T) T {
-//    return (4 - (value % 4)) % 4;
-//}
 
 pub const AuthFilename = struct {
     str: []const u8,
