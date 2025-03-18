@@ -639,7 +639,7 @@ const State = struct {
                     .keyboard_mode = .asynchronous,
                     .confine_to = if (self.confine_grab) grab_window else 0,
                     .cursor = 0,
-                    .time = 0,
+                    .time = .current_time,
                 });
                 try common.sendOne(sock, sequence, &msg);
                 self.grab = .{ .requested = .{
@@ -654,7 +654,7 @@ const State = struct {
                 std.log.info("ungrabbing", .{});
                 var msg: [x.ungrab_pointer.len]u8 = undefined;
                 x.ungrab_pointer.serialize(&msg, .{
-                    .time = 0,
+                    .time = .current_time,
                 });
                 try common.sendOne(sock, sequence, &msg);
                 self.grab = .disabled;
