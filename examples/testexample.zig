@@ -12,18 +12,18 @@ const window_width = 400;
 const window_height = 400;
 
 pub const Ids = struct {
-    base: u32,
-    pub fn window(self: Ids) u32 {
-        return self.base;
+    base: x.Resource,
+    pub fn window(self: Ids) x.Window {
+        return self.base.asWindow();
     }
-    pub fn bg_gc(self: Ids) u32 {
-        return self.base + 1;
+    pub fn bg_gc(self: Ids) x.GraphicsContext {
+        return self.base.add(1).asGraphicsContext();
     }
-    pub fn fg_gc(self: Ids) u32 {
-        return self.base + 2;
+    pub fn fg_gc(self: Ids) x.GraphicsContext {
+        return self.base.add(2).asGraphicsContext();
     }
-    pub fn pixmap(self: Ids) u32 {
-        return self.base + 3;
+    pub fn pixmap(self: Ids) x.PixMap {
+        return self.base.add(3).asPixMap();
     }
 };
 
@@ -250,7 +250,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.bg_gc(),
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
         }, .{
             .foreground = screen.black_pixel,
         });
@@ -260,7 +260,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.fg_gc(),
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
         }, .{
             .background = screen.black_pixel,
             .foreground = x.rgb24To(0xffaadd, screen.root_depth),
@@ -275,7 +275,7 @@ pub fn main() !u8 {
         const text_literal = [_]u16{'m'};
         const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
-        x.query_text_extents.serialize(&msg, ids.fg_gc(), text);
+        x.query_text_extents.serialize(&msg, ids.fg_gc().asFontable(), text);
         try conn.sendOne(&sequence, &msg);
     }
 
@@ -555,7 +555,7 @@ pub fn main() !u8 {
                         var get_image_msg: [x.get_image.len]u8 = undefined;
                         x.get_image.serialize(&get_image_msg, .{
                             .format = .z_pixmap,
-                            .drawable_id = ids.window(),
+                            .drawable_id = ids.window().asDrawable(),
                             // Coords match where we drew the test image
                             .x = 100,
                             .y = 20,
@@ -615,7 +615,7 @@ fn render(
     {
         var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
         x.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
             .gc_id = ids.bg_gc(),
         }, &[_]x.Rectangle{
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
@@ -642,7 +642,7 @@ fn render(
         const text_width = font_dims.width * text_literal.len;
 
         x.image_text8.serialize(&msg, text, .{
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
             .gc_id = ids.fg_gc(),
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
@@ -658,7 +658,7 @@ fn render(
         };
         var msg: [x.poly_fill_rectangle.getLen(rectangles.len)]u8 = undefined;
         x.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
             .gc_id = ids.fg_gc(),
         }, &rectangles);
         try common.sendOne(sock, sequence, &msg);
@@ -671,7 +671,7 @@ fn render(
         };
         var msg: [x.poly_rectangle.getLen(rectangles.len)]u8 = undefined;
         x.poly_rectangle.serialize(&msg, .{
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
             .gc_id = ids.fg_gc(),
         }, &rectangles);
         try common.sendOne(sock, sequence, &msg);
@@ -700,7 +700,7 @@ fn render(
         );
         x.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
             .format = .z_pixmap,
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
             .gc_id = ids.fg_gc(),
             .width = test_image.width,
             .height = test_image.height,
@@ -716,7 +716,7 @@ fn render(
             var msg: [x.create_pixmap.len]u8 = undefined;
             x.create_pixmap.serialize(&msg, .{
                 .id = ids.pixmap(),
-                .drawable_id = ids.window(),
+                .drawable_id = ids.window().asDrawable(),
                 .depth = image_format.depth,
                 .width = test_image.width,
                 .height = test_image.height,
@@ -725,7 +725,7 @@ fn render(
         }
         x.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
             .format = .z_pixmap,
-            .drawable_id = ids.pixmap(),
+            .drawable_id = ids.pixmap().asDrawable(),
             .gc_id = ids.fg_gc(),
             .width = test_image.width,
             .height = test_image.height,
@@ -739,8 +739,8 @@ fn render(
         {
             var msg: [x.copy_area.len]u8 = undefined;
             x.copy_area.serialize(&msg, .{
-                .src_drawable_id = ids.pixmap(),
-                .dst_drawable_id = ids.window(),
+                .src_drawable_id = ids.pixmap().asDrawable(),
+                .dst_drawable_id = ids.window().asDrawable(),
                 .gc_id = ids.fg_gc(),
                 .src_x = 0,
                 .src_y = 0,
@@ -760,7 +760,7 @@ fn render(
     }
 }
 
-fn changeGcColor(sock: std.posix.socket_t, sequence: *u16, gc_id: u32, color: u32) !void {
+fn changeGcColor(sock: std.posix.socket_t, sequence: *u16, gc_id: x.GraphicsContext, color: u32) !void {
     var msg_buf: [x.change_gc.max_len]u8 = undefined;
     const len = x.change_gc.serialize(&msg_buf, gc_id, .{
         .foreground = color,

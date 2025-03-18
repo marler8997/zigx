@@ -39,7 +39,7 @@ fn generateErrorEvent(display: *Display) void {
 }
 
 const GC = struct {
-    id: u32,
+    id: x.GraphicsContext,
 };
 
 const Display = struct {
@@ -140,8 +140,8 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
         std.log.debug("screen_ptr is 0x{x}", .{@intFromPtr(screen_dst)});
         screen_dst.* = .{
             .display = &display.public,
-            .root = screen_src.root,
-            .root_visual_num = screen_src.root_visual,
+            .root = @intFromEnum(screen_src.root),
+            .root_visual_num = @intFromEnum(screen_src.root_visual),
             .white_pixel = @intCast(screen_src.white_pixel),
             .black_pixel = @intCast(screen_src.black_pixel),
         };
@@ -159,7 +159,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
             .nscreens = @intCast(fixed.root_screen_count),
             .screens = screens.ptr,
         },
-        .resource_id_base = fixed.resource_id_base,
+        .resource_id_base = @intFromEnum(fixed.resource_id_base),
         .next_resource_id_offset = 0,
         .gc_list = .{},
         .read_buf = read_buf,
@@ -278,13 +278,13 @@ export fn XCreateSimpleWindow(
 
     const display_full: *Display = @fieldParentPtr("public", display);
 
-    const new_window = display_full.resource_id_base + display_full.next_resource_id_offset;
+    const new_window: x.Window = .fromInt(display_full.resource_id_base + display_full.next_resource_id_offset);
     display_full.next_resource_id_offset += 1;
 
     var msg_buf: [x.create_window.max_len]u8 = undefined;
     const len = x.create_window.serialize(&msg_buf, .{
         .window_id = new_window,
-        .parent_window_id = root_window,
+        .parent_window_id = .fromInt(root_window),
         // TODO: set this correctly
         .depth = 0,
         .x = @intCast(x_pos),
@@ -295,7 +295,7 @@ export fn XCreateSimpleWindow(
         // TODO
         .class = .copy_from_parent,
         //        .class = .input_output,
-        .visual_id = display.screens[0].root_visual_num,
+        .visual_id = .fromInt(display.screens[0].root_visual_num),
     }, .{
         //        //            .bg_pixmap = .copy_from_parent,
         //        .bg_pixel = 0xaabbccdd,
@@ -332,7 +332,7 @@ export fn XCreateSimpleWindow(
         reportErrorRaw("failed to send CreateWindow message with {s}", .{@errorName(err)});
         generateErrorEvent(display_full);
     };
-    return new_window;
+    return @intFromEnum(new_window);
 }
 
 //export fn XSetStandardProperties
@@ -345,7 +345,7 @@ export fn XCreateGC(
 ) c.GC {
     const display_full: *Display = @fieldParentPtr("public", display);
 
-    const gc_id = display_full.resource_id_base + display_full.next_resource_id_offset;
+    const gc_id: x.GraphicsContext = .fromInt(display_full.resource_id_base + display_full.next_resource_id_offset);
     display_full.next_resource_id_offset += 1;
 
     const gc = c_allocator.create(GC) catch @panic("Out of memory");
@@ -357,7 +357,7 @@ export fn XCreateGC(
     var msg_buf: [x.create_gc.max_len]u8 = undefined;
     const len = x.create_gc.serialize(&msg_buf, .{
         .gc_id = gc_id,
-        .drawable_id = drawable,
+        .drawable_id = .fromInt(drawable),
     }, .{
         //.foreground = screen.black_pixel,
     });
@@ -374,7 +374,7 @@ export fn XMapRaised(display: *c.Display, window: c.Window) c_int {
 
     std.log.info("TODO: send ConfigureWindow stack-mode=Above", .{});
     var msg: [x.map_window.len]u8 = undefined;
-    x.map_window.serialize(&msg, window);
+    x.map_window.serialize(&msg, .fromInt(window));
     sendAll(display.fd, &msg) catch |err| {
         reportErrorRaw("failed to send MapWindow message with {s}", .{@errorName(err)});
         generateErrorEvent(display_full);
@@ -428,7 +428,7 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
                     .serial = e.sequence,
                     .send_event = @intFromBool((display_full.read_buf[0] & 0x80) != 0),
                     .display = display,
-                    .window = e.window,
+                    .window = @intFromEnum(e.window),
                     .x = e.x,
                     .y = e.y,
                     .width = e.width,
@@ -447,7 +447,7 @@ export fn XSelectInput(display: *c.Display, window: c.Window, event_mask: c_ulon
     const display_full: *Display = @fieldParentPtr("public", display);
 
     var msg_buf: [x.change_window_attributes.max_len]u8 = undefined;
-    const len = x.change_window_attributes.serialize(&msg_buf, window, .{
+    const len = x.change_window_attributes.serialize(&msg_buf, .fromInt(window), .{
         .event_mask = @bitCast(@as(u32, @truncate(event_mask))),
     });
     sendAll(display.fd, msg_buf[0..len]) catch |err| {

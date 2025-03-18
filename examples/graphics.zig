@@ -37,7 +37,8 @@ pub fn main() !u8 {
 
     var sequence: u16 = 0;
 
-    const window_id = conn.setup.fixed().resource_id_base;
+    const resource_base = conn.setup.fixed().resource_id_base;
+    const window_id = resource_base.asWindow();
     {
         var msg_buf: [x.create_window.max_len]u8 = undefined;
         const len = x.create_window.serialize(&msg_buf, .{
@@ -79,23 +80,23 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, msg_buf[0..len]);
     }
 
-    const bg_gc_id = window_id + 1;
+    const bg_gc_id = resource_base.add(1).asGraphicsContext();
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = bg_gc_id,
-            .drawable_id = window_id,
+            .drawable_id = window_id.asDrawable(),
         }, .{
             .foreground = screen.black_pixel,
         });
         try conn.sendOne(&sequence, msg_buf[0..len]);
     }
-    const fg_gc_id = window_id + 2;
+    const fg_gc_id = resource_base.add(2).asGraphicsContext();
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = fg_gc_id,
-            .drawable_id = window_id,
+            .drawable_id = window_id.asDrawable(),
         }, .{
             .background = screen.black_pixel,
             .foreground = 0xffaadd,
@@ -109,7 +110,7 @@ pub fn main() !u8 {
         const text_literal = [_]u16{'m'};
         const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
-        x.query_text_extents.serialize(&msg, fg_gc_id, text);
+        x.query_text_extents.serialize(&msg, fg_gc_id.asFontable(), text);
         try conn.sendOne(&sequence, &msg);
     }
 
@@ -235,9 +236,9 @@ const FontDims = struct {
 fn render(
     sock: std.posix.socket_t,
     sequence: *u16,
-    drawable_id: u32,
-    bg_gc_id: u32,
-    fg_gc_id: u32,
+    window_id: x.Window,
+    bg_gc_id: x.GraphicsContext,
+    fg_gc_id: x.GraphicsContext,
     font_dims: FontDims,
 ) !void {
     //    {
@@ -253,7 +254,7 @@ fn render(
     _ = bg_gc_id;
     {
         var msg: [x.clear_area.len]u8 = undefined;
-        x.clear_area.serialize(&msg, false, drawable_id, .{
+        x.clear_area.serialize(&msg, false, window_id, .{
             .x = 0,
             .y = 0,
             .width = 0,
@@ -266,7 +267,7 @@ fn render(
         var msg: [x.poly_line.getLen(3)]u8 = undefined;
         x.poly_line.serialize(&msg, .{
             .coordinate_mode = .origin,
-            .drawable_id = drawable_id,
+            .drawable_id = window_id.asDrawable(),
             .gc_id = fg_gc_id,
         }, &[_]x.Point{
             .{ .x = 10, .y = 10 },

@@ -24,7 +24,7 @@ pub fn main() !u8 {
     const conn = try common.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
-    const font_id = conn.setup.fixed().resource_id_base;
+    const font_id = conn.setup.fixed().resource_id_base.asFont();
     var sequence: u16 = 0;
 
     {
@@ -37,7 +37,7 @@ pub fn main() !u8 {
 
     {
         var msg: [x.query_font.len]u8 = undefined;
-        x.query_font.serialize(&msg, font_id);
+        x.query_font.serialize(&msg, font_id.asFontable());
         try conn.sendOne(&sequence, &msg);
     }
 

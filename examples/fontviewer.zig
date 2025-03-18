@@ -11,18 +11,19 @@ const window_width = 600;
 const window_height = 400;
 
 const Ids = struct {
-    base: u32,
-    pub fn window(self: Ids) u32 {
-        return self.base;
+    base: x.Resource,
+
+    pub fn window(self: Ids) x.Window {
+        return self.base.asWindow();
     }
-    pub fn font(self: Ids) u32 {
-        return self.base + 1;
+    pub fn font(self: Ids) x.Font {
+        return self.base.add(1).asFont();
     }
-    pub fn gcBackground(self: Ids) u32 {
-        return self.base + 2;
+    pub fn gcBackground(self: Ids) x.GraphicsContext {
+        return self.base.add(2).asGraphicsContext();
     }
-    pub fn gcText(self: Ids) u32 {
-        return self.base + 3;
+    pub fn gcText(self: Ids) x.GraphicsContext {
+        return self.base.add(3).asGraphicsContext();
     }
 };
 
@@ -118,7 +119,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.gcBackground(),
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
         }, .{
             .background = 0xffffff,
             .foreground = 0xffffff,
@@ -130,7 +131,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.gcText(),
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
         }, .{
             .background = 0xffffff,
             .foreground = 0,
@@ -189,7 +190,7 @@ pub fn main() !u8 {
                             }
                         },
                         .font => {
-                            const msg: *x.ServerMsg.Error.Font = @ptrCast(generic_msg);
+                            const msg: *x.ServerMsg.Error.FontError = @ptrCast(generic_msg);
                             if (msg.major_opcode == .query_font) {
                                 try state.onQueryFontError(msg, conn.sock, &sequence, ids, fonts);
                                 error_handled = true;
@@ -312,7 +313,7 @@ const State = struct {
 
     pub fn onQueryFontError(
         self: *State,
-        msg: *x.ServerMsg.Error.Font,
+        msg: *x.ServerMsg.Error.FontError,
         sock: std.posix.socket_t,
         sequence: *u16,
         ids: Ids,
@@ -402,7 +403,7 @@ fn render(
     {
         var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
         x.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
             .gc_id = ids.gcBackground(),
         }, &[_]x.Rectangle{
             .{ .x = 0, .y = 0, .width = window_width, .height = window_height },
@@ -420,12 +421,12 @@ fn render(
 
     const font_height = font_info.font_ascent + font_info.font_descent;
 
-    try renderText(sock, sequence, ids.window(), ids.gcText(), 10, 10 + (font_height * 1), "font {}/{}", .{ font_index + 1, fonts.len });
-    try renderText(sock, sequence, ids.window(), ids.gcText(), 10, 10 + (font_height * 2), "{s}", .{font_name});
-    try renderText(sock, sequence, ids.window(), ids.gcText(), 10, 10 + (font_height * 3), "property_count={} char_info_count={}", .{ font_info.property_count, font_info.info_count });
-    try renderText(sock, sequence, ids.window(), ids.gcText(), 10, 10 + (font_height * 4), "The quick brown fox jumped over the lazy dog", .{});
-    try renderText(sock, sequence, ids.window(), ids.gcText(), 10, 10 + (font_height * 5), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", .{});
-    try renderText(sock, sequence, ids.window(), ids.gcText(), 10, 10 + (font_height * 6), "abcdefghijklmnopqrstuvwxyz", .{});
+    try renderText(sock, sequence, ids.window().asDrawable(), ids.gcText(), 10, 10 + (font_height * 1), "font {}/{}", .{ font_index + 1, fonts.len });
+    try renderText(sock, sequence, ids.window().asDrawable(), ids.gcText(), 10, 10 + (font_height * 2), "{s}", .{font_name});
+    try renderText(sock, sequence, ids.window().asDrawable(), ids.gcText(), 10, 10 + (font_height * 3), "property_count={} char_info_count={}", .{ font_info.property_count, font_info.info_count });
+    try renderText(sock, sequence, ids.window().asDrawable(), ids.gcText(), 10, 10 + (font_height * 4), "The quick brown fox jumped over the lazy dog", .{});
+    try renderText(sock, sequence, ids.window().asDrawable(), ids.gcText(), 10, 10 + (font_height * 5), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", .{});
+    try renderText(sock, sequence, ids.window().asDrawable(), ids.gcText(), 10, 10 + (font_height * 6), "abcdefghijklmnopqrstuvwxyz", .{});
 }
 
 fn renderNoFontInfo(sock: std.posix.socket_t, sequence: *u16, ids: Ids, fonts: []x.Slice(u8, [*]const u8), font_index: usize, still_open: bool) !void {
@@ -436,7 +437,7 @@ fn renderNoFontInfo(sock: std.posix.socket_t, sequence: *u16, ids: Ids, fonts: [
     {
         var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
         x.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = ids.window(),
+            .drawable_id = ids.window().asDrawable(),
             .gc_id = ids.gcBackground(),
         }, &[_]x.Rectangle{
             .{ .x = 0, .y = 0, .width = window_width, .height = window_height },
@@ -460,8 +461,8 @@ fn renderNoFontInfo(sock: std.posix.socket_t, sequence: *u16, ids: Ids, fonts: [
 fn renderText(
     sock: std.posix.socket_t,
     sequence: *u16,
-    drawable_id: u32,
-    gc_id: u32,
+    drawable_id: x.Drawable,
+    gc_id: x.GraphicsContext,
     x_coord: i16,
     y: i16,
     comptime fmt: []const u8,
@@ -488,7 +489,7 @@ fn renderText(
 fn openAndQueryFont(
     sock: std.posix.socket_t,
     sequence: *u16,
-    font_id: u32,
+    font_id: x.Font,
     font_name: x.Slice(u8, [*]const u8),
 ) !void {
     // TODO: combine these into 1 send
@@ -501,7 +502,7 @@ fn openAndQueryFont(
     }
     {
         var msg: [x.query_font.len]u8 = undefined;
-        x.query_font.serialize(&msg, font_id);
+        x.query_font.serialize(&msg, font_id.asFontable());
         try common.sendOne(sock, sequence, &msg);
     }
 }

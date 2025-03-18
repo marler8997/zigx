@@ -730,6 +730,250 @@ test "ConnectSetupMessage" {
     connect_setup.serialize(&buf, 1, 1, auth_name, auth_data);
 }
 
+pub const Resource = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn add(r: Resource, offset: u32) Resource {
+        return @enumFromInt(@intFromEnum(r) + offset);
+    }
+
+    pub fn asWindow(r: Resource) Window {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
+    pub fn asDrawable(r: Resource) Drawable {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
+    pub fn asFont(r: Resource) Font {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
+    pub fn asFontable(r: Resource) Fontable {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
+    pub fn asGraphicsContext(r: Resource) GraphicsContext {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
+    pub fn asPixMap(r: Resource) PixMap {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
+    pub fn format(v: Resource, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .none) {
+            try writer.writeAll("Resource(<none>)");
+        } else {
+            try writer.print("Resource({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
+/// Drawable
+/// Both windows and pixmaps can be used as sources and destinations in graphics operations.
+/// These windows and pixmaps are collectively known as drawables.
+/// However, an InputOnly window cannot be used as a source or destination in a graphics operation.
+pub const Drawable = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn fromInt(i: u32) Drawable {
+        return @enumFromInt(i);
+    }
+
+    pub fn format(v: Drawable, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .none) {
+            try writer.writeAll("Drawable(<none>)");
+        } else {
+            try writer.print("Drawable({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
+pub const Window = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn fromInt(i: u32) Window {
+        return @enumFromInt(i);
+    }
+
+    pub fn asDrawable(w: Window) Drawable {
+        return @enumFromInt(@intFromEnum(w));
+    }
+
+    pub fn format(v: Window, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .none) {
+            try writer.writeAll("Window(<none>)");
+        } else {
+            try writer.print("Window({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
+pub const Cursor = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn fromInt(i: u32) Cursor {
+        return @enumFromInt(i);
+    }
+
+    pub fn format(v: Cursor, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .none) {
+            try writer.writeAll("Cursor(<none>)");
+        } else {
+            try writer.print("Cursor({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
+pub const Font = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn fromInt(i: u32) Font {
+        return @enumFromInt(i);
+    }
+
+    pub fn asFontable(f: Font) Fontable {
+        return @enumFromInt(@intFromEnum(f));
+    }
+
+    pub fn format(v: Font, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .none) {
+            try writer.writeAll("Font(<none>)");
+        } else {
+            try writer.print("Font({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
+pub const Fontable = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn fromInt(i: u32) Fontable {
+        return @enumFromInt(i);
+    }
+
+    pub fn asGraphicsContext(f: Fontable) GraphicsContext {
+        return @enumFromInt(@intFromEnum(f));
+    }
+
+    pub fn asFont(f: Fontable) Font {
+        return @enumFromInt(@intFromEnum(f));
+    }
+
+    pub fn format(v: Fontable, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .none) {
+            try writer.writeAll("Fontable(<none>)");
+        } else {
+            try writer.print("Fontable({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
+pub const ColorMap = enum(u32) {
+    copy_from_parent = 0,
+    _,
+
+    pub fn fromInt(i: u32) ColorMap {
+        return @enumFromInt(i);
+    }
+
+    pub fn format(v: ColorMap, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .copy_from_parent) {
+            try writer.writeAll("ColorMap(<copy from parent>)");
+        } else {
+            try writer.print("ColorMap({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
+pub const Visual = enum(u32) {
+    pub fn fromInt(i: u32) Visual {
+        return @enumFromInt(i);
+    }
+
+    copy_from_parent = 0,
+    _,
+
+    pub fn format(v: Visual, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .copy_from_parent) {
+            try writer.writeAll("Visual(<copy-from-parent>)");
+        } else {
+            try writer.print("Visual({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
+pub const PixMap = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn fromInt(i: u32) PixMap {
+        return @enumFromInt(i);
+    }
+
+    pub fn asDrawable(p: PixMap) Drawable {
+        return @enumFromInt(@intFromEnum(p));
+    }
+
+    pub fn format(v: PixMap, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .none) {
+            try writer.writeAll("PixMap(<none>)");
+        } else {
+            try writer.print("PixMap({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
+/// Various information for graphics output is stored in a graphics context such as foreground pixel, background pixel, line width, clipping region, and so on.
+/// A graphics context can only be used with drawables that have the same root and the same depth as the graphics context.
+pub const GraphicsContext = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn fromInt(i: u32) GraphicsContext {
+        return @enumFromInt(i);
+    }
+
+    pub fn asFontable(g: GraphicsContext) Fontable {
+        return @enumFromInt(@intFromEnum(g));
+    }
+
+    pub fn format(v: GraphicsContext, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .none) {
+            try writer.writeAll("GraphicsContext(<none>)");
+        } else {
+            try writer.print("GraphicsContext({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
 /// A timestamp is a time value, expressed in milliseconds.
 /// It typically is the time since the last server reset. Timestamp values wrap around (after about 49.7 days).
 /// The server, given its current time is represented by timestamp T, always interprets timestamps from clients
@@ -737,6 +981,10 @@ test "ConnectSetupMessage" {
 /// being later in time than T. One timestamp value (named CurrentTime) is never generated by the server. This
 /// value is reserved for use in requests to represent the current server time.
 pub const Timestamp = enum(u32) {
+    pub fn fromInt(i: u32) GraphicsContext {
+        return @enumFromInt(i);
+    }
+
     /// X11 `CurrentTime`. Never generated by the server.
     current_time = 0,
 
@@ -927,8 +1175,7 @@ pub const window = struct {
     pub const BgPixmap = enum(u32) { none = 0, copy_from_parent = 1 };
     pub const BorderPixmap = enum(u32) { copy_from_parent = 0 };
     pub const BackingStore = enum(u32) { not_useful = 0, when_mapped = 1, always = 2 };
-    pub const Colormap = enum(u32) { copy_from_parent = 0 };
-    pub const Cursor = enum(u32) { none = 0 };
+
     pub const Options = struct {
         bg_pixmap: BgPixmap = .none,
         bg_pixel: ?u32 = null,
@@ -943,7 +1190,7 @@ pub const window = struct {
         save_under: bool = false,
         event_mask: EventMask = .{},
         dont_propagate: u32 = 0,
-        colormap: NonExhaustive(Colormap) = .copy_from_parent,
+        colormap: ColorMap = .copy_from_parent,
         cursor: Cursor = .none,
     };
 };
@@ -967,8 +1214,8 @@ pub const create_window = struct {
         input_only = 2,
     };
     pub const Args = struct {
-        window_id: u32,
-        parent_window_id: u32,
+        window_id: Window,
+        parent_window_id: Window,
         depth: u8,
         x: i16,
         y: i16,
@@ -976,7 +1223,7 @@ pub const create_window = struct {
         height: u16,
         border_width: u16,
         class: Class,
-        visual_id: u32,
+        visual_id: Visual,
     };
 
     pub fn serialize(buf: [*]u8, args: Args, options: window.Options) u16 {
@@ -985,15 +1232,15 @@ pub const create_window = struct {
 
         // buf[2-3] is the len, set at the end of the function
 
-        writeIntNative(u32, buf + 4, args.window_id);
-        writeIntNative(u32, buf + 8, args.parent_window_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.window_id));
+        writeIntNative(u32, buf + 8, @intFromEnum(args.parent_window_id));
         writeIntNative(i16, buf + 12, args.x);
         writeIntNative(i16, buf + 14, args.y);
         writeIntNative(u16, buf + 16, args.width);
         writeIntNative(u16, buf + 18, args.height);
         writeIntNative(u16, buf + 20, args.border_width);
         writeIntNative(u16, buf + 22, @intFromEnum(args.class));
-        writeIntNative(u32, buf + 24, args.visual_id);
+        writeIntNative(u32, buf + 24, @intFromEnum(args.visual_id));
 
         var request_len: u16 = non_option_len;
         var option_mask: window.OptionMask = .{};
@@ -1021,13 +1268,13 @@ pub const change_window_attributes = struct {
         + 4 // window options value-mask
     ;
     pub const max_len = non_option_len + (15 * 4); // 15 possible 4-byte options
-    pub fn serialize(buf: [*]u8, window_id: u32, options: window.Options) u16 {
+    pub fn serialize(buf: [*]u8, window_id: Window, options: window.Options) u16 {
         buf[0] = @intFromEnum(Opcode.change_window_attributes);
         buf[1] = 0; // unused
 
         // buf[2-3] is the len, set at the end of the function
 
-        writeIntNative(u32, buf + 4, window_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(window_id));
         var request_len: u16 = non_option_len;
         var option_mask: window.OptionMask = .{};
 
@@ -1048,11 +1295,11 @@ pub const change_window_attributes = struct {
 
 pub const map_window = struct {
     pub const len = 8;
-    pub fn serialize(buf: [*]u8, window_id: u32) void {
+    pub fn serialize(buf: [*]u8, window_id: Window) void {
         buf[0] = @intFromEnum(Opcode.map_window);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, window_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(window_id));
     }
 };
 
@@ -1102,7 +1349,7 @@ pub const configure_window = struct {
     }
 
     pub const Args = struct {
-        window_id: u32,
+        window_id: Window,
     };
 
     pub const OptionMask = packed struct(u32) {
@@ -1129,7 +1376,7 @@ pub const configure_window = struct {
         buf[0] = @intFromEnum(Opcode.configure_window);
         buf[1] = 0; // unused
         // buf[2-3] is the len, set at the end of the function
-        writeIntNative(u32, buf + 4, args.window_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.window_id));
         // buf[8-9] is the option_mask, set at the end of the function
 
         var request_len: u16 = non_option_len;
@@ -1152,11 +1399,11 @@ pub const configure_window = struct {
 
 pub const query_tree = struct {
     pub const len = 8;
-    pub fn serialize(buf: [*]u8, window_id: u32) void {
+    pub fn serialize(buf: [*]u8, window_id: Window) void {
         buf[0] = @intFromEnum(Opcode.query_tree);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, window_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(window_id));
     }
 
     pub const Reply = extern struct {
@@ -1164,14 +1411,14 @@ pub const query_tree = struct {
         _unused_pad: u8,
         sequence: u16,
         word_len: u32,
-        root_window_id: u32,
-        parent_window_id: u32,
+        root_window_id: Window,
+        parent_window_id: Window,
         num_windows: u16,
         _unused_pad2: [14]u8,
-        _window_list_start: [0]u8,
+        _window_list_start: [0]Window,
 
-        pub fn getWindowList(self: *@This()) []align(4) const u32 {
-            const window_ptr_list: [*]align(4) u32 = @ptrFromInt(@intFromPtr(&self._window_list_start));
+        pub fn getWindowList(self: *@This()) []align(4) const Window {
+            const window_ptr_list: [*]Window = @ptrCast(&self._window_list_start);
             return window_ptr_list[0..self.num_windows];
         }
     };
@@ -1229,7 +1476,7 @@ pub const change_property = struct {
             }
             pub const Args = struct {
                 mode: Mode,
-                window_id: u32,
+                window_id: Window,
                 property: Atom, // atom
                 /// atom
                 ///
@@ -1244,7 +1491,7 @@ pub const change_property = struct {
                 const request_len = getLen(args.values.len);
                 std.debug.assert(request_len & 0x3 == 0);
                 writeIntNative(u16, buf + 2, request_len >> 2);
-                writeIntNative(u32, buf + 4, args.window_id);
+                writeIntNative(u32, buf + 4, @intFromEnum(args.window_id));
                 writeIntNative(u32, buf + 8, @intFromEnum(args.property));
                 writeIntNative(u32, buf + 12, @intFromEnum(args.type));
                 writeIntNative(u32, buf + 16, @sizeOf(T) * 8);
@@ -1264,7 +1511,7 @@ pub const change_property = struct {
 pub const get_property = struct {
     pub const len = 24;
     pub const Args = struct {
-        window_id: u32,
+        window_id: Window,
         property: Atom,
         /// Atom or AnyPropertyType (0)
         ///
@@ -1285,7 +1532,7 @@ pub const get_property = struct {
         buf[0] = @intFromEnum(Opcode.get_property);
         buf[1] = @intFromBool(args.delete);
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, args.window_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.window_id));
         writeIntNative(u32, buf + 8, @intFromEnum(args.property));
         writeIntNative(u32, buf + 12, @intFromEnum(args.type));
         writeIntNative(u32, buf + 16, args.offset);
@@ -1332,24 +1579,24 @@ pub const grab_pointer = struct {
     pub const len = 24;
     pub const Args = struct {
         owner_events: bool,
-        grab_window: u32,
+        grab_window: Window,
         event_mask: PointerEventMask,
         pointer_mode: SyncMode,
         keyboard_mode: SyncMode,
-        confine_to: u32, // 0 is none
-        cursor: u32, // 0 is none
-        time: Timestamp, // 0 is CurrentTime
+        confine_to: Window,
+        cursor: Cursor,
+        time: Timestamp,
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
         buf[0] = @intFromEnum(Opcode.grab_pointer);
         buf[1] = if (args.owner_events) 1 else 0;
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, args.grab_window);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.grab_window));
         writeIntNative(u16, buf + 8, @bitCast(args.event_mask));
         buf[10] = @intFromEnum(args.pointer_mode);
         buf[11] = @intFromEnum(args.keyboard_mode);
-        writeIntNative(u32, buf + 12, args.confine_to);
-        writeIntNative(u32, buf + 16, args.cursor);
+        writeIntNative(u32, buf + 12, @intFromEnum(args.confine_to));
+        writeIntNative(u32, buf + 16, @intFromEnum(args.cursor));
         writeIntNative(u32, buf + 20, @intFromEnum(args.time));
     }
 };
@@ -1370,8 +1617,8 @@ pub const ungrab_pointer = struct {
 pub const warp_pointer = struct {
     pub const len = 24;
     pub const Args = struct {
-        src_window: u32, // 0 means none
-        dst_window: u32, // 0 means none
+        src_window: Window,
+        dst_window: Window,
         src_x: i16,
         src_y: i16,
         src_width: u16,
@@ -1383,8 +1630,8 @@ pub const warp_pointer = struct {
         buf[0] = @intFromEnum(Opcode.warp_pointer);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, args.src_window);
-        writeIntNative(u32, buf + 8, args.dst_window);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.src_window));
+        writeIntNative(u32, buf + 8, @intFromEnum(args.dst_window));
         writeIntNative(i16, buf + 12, args.src_x);
         writeIntNative(i16, buf + 14, args.src_y);
         writeIntNative(u16, buf + 16, args.src_width);
@@ -1404,12 +1651,12 @@ pub const open_font = struct {
     pub fn getLen(name_len: u16) u16 {
         return non_list_len + std.mem.alignForward(u16, name_len, 4);
     }
-    pub fn serialize(buf: [*]u8, font_id: u32, name: Slice(u16, [*]const u8)) void {
+    pub fn serialize(buf: [*]u8, font_id: Font, name: Slice(u16, [*]const u8)) void {
         buf[0] = @intFromEnum(Opcode.open_font);
         buf[1] = 0; // unused
         const len = getLen(name.len);
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, font_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(font_id));
         writeIntNative(u16, buf + 8, name.len);
         buf[10] = 0; // unused
         buf[11] = 0; // unused
@@ -1419,21 +1666,21 @@ pub const open_font = struct {
 
 pub const close_font = struct {
     pub const len = 8;
-    pub fn serialize(buf: [*]u8, font_id: u32) void {
+    pub fn serialize(buf: [*]u8, font_id: Font) void {
         buf[0] = @intFromEnum(Opcode.close_font);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, font_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(font_id));
     }
 };
 
 pub const query_font = struct {
     pub const len = 8;
-    pub fn serialize(buf: [*]u8, font: u32) void {
+    pub fn serialize(buf: [*]u8, font: Fontable) void {
         buf[0] = @intFromEnum(Opcode.query_font);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, font);
+        writeIntNative(u32, buf + 4, @intFromEnum(font));
     }
 };
 
@@ -1446,12 +1693,12 @@ pub const query_text_extents = struct {
     pub fn getLen(u16_char_count: u16) u16 {
         return non_list_len + std.mem.alignForward(u16, u16_char_count * 2, 4);
     }
-    pub fn serialize(buf: [*]u8, font_id: u32, text: Slice(u16, [*]const u16)) void {
+    pub fn serialize(buf: [*]u8, font_id: Fontable, text: Slice(u16, [*]const u16)) void {
         buf[0] = @intFromEnum(Opcode.query_text_extents);
         buf[1] = @intCast(text.len % 2); // odd_length
         const len = getLen(text.len);
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, font_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(font_id));
         var off: usize = 8;
         for (text.ptr[0..text.len]) |c| {
             std.mem.writeInt(u16, (buf + off)[0..2], c, .big);
@@ -1532,26 +1779,26 @@ pub const GcOptions = struct {
     // fill_style solid
     // fill_rule even_odd
     // arc_mode pie_slice
-    // tile ?
-    // stipple ?
+    // tile: ?PixMap = null,
+    // stipple: ?PixMap = null,
     // tile_stipple_x_origin 0
     // tile_stipple_y_origin 0
-    font: ?u32 = null,
+    font: ?Font = null,
     // font <server dependent>
     // subwindow_mode clip_by_children
     graphics_exposures: bool = true,
     // clip_x_origin 0
     // clip_y_origin 0
-    // clip_mask none
+    // clip_mask: ?Font = null,
     // dash_offset 0
     // dashes the list 4, 4
 };
 
 const GcVariant = union(enum) {
-    create: u32,
+    create: Drawable,
     change: void,
 };
-pub fn createOrChangeGcSerialize(buf: [*]u8, gc_id: u32, variant: GcVariant, options: GcOptions) u16 {
+pub fn createOrChangeGcSerialize(buf: [*]u8, gc_id: GraphicsContext, variant: GcVariant, options: GcOptions) u16 {
     buf[0] = switch (variant) {
         .create => @intFromEnum(Opcode.create_gc),
         .change => @intFromEnum(Opcode.change_gc),
@@ -1559,11 +1806,11 @@ pub fn createOrChangeGcSerialize(buf: [*]u8, gc_id: u32, variant: GcVariant, opt
     buf[1] = 0; // unused
     // buf[2-3] is the len, set at the end of the function
 
-    writeIntNative(u32, buf + 4, gc_id);
+    writeIntNative(u32, buf + 4, @intFromEnum(gc_id));
     const non_option_len: u16 = blk: {
         switch (variant) {
             .create => |drawable_id| {
-                writeIntNative(u32, buf + 8, drawable_id);
+                writeIntNative(u32, buf + 8, @intFromEnum(drawable_id));
                 break :blk create_gc.non_option_len;
             },
             .change => break :blk change_gc.non_option_len,
@@ -1589,8 +1836,8 @@ pub fn createOrChangeGcSerialize(buf: [*]u8, gc_id: u32, variant: GcVariant, opt
 pub const create_pixmap = struct {
     pub const len = 16;
     pub const Args = struct {
-        id: u32,
-        drawable_id: u32,
+        id: PixMap,
+        drawable_id: Drawable,
         depth: u8,
         width: u16,
         height: u16,
@@ -1599,8 +1846,8 @@ pub const create_pixmap = struct {
         buf[0] = @intFromEnum(Opcode.create_pixmap);
         buf[1] = args.depth;
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, args.id);
-        writeIntNative(u32, buf + 8, args.drawable_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.id));
+        writeIntNative(u32, buf + 8, @intFromEnum(args.drawable_id));
         writeIntNative(u16, buf + 12, args.width);
         writeIntNative(u16, buf + 14, args.height);
     }
@@ -1608,20 +1855,20 @@ pub const create_pixmap = struct {
 
 pub const free_pixmap = struct {
     pub const len = 8;
-    pub fn serialize(buf: [*]u8, id: u32) void {
+    pub fn serialize(buf: [*]u8, id: PixMap) void {
         buf[0] = @intFromEnum(Opcode.free_pixmap);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, id);
+        writeIntNative(u32, buf + 4, @intFromEnum(id));
     }
 };
 
 pub const create_colormap = struct {
     pub const len = 16;
     pub const Args = struct {
-        id: u32,
-        window_id: u32,
-        visual_id: u32,
+        id: ColorMap,
+        window_id: Window,
+        visual_id: Visual,
         alloc: enum(u8) { none, all },
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
@@ -1636,11 +1883,11 @@ pub const create_colormap = struct {
 
 pub const free_colormap = struct {
     pub const len = 8;
-    pub fn serialize(buf: [*]u8, id: u32) void {
+    pub fn serialize(buf: [*]u8, id: ColorMap) void {
         buf[0] = @intFromEnum(Opcode.free_colormap);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, id);
+        writeIntNative(u32, buf + 4, @intFromEnum(id));
     }
 };
 
@@ -1653,7 +1900,7 @@ pub const create_gc = struct {
         + 4 // option mask
     ;
     pub const max_len = non_option_len + (gc_option_count * 4);
-    pub fn serialize(buf: [*]u8, arg: struct { gc_id: u32, drawable_id: u32 }, options: GcOptions) u16 {
+    pub fn serialize(buf: [*]u8, arg: struct { gc_id: GraphicsContext, drawable_id: Drawable }, options: GcOptions) u16 {
         return createOrChangeGcSerialize(buf, arg.gc_id, .{ .create = arg.drawable_id }, options);
     }
 };
@@ -1667,18 +1914,18 @@ pub const change_gc = struct {
     ;
     pub const max_len = non_option_len + (gc_option_count * 4);
 
-    pub fn serialize(buf: [*]u8, gc_id: u32, options: GcOptions) u16 {
+    pub fn serialize(buf: [*]u8, gc_id: GraphicsContext, options: GcOptions) u16 {
         return createOrChangeGcSerialize(buf, gc_id, .change, options);
     }
 };
 
 pub const clear_area = struct {
     pub const len = 16;
-    pub fn serialize(buf: [*]u8, exposures: bool, window_id: u32, area: Rectangle) void {
+    pub fn serialize(buf: [*]u8, exposures: bool, window_id: Window, area: Rectangle) void {
         buf[0] = @intFromEnum(Opcode.clear_area);
         buf[1] = if (exposures) 1 else 0;
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, window_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(window_id));
         writeIntNative(i16, buf + 8, area.x);
         writeIntNative(i16, buf + 10, area.y);
         writeIntNative(u16, buf + 12, area.width);
@@ -1689,9 +1936,9 @@ pub const clear_area = struct {
 pub const copy_area = struct {
     pub const len = 28;
     pub const Args = struct {
-        src_drawable_id: u32,
-        dst_drawable_id: u32,
-        gc_id: u32,
+        src_drawable_id: Drawable,
+        dst_drawable_id: Drawable,
+        gc_id: GraphicsContext,
         src_x: i16,
         src_y: i16,
         dst_x: i16,
@@ -1703,9 +1950,9 @@ pub const copy_area = struct {
         buf[0] = @intFromEnum(Opcode.copy_area);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, args.src_drawable_id);
-        writeIntNative(u32, buf + 8, args.dst_drawable_id);
-        writeIntNative(u32, buf + 12, args.gc_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.src_drawable_id));
+        writeIntNative(u32, buf + 8, @intFromEnum(args.dst_drawable_id));
+        writeIntNative(u32, buf + 12, @intFromEnum(args.gc_id));
         writeIntNative(i16, buf + 16, args.src_x);
         writeIntNative(i16, buf + 18, args.src_y);
         writeIntNative(i16, buf + 20, args.dst_x);
@@ -1732,15 +1979,15 @@ pub const poly_line = struct {
     }
     pub const Args = struct {
         coordinate_mode: enum(u8) { origin = 0, previous = 1 },
-        drawable_id: u32,
-        gc_id: u32,
+        drawable_id: Drawable,
+        gc_id: GraphicsContext,
     };
     pub fn serialize(buf: [*]u8, args: Args, points: []const Point) void {
         buf[0] = @intFromEnum(Opcode.poly_line);
         buf[1] = @intFromEnum(args.coordinate_mode);
         // buf[2-3] is the len, set at the end of the function
-        writeIntNative(u32, buf + 4, args.drawable_id);
-        writeIntNative(u32, buf + 8, args.gc_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.drawable_id));
+        writeIntNative(u32, buf + 8, @intFromEnum(args.gc_id));
         var request_len: u16 = non_list_len;
         for (points) |point| {
             writeIntNative(i16, buf + request_len + 0, point.x);
@@ -1774,15 +2021,15 @@ const poly_rectangle_common = struct {
         return non_list_len + (rectangle_count * 8);
     }
     pub const Args = struct {
-        drawable_id: u32,
-        gc_id: u32,
+        drawable_id: Drawable,
+        gc_id: GraphicsContext,
     };
     pub fn serialize(buf: [*]u8, args: Args, rectangles: []const Rectangle, opcode: u8) void {
         buf[0] = opcode;
         buf[1] = 0; // unused
         // buf[2-3] is the len, set at the end of the function
-        writeIntNative(u32, buf + 4, args.drawable_id);
-        writeIntNative(u32, buf + 8, args.gc_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.drawable_id));
+        writeIntNative(u32, buf + 8, @intFromEnum(args.gc_id));
         var request_len: u16 = non_list_len;
         for (rectangles) |rectangle| {
             writeIntNative(i16, buf + request_len + 0, rectangle.x);
@@ -1834,8 +2081,8 @@ pub const put_image = struct {
             xy_pixmap = 1,
             z_pixmap = 2,
         },
-        drawable_id: u32,
-        gc_id: u32,
+        drawable_id: Drawable,
+        gc_id: GraphicsContext,
         width: u16,
         height: u16,
         x: i16,
@@ -1854,8 +2101,8 @@ pub const put_image = struct {
         const request_len = getLen(data_len);
         std.debug.assert((request_len & 0x3) == 0);
         writeIntNative(u16, buf + 2, @as(u16, @intCast(request_len >> 2)));
-        writeIntNative(u32, buf + 4, args.drawable_id);
-        writeIntNative(u32, buf + 8, args.gc_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.drawable_id));
+        writeIntNative(u32, buf + 8, @intFromEnum(args.gc_id));
         writeIntNative(u16, buf + 12, args.width);
         writeIntNative(u16, buf + 14, args.height);
         writeIntNative(i16, buf + 16, args.x);
@@ -1887,7 +2134,7 @@ pub const get_image = struct {
             xy_pixmap = 1,
             z_pixmap = 2,
         },
-        drawable_id: u32,
+        drawable_id: Drawable,
         x: i16,
         y: i16,
         width: u16,
@@ -1898,7 +2145,7 @@ pub const get_image = struct {
         buf[0] = @intFromEnum(Opcode.get_image);
         buf[1] = @intFromEnum(args.format);
         writeIntNative(u16, buf + 2, @as(u16, @intCast(len >> 2)));
-        writeIntNative(u32, buf + 4, args.drawable_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.drawable_id));
         writeIntNative(i16, buf + 8, args.x);
         writeIntNative(i16, buf + 10, args.y);
         writeIntNative(u16, buf + 12, args.width);
@@ -1911,7 +2158,7 @@ pub const get_image = struct {
         depth: u8,
         sequence: u16,
         reply_len: u32,
-        visual: u32,
+        visual: Visual,
         unused: [20]u8, // padding
         _data_start: [0]u8,
 
@@ -1942,8 +2189,8 @@ pub const image_text8 = struct {
     }
     pub const max_len = getLen(255);
     pub const Args = struct {
-        drawable_id: u32,
-        gc_id: u32,
+        drawable_id: Drawable,
+        gc_id: GraphicsContext,
         x: i16,
         y: i16,
     };
@@ -1958,8 +2205,8 @@ pub const image_text8 = struct {
         const request_len = getLen(text_len);
         std.debug.assert(request_len & 0x3 == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
-        writeIntNative(u32, buf + 4, args.drawable_id);
-        writeIntNative(u32, buf + 8, args.gc_id);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.drawable_id));
+        writeIntNative(u32, buf + 8, @intFromEnum(args.gc_id));
         writeIntNative(i16, buf + 12, args.x);
         writeIntNative(i16, buf + 14, args.y);
     }
@@ -2287,16 +2534,16 @@ pub const ServerMsg = extern union {
 
         pub const Length = Error;
         pub const Name = Error;
-        pub const OpenFont = Font;
+        pub const OpenFont = FontError;
 
         comptime {
-            std.debug.assert(@sizeOf(Font) == 32);
+            std.debug.assert(@sizeOf(FontError) == 32);
         }
-        pub const Font = extern struct {
+        pub const FontError = extern struct {
             reponse_type: ErrorKind,
             code: ErrorCodeFont,
             sequence: u16,
-            bad_resource_id: u32,
+            bad_resource_id: Resource,
             minor_opcode: u16,
             major_opcode: Opcode,
             unused2: [21]u8,
@@ -2471,9 +2718,9 @@ pub const Event = extern union {
         keycode: u8,
         sequence: u16,
         time: Timestamp,
-        root: u32,
-        event: u32,
-        child: u32,
+        root: Window,
+        event: Window,
+        child: Window,
         root_x: i16,
         root_y: i16,
         event_x: i16,
@@ -2491,9 +2738,9 @@ pub const Event = extern union {
         detail: u8,
         sequence: u16,
         time: Timestamp,
-        root: u32,
-        event: u32,
-        child: u32,
+        root: Window,
+        event: Window,
+        child: Window,
         root_x: i16,
         root_y: i16,
         event_x: i16,
@@ -2510,7 +2757,7 @@ pub const Event = extern union {
         code: u8,
         unused: u8,
         sequence: u16,
-        window: u32,
+        window: Window,
         x: u16,
         y: u16,
         width: u16,
@@ -2542,7 +2789,7 @@ pub const Event = extern union {
         code: u8,
         unused: u8,
         sequence: u16,
-        drawable: u32,
+        drawable: Drawable,
         minor_opcode: u16,
         major_opcode: u8,
         _: [21]u8,
@@ -2555,8 +2802,8 @@ pub const Event = extern union {
         code: u8,
         unused: u8,
         sequence: u16,
-        parent: u32,
-        window: u32,
+        parent: Window,
+        window: Window,
         _: [20]u8,
     };
 
@@ -2567,9 +2814,9 @@ pub const Event = extern union {
         code: u8,
         unused: u8,
         sequence: u16,
-        event: u32,
-        window: u32,
-        parent: u32,
+        event: Window,
+        window: Window,
+        parent: Window,
         x: i16,
         y: i16,
         override_redirect: u8,
@@ -2583,9 +2830,9 @@ pub const Event = extern union {
         code: u8,
         unused: u8,
         sequence: u16,
-        event: u32,
-        window: u32,
-        above_sibling: u32,
+        event: Window,
+        window: Window,
+        above_sibling: Window,
         x: i16,
         y: i16,
         width: u16,
@@ -2702,8 +2949,8 @@ comptime {
     std.debug.assert(@sizeOf(Screen) == 40);
 }
 pub const Screen = extern struct {
-    root: u32,
-    colormap: u32,
+    root: Window,
+    colormap: ColorMap,
     white_pixel: u32,
     black_pixel: u32,
     input_masks: u32,
@@ -2713,7 +2960,7 @@ pub const Screen = extern struct {
     mm_height: u16,
     min_installed_maps: u16,
     max_installed_maps: u16,
-    root_visual: u32,
+    root_visual: Visual,
     backing_stores: u8,
     save_unders: u8,
     root_depth: u8,
@@ -2743,7 +2990,7 @@ pub const VisualType = extern struct {
         direct_color = 5,
     };
 
-    id: u32,
+    id: Visual,
     class: Class,
     bits_per_rgb_value: u8,
     colormap_entries: u16,
@@ -2858,7 +3105,7 @@ pub const ConnectSetup = struct {
     /// All the connect setup fields that are at fixed offsets
     pub const Fixed = extern struct {
         release_number: u32,
-        resource_id_base: u32,
+        resource_id_base: Resource,
         resource_id_mask: u32,
         motion_buffer_size: u32,
         vendor_len: u16,

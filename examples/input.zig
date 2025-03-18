@@ -80,7 +80,8 @@ pub fn main() !u8 {
     };
 
     // TODO: maybe need to call conn.setup.verify or something?
-    const window_id = conn.setup.fixed().resource_id_base;
+    const base_resource = conn.setup.fixed().resource_id_base;
+    const window_id = base_resource.asWindow();
     {
         var msg_buf: [x.create_window.max_len]u8 = undefined;
         const len = x.create_window.serialize(&msg_buf, .{
@@ -122,14 +123,14 @@ pub fn main() !u8 {
         try common.sendOne(conn.sock, &sequence, msg_buf[0..len]);
     }
 
-    const bg_gc_id = window_id + 1;
-    const fg_gc_id = window_id + 2;
-    const child_window_id = window_id + 3;
+    const bg_gc_id = base_resource.add(1).asGraphicsContext();
+    const fg_gc_id = base_resource.add(2).asGraphicsContext();
+    const child_window_id = base_resource.add(3).asWindow();
     {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = bg_gc_id,
-            .drawable_id = window_id,
+            .drawable_id = window_id.asDrawable(),
         }, .{
             .foreground = fg_color,
         });
@@ -139,7 +140,7 @@ pub fn main() !u8 {
         var msg_buf: [x.create_gc.max_len]u8 = undefined;
         const len = x.create_gc.serialize(&msg_buf, .{
             .gc_id = fg_gc_id,
-            .drawable_id = window_id,
+            .drawable_id = window_id.asDrawable(),
         }, .{
             .background = bg_color,
             .foreground = fg_color,
@@ -152,7 +153,7 @@ pub fn main() !u8 {
         const text_literal = [_]u16{'m'};
         const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
         var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
-        x.query_text_extents.serialize(&msg, fg_gc_id, text);
+        x.query_text_extents.serialize(&msg, fg_gc_id.asFontable(), text);
         try common.sendOne(conn.sock, &sequence, &msg);
     }
 
@@ -320,9 +321,9 @@ fn handleReply(
     sequence: *u16,
     state: *State,
     msg: *const x.ServerMsg.Reply,
-    window_id: u32,
-    bg_gc_id: u32,
-    fg_gc_id: u32,
+    window_id: x.Window,
+    bg_gc_id: x.GraphicsContext,
+    fg_gc_id: x.GraphicsContext,
     font_dims: FontDims,
 ) !bool {
     switch (state.grab) {
@@ -482,8 +483,8 @@ fn warpPointer(sock: std.posix.socket_t, sequence: *u16) !void {
     std.log.info("warping pointer 20 x 10...", .{});
     var msg: [x.warp_pointer.len]u8 = undefined;
     x.warp_pointer.serialize(&msg, .{
-        .src_window = 0,
-        .dst_window = 0,
+        .src_window = .none,
+        .dst_window = .none,
         .src_x = 0,
         .src_y = 0,
         .src_width = 0,
@@ -494,7 +495,7 @@ fn warpPointer(sock: std.posix.socket_t, sequence: *u16) !void {
     try common.sendOne(sock, sequence, &msg);
 }
 
-fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: u32, window_id: u32) !void {
+fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x.Window, window_id: x.Window) !void {
     {
         var msg_buf: [x.create_window.max_len]u8 = undefined;
         const len = x.create_window.serialize(&msg_buf, .{
@@ -508,7 +509,7 @@ fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: u32,
             .border_width = 0, // TODO: what is this?
             .class = .input_output,
             //.class = .input_only,
-            .visual_id = 0, // copy from parent
+            .visual_id = .copy_from_parent,
         }, .{
             //            .bg_pixmap = .copy_from_parent,
             //            .bg_pixel = bg_color,
@@ -625,7 +626,7 @@ const State = struct {
         },
     } = .initial,
 
-    fn toggleGrab(self: *State, sock: std.posix.socket_t, sequence: *u16, grab_window: u32) !void {
+    fn toggleGrab(self: *State, sock: std.posix.socket_t, sequence: *u16, grab_window: x.Window) !void {
         switch (self.grab) {
             .disabled => {
                 std.log.info("requesting grab...", .{});
@@ -637,8 +638,8 @@ const State = struct {
                     .event_mask = .{ .pointer_motion = 1 },
                     .pointer_mode = .synchronous,
                     .keyboard_mode = .asynchronous,
-                    .confine_to = if (self.confine_grab) grab_window else 0,
-                    .cursor = 0,
+                    .confine_to = if (self.confine_grab) grab_window else .none,
+                    .cursor = .none,
                     .time = .current_time,
                 });
                 try common.sendOne(sock, sequence, &msg);
@@ -666,8 +667,8 @@ const State = struct {
 fn renderString(
     sock: std.posix.socket_t,
     sequence: *u16,
-    drawable_id: u32,
-    fg_gc_id: u32,
+    drawable_id: x.Drawable,
+    fg_gc_id: x.GraphicsContext,
     pos_x: i16,
     pos_y: i16,
     comptime fmt: []const u8,
@@ -688,16 +689,16 @@ fn renderString(
 fn render(
     sock: std.posix.socket_t,
     sequence: *u16,
-    drawable_id: u32,
-    bg_gc_id: u32,
-    fg_gc_id: u32,
+    window_id: x.Window,
+    bg_gc_id: x.GraphicsContext,
+    fg_gc_id: x.GraphicsContext,
     font_dims: FontDims,
     state: State,
 ) !void {
     _ = bg_gc_id;
     {
         var msg: [x.clear_area.len]u8 = undefined;
-        x.clear_area.serialize(&msg, false, drawable_id, .{
+        x.clear_area.serialize(&msg, false, window_id, .{
             .x = 0,
             .y = 0,
             .width = window_width,
@@ -708,7 +709,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        drawable_id,
+        window_id.asDrawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (0 * font_dims.height),
@@ -721,7 +722,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        drawable_id,
+        window_id.asDrawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (1 * font_dims.height),
@@ -739,7 +740,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        drawable_id,
+        window_id.asDrawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (2 * font_dims.height),
@@ -749,7 +750,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        drawable_id,
+        window_id.asDrawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (3 * font_dims.height),
@@ -759,7 +760,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        drawable_id,
+        window_id.asDrawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (4 * font_dims.height),
@@ -769,7 +770,7 @@ fn render(
     try renderString(
         sock,
         sequence,
-        drawable_id,
+        window_id.asDrawable(),
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (5 * font_dims.height),
@@ -791,7 +792,7 @@ fn render(
         try renderString(
             sock,
             sequence,
-            drawable_id,
+            window_id.asDrawable(),
             fg_gc_id,
             font_dims.font_left,
             font_dims.font_ascent + (6 * font_dims.height),
