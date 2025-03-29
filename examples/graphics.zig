@@ -127,7 +127,7 @@ pub fn main() !u8 {
     }
 
     const double_buf = try x.DoubleBuffer.init(
-        std.mem.alignForward(usize, 1000, std.heap.page_size_min),
+        std.mem.alignForward(usize, 1000, std.heap.pageSize()),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
     defer double_buf.deinit(); // not necessary but good to test
