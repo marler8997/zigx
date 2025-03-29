@@ -149,7 +149,7 @@ pub fn main() !u8 {
 
     const double_buf = try x.DoubleBuffer.init(
         // some of the QueryFont replies are huge!
-        std.mem.alignForward(usize, 1024 * 1024, std.heap.page_size_min),
+        std.mem.alignForward(usize, 1024 * 1024, std.heap.pageSize()),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
     // double_buf.deinit() (not necessary)
