@@ -901,6 +901,9 @@ pub const Window = enum(u32) {
         return @enumFromInt(i);
     }
 
+    pub fn resource(w: Window) Resource {
+        return @enumFromInt(@intFromEnum(w));
+    }
     pub fn drawable(w: Window) Drawable {
         return @enumFromInt(@intFromEnum(w));
     }
