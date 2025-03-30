@@ -3,13 +3,13 @@ const c = @cImport({
     @cDefine("XLIB_ILLEGAL_ACCESS", "1");
     @cInclude("X11/Xlib.h");
 });
-const x = @import("x");
+const x11 = @import("x11");
 const c_allocator = std.heap.c_allocator;
 
 fn sendAll(sock: std.posix.socket_t, data: []const u8) !void {
     var total_sent: usize = 0;
     while (true) {
-        const sent = try x.writeSock(sock, data[total_sent..], 0);
+        const sent = try x11.writeSock(sock, data[total_sent..], 0);
         total_sent += sent;
         std.debug.assert(total_sent != 0);
         if (total_sent == data.len) return;
@@ -17,7 +17,7 @@ fn sendAll(sock: std.posix.socket_t, data: []const u8) !void {
 }
 pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocket);
 fn readSocket(sock: std.posix.socket_t, buffer: []u8) !usize {
-    return x.readSock(sock, buffer, 0);
+    return x11.readSock(sock, buffer, 0);
 }
 
 export fn ZigXSetErrorHandler(handler: *const fn (*anyopaque, [*:0]const u8) callconv(.C) void, ctx: *anyopaque) void {
@@ -39,7 +39,7 @@ fn generateErrorEvent(display: *Display) void {
 }
 
 const GC = struct {
-    id: x.GraphicsContext,
+    id: x11.GraphicsContext,
 };
 
 const Display = struct {
@@ -54,20 +54,20 @@ export fn XOpenDisplay(display_opt: ?[*:0]const u8) ?*c.Display {
     return openDisplay(display_opt) catch return null;
 }
 fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!*c.Display {
-    // TODO: x.getDisplay allocates on windows, maybe we cache it on windows?
+    // TODO: x11.getDisplay allocates on windows, maybe we cache it on windows?
     // TODO: should an empty string be handled like null as well?
-    const display_spec = if (display_spec_opt) |d| std.mem.span(d) else x.getDisplay();
+    const display_spec = if (display_spec_opt) |d| std.mem.span(d) else x11.getDisplay();
     std.log.info("connecting to DISPLAY '{s}'", .{display_spec});
 
-    const parsed_display = x.parseDisplay(display_spec) catch |err|
+    const parsed_display = x11.parseDisplay(display_spec) catch |err|
         return reportError("invalid DISPLAY '{s}': {s}", .{ display_spec, @errorName(err) });
 
-    const sock = x.connect(display_spec, parsed_display) catch |err|
+    const sock = x11.connect(display_spec, parsed_display) catch |err|
         return reportError("failed to connect to DISPLAY '{s}': {s}", .{ display_spec, @errorName(err) });
-    errdefer x.disconnect(sock);
+    errdefer x11.disconnect(sock);
 
     const setup_header = blk: {
-        if (x.getAuthFilename(c_allocator) catch |err|
+        if (x11.getAuthFilename(c_allocator) catch |err|
             return reportError("failed to get auth filename with {s}", .{@errorName(err)})) |auth_filename|
         {
             defer auth_filename.deinit(c_allocator);
@@ -75,13 +75,13 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
                 break :blk hdr;
         }
 
-        var msg: [x.connect_setup.getLen(0, 0)]u8 = undefined;
-        x.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
+        var msg: [x11.connect_setup.getLen(0, 0)]u8 = undefined;
+        x11.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
         sendAll(sock, &msg) catch |err|
             return reportError("send connect setup failed with {s}", .{@errorName(err)});
 
         const reader = SocketReader{ .context = sock };
-        const connect_setup_header = x.readConnectSetupHeader(reader, .{}) catch |err|
+        const connect_setup_header = x11.readConnectSetupHeader(reader, .{}) catch |err|
             return reportError("failed to read connect setup with {s}", .{@errorName(err)});
         switch (connect_setup_header.status) {
             .failed => {
@@ -106,10 +106,10 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
     const buf = try c_allocator.allocWithOptions(u8, setup_header.getReplyLen(), 4, null);
     defer c_allocator.free(buf);
 
-    const connect_setup = x.ConnectSetup{ .buf = buf };
+    const connect_setup = x11.ConnectSetup{ .buf = buf };
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
     const reader = SocketReader{ .context = sock };
-    x.readFull(reader, connect_setup.buf) catch |err|
+    x11.readFull(reader, connect_setup.buf) catch |err|
         return reportError("failed to read connect setup with {s}", .{@errorName(err)});
 
     const fixed = connect_setup.fixed();
@@ -117,8 +117,8 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
         std.log.debug("{s}: {any}", .{ field.name, @field(fixed, field.name) });
     }
     //std.log.debug("vendor: {s}", .{try connect_setup.getVendorSlice(fixed.vendor_len)});
-    const format_list_offset = x.ConnectSetup.getFormatListOffset(fixed.vendor_len);
-    const format_list_limit = x.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
+    const format_list_offset = x11.ConnectSetup.getFormatListOffset(fixed.vendor_len);
+    const format_list_limit = x11.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
     std.log.debug("fmt list off={} limit={}", .{ format_list_offset, format_list_limit });
     //const formats = try connect_setup.getFormatList(format_list_offset, format_list_limit);
     //for (formats) |format, i| {
@@ -171,22 +171,22 @@ fn connectSetupAuth(
     display_num: ?u32,
     sock: std.posix.socket_t,
     auth_filename: []const u8,
-) error{ Reported, OutOfMemory }!?x.ConnectSetup.Header {
-    const auth_mapped = x.MappedFile.init(auth_filename, .{}) catch |err|
+) error{ Reported, OutOfMemory }!?x11.ConnectSetup.Header {
+    const auth_mapped = x11.MappedFile.init(auth_filename, .{}) catch |err|
         return reportError("failed to mmap auth file '{s}' with {s}", .{ auth_filename, @errorName(err) });
     defer auth_mapped.unmap();
 
-    var auth_filter = x.AuthFilter{
+    var auth_filter = x11.AuthFilter{
         .addr = .{ .family = .wild, .data = &[0]u8{} },
         .display_num = display_num,
     };
 
-    var addr_buf: [x.max_sock_filter_addr]u8 = undefined;
+    var addr_buf: [x11.max_sock_filter_addr]u8 = undefined;
     auth_filter.applySocket(sock, &addr_buf) catch |err| {
         std.log.warn("failed to apply socket to auth filter with {s}", .{@errorName(err)});
     };
 
-    var auth_it = x.AuthIterator{ .mem = auth_mapped.mem };
+    var auth_it = x11.AuthIterator{ .mem = auth_mapped.mem };
     while (auth_it.next() catch {
         std.log.warn("auth file '{s}' is invalid", .{auth_filename});
         return null;
@@ -197,24 +197,24 @@ fn connectSetupAuth(
         }
         const name = entry.name(auth_mapped.mem);
         const data = entry.data(auth_mapped.mem);
-        const name_x = x.Slice(u16, [*]const u8){
+        const name_x = x11.Slice(u16, [*]const u8){
             .ptr = name.ptr,
             .len = @intCast(name.len),
         };
-        const data_x = x.Slice(u16, [*]const u8){
+        const data_x = x11.Slice(u16, [*]const u8){
             .ptr = data.ptr,
             .len = @intCast(data.len),
         };
 
-        const msg_len = x.connect_setup.getLen(name_x.len, data_x.len);
+        const msg_len = x11.connect_setup.getLen(name_x.len, data_x.len);
         const msg = try c_allocator.alloc(u8, msg_len);
         defer c_allocator.free(msg);
-        x.connect_setup.serialize(msg.ptr, 11, 0, name_x, data_x);
+        x11.connect_setup.serialize(msg.ptr, 11, 0, name_x, data_x);
         sendAll(sock, msg) catch |err|
             return reportError("send connect setup failed with {s}", .{@errorName(err)});
 
         const reader = SocketReader{ .context = sock };
-        const connect_setup_header = x.readConnectSetupHeader(reader, .{}) catch |err|
+        const connect_setup_header = x11.readConnectSetupHeader(reader, .{}) catch |err|
             return reportError("failed to read connect setup with {s}", .{@errorName(err)});
         switch (connect_setup_header.status) {
             .failed => {
@@ -278,11 +278,11 @@ export fn XCreateSimpleWindow(
 
     const display_full: *Display = @fieldParentPtr("public", display);
 
-    const new_window: x.Window = .fromInt(display_full.resource_id_base + display_full.next_resource_id_offset);
+    const new_window: x11.Window = .fromInt(display_full.resource_id_base + display_full.next_resource_id_offset);
     display_full.next_resource_id_offset += 1;
 
-    var msg_buf: [x.create_window.max_len]u8 = undefined;
-    const len = x.create_window.serialize(&msg_buf, .{
+    var msg_buf: [x11.create_window.max_len]u8 = undefined;
+    const len = x11.create_window.serialize(&msg_buf, .{
         .window_id = new_window,
         .parent_window_id = .fromInt(root_window),
         // TODO: set this correctly
@@ -294,40 +294,9 @@ export fn XCreateSimpleWindow(
         .border_width = @intCast(border_width),
         // TODO
         .class = .copy_from_parent,
-        //        .class = .input_output,
+        // .class = .input_output,
         .visual_id = .fromInt(display.screens[0].root_visual_num),
-    }, .{
-        //        //            .bg_pixmap = .copy_from_parent,
-        //        .bg_pixel = 0xaabbccdd,
-        ////            //.border_pixmap =
-        ////            .border_pixel = 0x01fa8ec9,
-        ////            .bit_gravity = .north_west,
-        ////            .win_gravity = .east,
-        ////            .backing_store = .when_mapped,
-        ////            .backing_planes = 0x1234,
-        ////            .backing_pixel = 0xbbeeeeff,
-        ////            .override_redirect = true,
-        ////            .save_under = true,
-        //        .event_mask =
-        //            x.event.key_press
-        //            | x.event.key_release
-        //            | x.event.button_press
-        //            | x.event.button_release
-        //            | x.event.enter_window
-        //            | x.event.leave_window
-        //            | x.event.pointer_motion
-        //            //                | x.event.pointer_motion_hint WHAT THIS DO?
-        //            //                | x.event.button1_motion  WHAT THIS DO?
-        //            //                | x.event.button2_motion  WHAT THIS DO?
-        //            //                | x.event.button3_motion  WHAT THIS DO?
-        //            //                | x.event.button4_motion  WHAT THIS DO?
-        //            //                | x.event.button5_motion  WHAT THIS DO?
-        //            //                | x.event.button_motion  WHAT THIS DO?
-        //            | x.event.keymap_state
-        //            | x.event.exposure
-        //            ,
-        //        //            .dont_propagate = 1,
-    });
+    }, .{});
     sendAll(display.fd, msg_buf[0..len]) catch |err| {
         reportErrorRaw("failed to send CreateWindow message with {s}", .{@errorName(err)});
         generateErrorEvent(display_full);
@@ -345,7 +314,7 @@ export fn XCreateGC(
 ) c.GC {
     const display_full: *Display = @fieldParentPtr("public", display);
 
-    const gc_id: x.GraphicsContext = .fromInt(display_full.resource_id_base + display_full.next_resource_id_offset);
+    const gc_id: x11.GraphicsContext = .fromInt(display_full.resource_id_base + display_full.next_resource_id_offset);
     display_full.next_resource_id_offset += 1;
 
     const gc = c_allocator.create(GC) catch @panic("Out of memory");
@@ -354,8 +323,8 @@ export fn XCreateGC(
     if (value_mask != 0) @panic("todo: non-zero value_mask");
     if (values) |_| @panic("todo: non-zero values");
 
-    var msg_buf: [x.create_gc.max_len]u8 = undefined;
-    const len = x.create_gc.serialize(&msg_buf, .{
+    var msg_buf: [x11.create_gc.max_len]u8 = undefined;
+    const len = x11.create_gc.serialize(&msg_buf, .{
         .gc_id = gc_id,
         .drawable_id = .fromInt(drawable),
     }, .{
@@ -373,8 +342,8 @@ export fn XMapRaised(display: *c.Display, window: c.Window) c_int {
     const display_full: *Display = @fieldParentPtr("public", display);
 
     std.log.info("TODO: send ConfigureWindow stack-mode=Above", .{});
-    var msg: [x.map_window.len]u8 = undefined;
-    x.map_window.serialize(&msg, .fromInt(window));
+    var msg: [x11.map_window.len]u8 = undefined;
+    x11.map_window.serialize(&msg, .fromInt(window));
     sendAll(display.fd, &msg) catch |err| {
         reportErrorRaw("failed to send MapWindow message with {s}", .{@errorName(err)});
         generateErrorEvent(display_full);
@@ -411,16 +380,16 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
     const display_full: *Display = @fieldParentPtr("public", display);
 
     //var header_buf: [32]u8 align(4) = undefined;
-    const len = x.readOneMsg(SocketReader{ .context = display.fd }, display_full.read_buf) catch |err| handleReadError(err);
+    const len = x11.readOneMsg(SocketReader{ .context = display.fd }, display_full.read_buf) catch |err| handleReadError(err);
 
     if (len > display_full.read_buf.len) {
         std.log.err("TODO: realloc read_buf len to be bigger", .{});
         //c_allocator.realloc();
-        x.readOneMsgFinish(SocketReader{ .context = display.fd }, display_full.read_buf) catch |err| handleReadError(err);
+        x11.readOneMsgFinish(SocketReader{ .context = display.fd }, display_full.read_buf) catch |err| handleReadError(err);
         @panic("todo");
     }
 
-    switch (x.serverMsgTaggedUnion(display_full.read_buf.ptr)) {
+    switch (x11.serverMsgTaggedUnion(display_full.read_buf.ptr)) {
         .expose => |e| {
             event.* = .{
                 .xexpose = .{
@@ -446,8 +415,8 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
 export fn XSelectInput(display: *c.Display, window: c.Window, event_mask: c_ulong) c_int {
     const display_full: *Display = @fieldParentPtr("public", display);
 
-    var msg_buf: [x.change_window_attributes.max_len]u8 = undefined;
-    const len = x.change_window_attributes.serialize(&msg_buf, .fromInt(window), .{
+    var msg_buf: [x11.change_window_attributes.max_len]u8 = undefined;
+    const len = x11.change_window_attributes.serialize(&msg_buf, .fromInt(window), .{
         .event_mask = @bitCast(@as(u32, @truncate(event_mask))),
     });
     sendAll(display.fd, msg_buf[0..len]) catch |err| {

@@ -1,5 +1,5 @@
 const std = @import("std");
-const x = @import("x");
+const x11 = @import("x11");
 const common = @import("common.zig");
 
 pub const log_level = std.log.Level.info;
@@ -20,7 +20,7 @@ pub fn main() !u8 {
     }
     const font_name = cmd_args[0];
 
-    try x.wsaStartup();
+    try x11.wsaStartup();
     const conn = try common.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
@@ -28,24 +28,24 @@ pub fn main() !u8 {
     var sequence: u16 = 0;
 
     {
-        const font_name_slice = x.Slice(u16, [*]const u8){ .ptr = font_name.ptr, .len = @intCast(font_name.len) };
-        const msg = try allocator.alloc(u8, x.open_font.getLen(font_name_slice.len));
+        const font_name_slice = x11.Slice(u16, [*]const u8){ .ptr = font_name.ptr, .len = @intCast(font_name.len) };
+        const msg = try allocator.alloc(u8, x11.open_font.getLen(font_name_slice.len));
         defer allocator.free(msg);
-        x.open_font.serialize(msg.ptr, font_id, font_name_slice);
+        x11.open_font.serialize(msg.ptr, font_id, font_name_slice);
         try conn.sendOne(&sequence, msg);
     }
 
     {
-        var msg: [x.query_font.len]u8 = undefined;
-        x.query_font.serialize(&msg, font_id.fontable());
+        var msg: [x11.query_font.len]u8 = undefined;
+        x11.query_font.serialize(&msg, font_id.fontable());
         try conn.sendOne(&sequence, &msg);
     }
 
     const stdout = std.io.getStdOut().writer();
     {
-        const msg_bytes = try x.readOneMsgAlloc(allocator, conn.reader());
+        const msg_bytes = try x11.readOneMsgAlloc(allocator, conn.reader());
         defer allocator.free(msg_bytes);
-        const msg = try common.asReply(x.ServerMsg.QueryFont, msg_bytes);
+        const msg = try common.asReply(x11.ServerMsg.QueryFont, msg_bytes);
         try stdout.print("{}\n", .{msg});
         std.debug.assert(sequence == msg.sequence);
         const lists = msg.lists();

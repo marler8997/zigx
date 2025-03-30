@@ -1,5 +1,5 @@
 const std = @import("std");
-const x = @import("x");
+const x11 = @import("x11");
 const common = @This();
 
 pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocket);
@@ -16,7 +16,7 @@ fn checkMessageLengthFitsInBuffer(message_length: usize, buffer_limit: usize) !v
 }
 
 pub fn sendNoSequencing(sock: std.posix.socket_t, data: []const u8) !void {
-    const sent = try x.writeSock(sock, data, 0);
+    const sent = try x11.writeSock(sock, data, 0);
     if (sent != data.len) {
         std.log.err("send {} only sent {}\n", .{ data.len, sent });
         return error.DidNotSendAllData;
@@ -29,7 +29,7 @@ pub fn sendOne(sock: std.posix.socket_t, sequence: *u16, data: []const u8) !void
 
 pub const ConnectResult = struct {
     sock: std.posix.socket_t,
-    setup: x.ConnectSetup,
+    setup: x11.ConnectSetup,
     pub fn reader(self: ConnectResult) SocketReader {
         return .{ .context = self.sock };
     }
@@ -45,11 +45,11 @@ pub const ConnectResult = struct {
 pub fn connectSetupMaxAuth(
     sock: std.posix.socket_t,
     comptime max_auth_len: usize,
-    auth_name: x.Slice(u16, [*]const u8),
-    auth_data: x.Slice(u16, [*]const u8),
+    auth_name: x11.Slice(u16, [*]const u8),
+    auth_data: x11.Slice(u16, [*]const u8),
 ) !?u16 {
-    var buf: [x.connect_setup.auth_offset + max_auth_len]u8 = undefined;
-    const len = x.connect_setup.getLen(auth_name.len, auth_data.len);
+    var buf: [x11.connect_setup.auth_offset + max_auth_len]u8 = undefined;
+    const len = x11.connect_setup.getLen(auth_name.len, auth_data.len);
     if (len > max_auth_len)
         return error.AuthTooBig;
     return connectSetup(sock, buf[0..len], auth_name, auth_data);
@@ -58,16 +58,16 @@ pub fn connectSetupMaxAuth(
 pub fn connectSetup(
     sock: std.posix.socket_t,
     msg: []u8,
-    auth_name: x.Slice(u16, [*]const u8),
-    auth_data: x.Slice(u16, [*]const u8),
+    auth_name: x11.Slice(u16, [*]const u8),
+    auth_data: x11.Slice(u16, [*]const u8),
 ) !?u16 {
-    std.debug.assert(msg.len == x.connect_setup.getLen(auth_name.len, auth_data.len));
+    std.debug.assert(msg.len == x11.connect_setup.getLen(auth_name.len, auth_data.len));
 
-    x.connect_setup.serialize(msg.ptr, 11, 0, auth_name, auth_data);
+    x11.connect_setup.serialize(msg.ptr, 11, 0, auth_name, auth_data);
     try sendNoSequencing(sock, msg);
 
     const reader = SocketReader{ .context = sock };
-    const connect_setup_header = try x.readConnectSetupHeader(reader, .{});
+    const connect_setup_header = try x11.readConnectSetupHeader(reader, .{});
     switch (connect_setup_header.status) {
         .failed => {
             std.log.err("connect setup failed, version={}.{}, reason='{s}'", .{
@@ -104,15 +104,15 @@ fn connectSetupAuth(
     //if (try connectSetupMaxAuth(sock, 1000, .{ .ptr = "wat", .len = 3}, .{ .ptr = undefined, .len = 0})) |_|
     //    @panic("todo");
 
-    const auth_mapped = try x.MappedFile.init(auth_filename, .{});
+    const auth_mapped = try x11.MappedFile.init(auth_filename, .{});
     defer auth_mapped.unmap();
 
-    var auth_filter = x.AuthFilter{
+    var auth_filter = x11.AuthFilter{
         .addr = .{ .family = .wild, .data = &[0]u8{} },
         .display_num = display_num,
     };
 
-    var addr_buf: [x.max_sock_filter_addr]u8 = undefined;
+    var addr_buf: [x11.max_sock_filter_addr]u8 = undefined;
     if (auth_filter.applySocket(sock, &addr_buf)) {
         std.log.debug("applied address filter {}", .{auth_filter.addr});
     } else |err| {
@@ -120,7 +120,7 @@ fn connectSetupAuth(
         std.log.warn("failed to apply socket to auth filter with {s}", .{@errorName(err)});
     }
 
-    var auth_it = x.AuthIterator{ .mem = auth_mapped.mem };
+    var auth_it = x11.AuthIterator{ .mem = auth_mapped.mem };
     while (auth_it.next() catch {
         std.log.warn("auth file '{s}' is invalid", .{auth_filename});
         return null;
@@ -131,11 +131,11 @@ fn connectSetupAuth(
         }
         const name = entry.name(auth_mapped.mem);
         const data = entry.data(auth_mapped.mem);
-        const name_x = x.Slice(u16, [*]const u8){
+        const name_x = x11.Slice(u16, [*]const u8){
             .ptr = name.ptr,
             .len = @intCast(name.len),
         };
-        const data_x = x.Slice(u16, [*]const u8){
+        const data_x = x11.Slice(u16, [*]const u8){
             .ptr = data.ptr,
             .len = @intCast(data.len),
         };
@@ -148,20 +148,20 @@ fn connectSetupAuth(
 }
 
 pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
-    const display = x.getDisplay();
-    const parsed_display = x.parseDisplay(display) catch |err| {
+    const display = x11.getDisplay();
+    const parsed_display = x11.parseDisplay(display) catch |err| {
         std.log.err("invalid display '{s}': {s}", .{ display, @errorName(err) });
         std.process.exit(0xff);
     };
 
-    const sock = x.connect(display, parsed_display) catch |err| {
+    const sock = x11.connect(display, parsed_display) catch |err| {
         std.log.err("failed to connect to display '{s}': {s}", .{ display, @errorName(err) });
         std.process.exit(0xff);
     };
-    errdefer x.disconnect(sock);
+    errdefer x11.disconnect(sock);
 
     const setup_reply_len: u16 = blk: {
-        if (try x.getAuthFilename(allocator)) |auth_filename| {
+        if (try x11.getAuthFilename(allocator)) |auth_filename| {
             defer auth_filename.deinit(allocator);
             if (try connectSetupAuth(parsed_display.display_num, sock, auth_filename.str)) |reply_len|
                 break :blk reply_len;
@@ -169,7 +169,7 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
 
         // Try no authentication
         std.log.debug("trying no auth", .{});
-        var msg_buf: [x.connect_setup.getLen(0, 0)]u8 = undefined;
+        var msg_buf: [x11.connect_setup.getLen(0, 0)]u8 = undefined;
         if (try connectSetup(
             sock,
             &msg_buf,
@@ -183,18 +183,18 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
         std.process.exit(0xff);
     };
 
-    const connect_setup = x.ConnectSetup{
+    const connect_setup = x11.ConnectSetup{
         .buf = try allocator.allocWithOptions(u8, setup_reply_len, 4, null),
     };
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
     const reader = SocketReader{ .context = sock };
-    try x.readFull(reader, connect_setup.buf);
+    try x11.readFull(reader, connect_setup.buf);
 
     return ConnectResult{ .sock = sock, .setup = connect_setup };
 }
 
 pub fn asReply(comptime T: type, msg_bytes: []align(4) u8) !*T {
-    const generic_msg: *x.ServerMsg.Generic = @ptrCast(msg_bytes.ptr);
+    const generic_msg: *x11.ServerMsg.Generic = @ptrCast(msg_bytes.ptr);
     if (generic_msg.kind != .reply) {
         std.log.err("expected reply but got {}", .{generic_msg});
         return error.UnexpectedReply;
@@ -203,7 +203,7 @@ pub fn asReply(comptime T: type, msg_bytes: []align(4) u8) !*T {
 }
 
 fn readSocket(sock: std.posix.socket_t, buffer: []u8) !usize {
-    return x.readSock(sock, buffer, 0);
+    return x11.readSock(sock, buffer, 0);
 }
 
 /// X server extension info.
@@ -226,24 +226,24 @@ pub const ExtensionVersion = struct {
 pub fn getExtensionInfo(
     sock: std.posix.socket_t,
     sequence: *u16,
-    buffer: *x.ContiguousReadBuffer,
+    buffer: *x11.ContiguousReadBuffer,
     comptime extension_name: []const u8,
 ) !?ExtensionInfo {
     const reader = common.SocketReader{ .context = sock };
     const buffer_limit = buffer.half_len;
 
     {
-        const ext_name = comptime x.Slice(u16, [*]const u8).initComptime(extension_name);
-        var message_buffer: [x.query_extension.getLen(ext_name.len)]u8 = undefined;
-        x.query_extension.serialize(&message_buffer, ext_name);
+        const ext_name = comptime x11.Slice(u16, [*]const u8).initComptime(extension_name);
+        var message_buffer: [x11.query_extension.getLen(ext_name.len)]u8 = undefined;
+        x11.query_extension.serialize(&message_buffer, ext_name);
         try common.sendOne(sock, sequence, &message_buffer);
     }
-    const message_length = try x.readOneMsg(reader, @alignCast(buffer.nextReadBuffer()));
+    const message_length = try x11.readOneMsg(reader, @alignCast(buffer.nextReadBuffer()));
     try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
     const optional_extension = blk: {
-        switch (x.serverMsgTaggedUnion(@alignCast(buffer.double_buffer_ptr))) {
+        switch (x11.serverMsgTaggedUnion(@alignCast(buffer.double_buffer_ptr))) {
             .reply => |msg_reply| {
-                const msg: *x.ServerMsg.QueryExtension = @ptrCast(msg_reply);
+                const msg: *x11.ServerMsg.QueryExtension = @ptrCast(msg_reply);
                 if (msg.present == 0) {
                     std.log.info("{s} extension: not present", .{extension_name});
                     break :blk null;
@@ -262,7 +262,7 @@ pub fn getExtensionInfo(
                 };
             },
             else => |msg| {
-                std.log.err("expected a reply for `x.query_extension` but got {}", .{msg});
+                std.log.err("expected a reply for `x11.query_extension` but got {}", .{msg});
                 return error.ExpectedReplyButGotSomethingElse;
             },
         }

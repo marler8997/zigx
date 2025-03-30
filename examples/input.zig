@@ -1,5 +1,5 @@
 const std = @import("std");
-const x = @import("x");
+const x11 = @import("x11");
 const common = @import("common.zig");
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -21,24 +21,24 @@ const bg_color = 0x231a20;
 const fg_color = 0xadccfa;
 
 const Ids = struct {
-    base: x.ResourceBase,
+    base: x11.ResourceBase,
 
-    pub fn window(self: Ids) x.Window {
+    pub fn window(self: Ids) x11.Window {
         return self.base.add(0).window();
     }
-    pub fn bg(self: Ids) x.GraphicsContext {
+    pub fn bg(self: Ids) x11.GraphicsContext {
         return self.base.add(1).graphicsContext();
     }
-    pub fn fg(self: Ids) x.GraphicsContext {
+    pub fn fg(self: Ids) x11.GraphicsContext {
         return self.base.add(2).graphicsContext();
     }
-    pub fn childWindow(self: Ids) x.Window {
+    pub fn childWindow(self: Ids) x11.Window {
         return self.base.add(3).window();
     }
 };
 
 pub fn main() !u8 {
-    try x.wsaStartup();
+    try x11.wsaStartup();
     const conn = try common.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
@@ -48,14 +48,14 @@ pub fn main() !u8 {
     {
         var sym_key_map = std.AutoHashMapUnmanaged(u32, Key){};
         defer sym_key_map.deinit(allocator);
-        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.kbd_escape), Key.escape);
-        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.latin_w), Key.w);
-        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.latin_i), Key.i);
-        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.latin_d), Key.d);
-        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.latin_g), Key.g);
-        try sym_key_map.put(allocator, @intFromEnum(x.charset.Combined.latin_c), Key.c);
+        try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.kbd_escape), Key.escape);
+        try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_w), Key.w);
+        try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_i), Key.i);
+        try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_d), Key.d);
+        try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_g), Key.g);
+        try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_c), Key.c);
 
-        const keymap = try x.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed().*);
+        const keymap = try x11.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed().*);
         defer keymap.deinit(allocator);
         std.log.info("Keymap: syms_per_code={} total_syms={}", .{ keymap.syms_per_code, keymap.syms.len });
         {
@@ -82,8 +82,8 @@ pub fn main() !u8 {
             std.log.debug("{s}: {any}", .{ field.name, @field(fixed, field.name) });
         }
         std.log.debug("vendor: {s}", .{try conn.setup.getVendorSlice(fixed.vendor_len)});
-        const format_list_offset = x.ConnectSetup.getFormatListOffset(fixed.vendor_len);
-        const format_list_limit = x.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
+        const format_list_offset = x11.ConnectSetup.getFormatListOffset(fixed.vendor_len);
+        const format_list_limit = x11.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
         std.log.debug("fmt list off={} limit={}", .{ format_list_offset, format_list_limit });
         const formats = try conn.setup.getFormatList(format_list_offset, format_list_limit);
         for (formats, 0..) |format, i| {
@@ -100,8 +100,8 @@ pub fn main() !u8 {
     const ids: Ids = .{ .base = conn.setup.fixed().resource_id_base };
 
     {
-        var msg_buf: [x.create_window.max_len]u8 = undefined;
-        const len = x.create_window.serialize(&msg_buf, .{
+        var msg_buf: [x11.create_window.max_len]u8 = undefined;
+        const len = x11.create_window.serialize(&msg_buf, .{
             .window_id = ids.window(),
             .parent_window_id = screen.root,
             .depth = 0, // dont care, inherit from parent
@@ -141,8 +141,8 @@ pub fn main() !u8 {
     }
 
     {
-        var msg_buf: [x.create_gc.max_len]u8 = undefined;
-        const len = x.create_gc.serialize(&msg_buf, .{
+        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
+        const len = x11.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.bg(),
             .drawable_id = ids.window().drawable(),
         }, .{
@@ -151,8 +151,8 @@ pub fn main() !u8 {
         try common.sendOne(conn.sock, &sequence, msg_buf[0..len]);
     }
     {
-        var msg_buf: [x.create_gc.max_len]u8 = undefined;
-        const len = x.create_gc.serialize(&msg_buf, .{
+        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
+        const len = x11.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.fg(),
             .drawable_id = ids.window().drawable(),
         }, .{
@@ -165,13 +165,13 @@ pub fn main() !u8 {
     // get some font information
     {
         const text_literal = [_]u16{'m'};
-        const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
-        var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
-        x.query_text_extents.serialize(&msg, ids.fg().fontable(), text);
+        const text = x11.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
+        var msg: [x11.query_text_extents.getLen(text.len)]u8 = undefined;
+        x11.query_text_extents.serialize(&msg, ids.fg().fontable(), text);
         try common.sendOne(conn.sock, &sequence, &msg);
     }
 
-    const double_buf = try x.DoubleBuffer.init(
+    const double_buf = try x11.DoubleBuffer.init(
         std.mem.alignForward(usize, 1000, std.heap.pageSize()),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
@@ -180,10 +180,10 @@ pub fn main() !u8 {
     var buf = double_buf.contiguousReadBuffer();
 
     const font_dims: FontDims = blk: {
-        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
-        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
-                const msg: *x.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
+                const msg: *x11.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
                 break :blk .{
                     .width = @intCast(msg.overall_width),
                     .height = @intCast(msg.font_ascent + msg.font_descent),
@@ -199,8 +199,8 @@ pub fn main() !u8 {
     };
 
     {
-        var msg: [x.map_window.len]u8 = undefined;
-        x.map_window.serialize(&msg, ids.window());
+        var msg: [x11.map_window.len]u8 = undefined;
+        x11.map_window.serialize(&msg, ids.window());
         try common.sendOne(conn.sock, &sequence, &msg);
     }
     var state = State{};
@@ -212,7 +212,7 @@ pub fn main() !u8 {
                 std.log.err("buffer size {} not big enough!", .{buf.half_len});
                 return 1;
             }
-            const len = try x.readSock(conn.sock, recv_buf, 0);
+            const len = try x11.readSock(conn.sock, recv_buf, 0);
             if (len == 0) {
                 std.log.info("X server connection closed", .{});
                 return 0;
@@ -223,12 +223,12 @@ pub fn main() !u8 {
             const data = buf.nextReservedBuffer();
             if (data.len < 32)
                 break;
-            const msg_len = x.parseMsgLen(data[0..32].*);
+            const msg_len = x11.parseMsgLen(data[0..32].*);
             if (data.len < msg_len)
                 break;
             buf.release(msg_len);
             //buf.resetIfEmpty();
-            switch (x.serverMsgTaggedUnion(@alignCast(data.ptr))) {
+            switch (x11.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
                     std.log.err("{}", .{msg});
                     return 1;
@@ -334,10 +334,10 @@ fn handleReply(
     sock: std.posix.socket_t,
     sequence: *u16,
     state: *State,
-    msg: *const x.ServerMsg.Reply,
-    window_id: x.Window,
-    bg_gc_id: x.GraphicsContext,
-    fg_gc_id: x.GraphicsContext,
+    msg: *const x11.ServerMsg.Reply,
+    window_id: x11.Window,
+    bg_gc_id: x11.GraphicsContext,
+    fg_gc_id: x11.GraphicsContext,
     font_dims: FontDims,
 ) !bool {
     switch (state.grab) {
@@ -368,14 +368,14 @@ fn handleReply(
     switch (state.disable_input_device) {
         .initial, .extension_missing, .no_pointer_to_disable, .disabled => {},
         .query_extension => |query_sequence| if (msg.sequence == query_sequence) {
-            const msg_ext: *const x.ServerMsg.QueryExtension = @ptrCast(msg);
+            const msg_ext: *const x11.ServerMsg.QueryExtension = @ptrCast(msg);
             if (msg_ext.present == 0) {
                 state.disable_input_device = .extension_missing;
             } else {
                 std.debug.assert(msg_ext.present == 1);
-                const name = comptime x.Slice(u16, [*]const u8).initComptime("XInputExtension");
-                var get_version_msg: [x.inputext.get_extension_version.getLen(name.len)]u8 = undefined;
-                x.inputext.get_extension_version.serialize(&get_version_msg, msg_ext.major_opcode, name);
+                const name = comptime x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
+                var get_version_msg: [x11.inputext.get_extension_version.getLen(name.len)]u8 = undefined;
+                x11.inputext.get_extension_version.serialize(&get_version_msg, msg_ext.major_opcode, name);
                 try common.sendOne(sock, sequence, &get_version_msg);
                 state.disable_input_device = .{ .get_version = .{
                     .sequence = sequence.*,
@@ -387,19 +387,19 @@ fn handleReply(
         .get_version => |info| if (msg.sequence == info.sequence) {
             const opcode = msg.flexible;
             const ptr: [*]const u8 = &msg.reserve_min;
-            const major = x.readIntNative(u16, ptr + 0);
-            const minor = x.readIntNative(u16, ptr + 2);
+            const major = x11.readIntNative(u16, ptr + 0);
+            const minor = x11.readIntNative(u16, ptr + 2);
             const present = msg.reserve_min[4];
-            if (opcode != @intFromEnum(x.inputext.ExtOpcode.get_extension_version))
-                std.debug.panic("invalid opcode in reply {}, expected {}", .{ opcode, @intFromEnum(x.inputext.ExtOpcode.get_extension_version) });
+            if (opcode != @intFromEnum(x11.inputext.ExtOpcode.get_extension_version))
+                std.debug.panic("invalid opcode in reply {}, expected {}", .{ opcode, @intFromEnum(x11.inputext.ExtOpcode.get_extension_version) });
             if (present == 0)
                 std.debug.panic("XInputExtension is not present, but it was before?", .{});
             if (major != 2)
                 std.debug.panic("XInputExtension major version is {} but need {}", .{ major, 2 });
             if (minor < 3)
                 std.debug.panic("XInputExtension minor version is {} but I've only tested >= {}", .{ minor, 3 });
-            var list_devices_msg: [x.inputext.list_input_devices.len]u8 = undefined;
-            x.inputext.list_input_devices.serialize(&list_devices_msg, info.ext_opcode);
+            var list_devices_msg: [x11.inputext.list_input_devices.len]u8 = undefined;
+            x11.inputext.list_input_devices.serialize(&list_devices_msg, info.ext_opcode);
             try common.sendOne(sock, sequence, &list_devices_msg);
             state.disable_input_device = .{ .list_devices = .{
                 .sequence = sequence.*,
@@ -408,7 +408,7 @@ fn handleReply(
             return true; // handled
         },
         .list_devices => |state_info| if (msg.sequence == state_info.sequence) {
-            const devices_reply: *const x.inputext.ListInputDevicesReply = @ptrCast(msg);
+            const devices_reply: *const x11.inputext.ListInputDevicesReply = @ptrCast(msg);
             var input_info_it = devices_reply.inputInfoIterator();
             var names_it = devices_reply.findNames();
             var selected_pointer_id: ?u8 = null;
@@ -430,9 +430,9 @@ fn handleReply(
             std.debug.assert((try names_it.next()) == null);
 
             if (selected_pointer_id) |pointer_id| {
-                const name = comptime x.Slice(u16, [*]const u8).initComptime("Device Enabled");
-                var intern_atom_msg: [x.intern_atom.getLen(name.len)]u8 = undefined;
-                x.intern_atom.serialize(&intern_atom_msg, .{
+                const name = comptime x11.Slice(u16, [*]const u8).initComptime("Device Enabled");
+                var intern_atom_msg: [x11.intern_atom.getLen(name.len)]u8 = undefined;
+                x11.intern_atom.serialize(&intern_atom_msg, .{
                     .only_if_exists = false,
                     .name = name,
                 });
@@ -448,9 +448,9 @@ fn handleReply(
             return true; // handled
         },
         .intern_atom => |info| if (msg.sequence == info.sequence) {
-            const atom = x.readIntNative(u32, msg.reserve_min[0..]);
-            var get_prop_msg: [x.inputext.get_property.len]u8 = undefined;
-            x.inputext.get_property.serialize(&get_prop_msg, info.ext_opcode, .{
+            const atom = x11.readIntNative(u32, msg.reserve_min[0..]);
+            var get_prop_msg: [x11.inputext.get_property.len]u8 = undefined;
+            x11.inputext.get_property.serialize(&get_prop_msg, info.ext_opcode, .{
                 .device_id = info.pointer_id,
                 .property = atom,
                 .type = 0,
@@ -468,17 +468,17 @@ fn handleReply(
             return true;
         },
         .get_prop => |info| if (msg.sequence == info.sequence) {
-            const reply: *const x.inputext.get_property.Reply = @ptrCast(msg);
+            const reply: *const x11.inputext.get_property.Reply = @ptrCast(msg);
             std.log.info("get_property returned {}", .{reply});
 
-            const change_prop_u8 = x.inputext.change_property.withFormat(u8);
+            const change_prop_u8 = x11.inputext.change_property.withFormat(u8);
             var change_prop_msg: [change_prop_u8.getLen(1)]u8 = undefined;
             change_prop_u8.serialize(&change_prop_msg, info.ext_opcode, .{
                 .device_id = info.pointer_id,
                 .mode = .replace,
                 .property = info.atom,
-                .type = @intFromEnum(x.Atom.INTEGER),
-                .values = x.Slice(u16, [*]const u8).initComptime(&[_]u8{0}),
+                .type = @intFromEnum(x11.Atom.INTEGER),
+                .values = x11.Slice(u16, [*]const u8).initComptime(&[_]u8{0}),
             });
             try common.sendOne(sock, sequence, &change_prop_msg);
             state.disable_input_device = .{ .disabled = .{
@@ -495,8 +495,8 @@ fn handleReply(
 
 fn warpPointer(sock: std.posix.socket_t, sequence: *u16) !void {
     std.log.info("warping pointer 20 x 10...", .{});
-    var msg: [x.warp_pointer.len]u8 = undefined;
-    x.warp_pointer.serialize(&msg, .{
+    var msg: [x11.warp_pointer.len]u8 = undefined;
+    x11.warp_pointer.serialize(&msg, .{
         .src_window = .none,
         .dst_window = .none,
         .src_x = 0,
@@ -509,10 +509,10 @@ fn warpPointer(sock: std.posix.socket_t, sequence: *u16) !void {
     try common.sendOne(sock, sequence, &msg);
 }
 
-fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x.Window, window_id: x.Window) !void {
+fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.Window, window_id: x11.Window) !void {
     {
-        var msg_buf: [x.create_window.max_len]u8 = undefined;
-        const len = x.create_window.serialize(&msg_buf, .{
+        var msg_buf: [x11.create_window.max_len]u8 = undefined;
+        const len = x11.create_window.serialize(&msg_buf, .{
             .window_id = window_id,
             .parent_window_id = parent_window_id,
             .depth = 0, // dont care, inherit from parent
@@ -537,30 +537,30 @@ fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x.Wi
             //            .override_redirect = true,
             //            .save_under = true,
             //            .event_mask =
-            //                  x.event.key_press
-            //                | x.event.key_release
-            //                | x.event.button_press
-            //                | x.event.button_release
-            //                | x.event.enter_window
-            //                | x.event.leave_window
-            //                | x.event.pointer_motion
-            ////                | x.event.pointer_motion_hint WHAT THIS DO?
-            ////                | x.event.button1_motion  WHAT THIS DO?
-            ////                | x.event.button2_motion  WHAT THIS DO?
-            ////                | x.event.button3_motion  WHAT THIS DO?
-            ////                | x.event.button4_motion  WHAT THIS DO?
-            ////                | x.event.button5_motion  WHAT THIS DO?
-            ////                | x.event.button_motion  WHAT THIS DO?
-            //                | x.event.keymap_state
-            //                | x.event.exposure
+            //                  x11.event.key_press
+            //                | x11.event.key_release
+            //                | x11.event.button_press
+            //                | x11.event.button_release
+            //                | x11.event.enter_window
+            //                | x11.event.leave_window
+            //                | x11.event.pointer_motion
+            ////                | x11.event.pointer_motion_hint WHAT THIS DO?
+            ////                | x11.event.button1_motion  WHAT THIS DO?
+            ////                | x11.event.button2_motion  WHAT THIS DO?
+            ////                | x11.event.button3_motion  WHAT THIS DO?
+            ////                | x11.event.button4_motion  WHAT THIS DO?
+            ////                | x11.event.button5_motion  WHAT THIS DO?
+            ////                | x11.event.button_motion  WHAT THIS DO?
+            //                | x11.event.keymap_state
+            //                | x11.event.exposure
             //                ,
             ////            .dont_propagate = 1,
         });
         try common.sendOne(sock, sequence, msg_buf[0..len]);
     }
     {
-        var msg: [x.map_window.len]u8 = undefined;
-        x.map_window.serialize(&msg, window_id);
+        var msg: [x11.map_window.len]u8 = undefined;
+        x11.map_window.serialize(&msg, window_id);
         try common.sendOne(sock, sequence, &msg);
     }
 }
@@ -569,9 +569,9 @@ fn disableInputDevice(sock: std.posix.socket_t, sequence: *u16, state: *State) !
     const already_fmt = "disable input device already requested, {s}...";
     switch (state.disable_input_device) {
         .initial, .no_pointer_to_disable => {
-            const name = comptime x.Slice(u16, [*]const u8).initComptime("XInputExtension");
-            var msg: [x.query_extension.getLen(name.len)]u8 = undefined;
-            x.query_extension.serialize(&msg, name);
+            const name = comptime x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
+            var msg: [x11.query_extension.getLen(name.len)]u8 = undefined;
+            x11.query_extension.serialize(&msg, name);
             try common.sendOne(sock, sequence, &msg);
             state.disable_input_device = .{ .query_extension = sequence.* };
         },
@@ -640,12 +640,12 @@ const State = struct {
         },
     } = .initial,
 
-    fn toggleGrab(self: *State, sock: std.posix.socket_t, sequence: *u16, grab_window: x.Window) !void {
+    fn toggleGrab(self: *State, sock: std.posix.socket_t, sequence: *u16, grab_window: x11.Window) !void {
         switch (self.grab) {
             .disabled => {
                 std.log.info("requesting grab...", .{});
-                var msg: [x.grab_pointer.len]u8 = undefined;
-                x.grab_pointer.serialize(&msg, .{
+                var msg: [x11.grab_pointer.len]u8 = undefined;
+                x11.grab_pointer.serialize(&msg, .{
                     //.owner_events = true,
                     .owner_events = false,
                     .grab_window = grab_window,
@@ -667,8 +667,8 @@ const State = struct {
             },
             .enabled => {
                 std.log.info("ungrabbing", .{});
-                var msg: [x.ungrab_pointer.len]u8 = undefined;
-                x.ungrab_pointer.serialize(&msg, .{
+                var msg: [x11.ungrab_pointer.len]u8 = undefined;
+                x11.ungrab_pointer.serialize(&msg, .{
                     .time = .current_time,
                 });
                 try common.sendOne(sock, sequence, &msg);
@@ -681,38 +681,38 @@ const State = struct {
 fn renderString(
     sock: std.posix.socket_t,
     sequence: *u16,
-    drawable_id: x.Drawable,
-    fg_gc_id: x.GraphicsContext,
+    drawable_id: x11.Drawable,
+    fg_gc_id: x11.GraphicsContext,
     pos_x: i16,
     pos_y: i16,
     comptime fmt: []const u8,
     args: anytype,
 ) !void {
-    var msg: [x.image_text8.max_len]u8 = undefined;
-    const text_buf = msg[x.image_text8.text_offset .. x.image_text8.text_offset + 0xff];
+    var msg: [x11.image_text8.max_len]u8 = undefined;
+    const text_buf = msg[x11.image_text8.text_offset .. x11.image_text8.text_offset + 0xff];
     const text_len: u8 = @intCast((std.fmt.bufPrint(text_buf, fmt, args) catch @panic("string too long")).len);
-    x.image_text8.serializeNoTextCopy(&msg, text_len, .{
+    x11.image_text8.serializeNoTextCopy(&msg, text_len, .{
         .drawable_id = drawable_id,
         .gc_id = fg_gc_id,
         .x = pos_x,
         .y = pos_y,
     });
-    try common.sendOne(sock, sequence, msg[0..x.image_text8.getLen(text_len)]);
+    try common.sendOne(sock, sequence, msg[0..x11.image_text8.getLen(text_len)]);
 }
 
 fn render(
     sock: std.posix.socket_t,
     sequence: *u16,
-    window_id: x.Window,
-    bg_gc_id: x.GraphicsContext,
-    fg_gc_id: x.GraphicsContext,
+    window_id: x11.Window,
+    bg_gc_id: x11.GraphicsContext,
+    fg_gc_id: x11.GraphicsContext,
     font_dims: FontDims,
     state: State,
 ) !void {
     _ = bg_gc_id;
     {
-        var msg: [x.clear_area.len]u8 = undefined;
-        x.clear_area.serialize(&msg, false, window_id, .{
+        var msg: [x11.clear_area.len]u8 = undefined;
+        x11.clear_area.serialize(&msg, false, window_id, .{
             .x = 0,
             .y = 0,
             .width = window_width,

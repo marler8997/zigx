@@ -1,6 +1,6 @@
 // A working example to test various parts of the API
 const std = @import("std");
-const x = @import("x");
+const x11 = @import("x11");
 const common = @import("common.zig");
 
 const Endian = std.builtin.Endian;
@@ -12,17 +12,17 @@ const window_width = 400;
 const window_height = 400;
 
 pub const Ids = struct {
-    base: x.ResourceBase,
-    pub fn window(self: Ids) x.Window {
+    base: x11.ResourceBase,
+    pub fn window(self: Ids) x11.Window {
         return self.base.add(0).window();
     }
-    pub fn bg_gc(self: Ids) x.GraphicsContext {
+    pub fn bg_gc(self: Ids) x11.GraphicsContext {
         return self.base.add(1).graphicsContext();
     }
-    pub fn fg_gc(self: Ids) x.GraphicsContext {
+    pub fn fg_gc(self: Ids) x11.GraphicsContext {
         return self.base.add(2).graphicsContext();
     }
-    pub fn pixmap(self: Ids) x.Pixmap {
+    pub fn pixmap(self: Ids) x11.Pixmap {
         return self.base.add(3).pixmap();
     }
 };
@@ -43,7 +43,7 @@ const ImageFormat = struct {
 };
 fn getImageFormat(
     endian: Endian,
-    formats: []align(4) const x.Format,
+    formats: []align(4) const x11.Format,
     root_depth: u8,
 ) !ImageFormat {
     var opt_match_index: ?usize = null;
@@ -64,7 +64,7 @@ fn getImageFormat(
     };
 }
 
-fn expectSequence(expected_sequence: u16, reply: *const x.ServerMsg.Reply) void {
+fn expectSequence(expected_sequence: u16, reply: *const x11.ServerMsg.Reply) void {
     if (expected_sequence != reply.sequence) std.debug.panic(
         "expected reply sequence {} but got {}",
         .{ expected_sequence, reply },
@@ -72,7 +72,7 @@ fn expectSequence(expected_sequence: u16, reply: *const x.ServerMsg.Reply) void 
 }
 
 pub fn main() !u8 {
-    try x.wsaStartup();
+    try x11.wsaStartup();
     const conn = try common.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
     var sequence: u16 = 0;
@@ -91,8 +91,8 @@ pub fn main() !u8 {
             },
         };
         std.log.debug("vendor: {s}", .{try conn.setup.getVendorSlice(fixed.vendor_len)});
-        const format_list_offset = x.ConnectSetup.getFormatListOffset(fixed.vendor_len);
-        const format_list_limit = x.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
+        const format_list_offset = x11.ConnectSetup.getFormatListOffset(fixed.vendor_len);
+        const format_list_limit = x11.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
         std.log.debug("fmt list off={} limit={}", .{ format_list_offset, format_list_limit });
         const formats = try conn.setup.getFormatList(format_list_offset, format_list_limit);
         for (formats, 0..) |format, i| {
@@ -120,8 +120,8 @@ pub fn main() !u8 {
 
     const ids = Ids{ .base = conn.setup.fixed().resource_id_base };
     {
-        var msg_buf: [x.create_window.max_len]u8 = undefined;
-        const len = x.create_window.serialize(&msg_buf, .{
+        var msg_buf: [x11.create_window.max_len]u8 = undefined;
+        const len = x11.create_window.serialize(&msg_buf, .{
             .window_id = ids.window(),
             .parent_window_id = screen.root,
             .depth = 0, // we don't care, just inherit from the parent
@@ -134,7 +134,7 @@ pub fn main() !u8 {
             .visual_id = screen.root_visual,
         }, .{
             // .bg_pixmap = .copy_from_parent,
-            .bg_pixel = x.rgb24To(0xbbccdd, screen.root_depth),
+            .bg_pixel = x11.rgb24To(0xbbccdd, screen.root_depth),
             // .border_pixmap =
             // .border_pixel = 0x01fa8ec9,
             // .bit_gravity = .north_west,
@@ -161,7 +161,7 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, msg_buf[0..len]);
     }
 
-    const double_buf = try x.DoubleBuffer.init(
+    const double_buf = try x11.DoubleBuffer.init(
         std.mem.alignForward(usize, 1000, std.heap.pageSize()),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
@@ -171,14 +171,14 @@ pub fn main() !u8 {
 
     // Set the window name
     {
-        const window_name = comptime x.Slice(u16, [*]const u8).initComptime("zigx Test Example");
-        const change_property = x.change_property.withFormat(u8);
+        const window_name = comptime x11.Slice(u16, [*]const u8).initComptime("zigx Test Example");
+        const change_property = x11.change_property.withFormat(u8);
         var msg_buf: [change_property.getLen(window_name.len)]u8 = undefined;
         change_property.serialize(&msg_buf, .{
             .mode = .replace,
             .window_id = ids.window(),
-            .property = x.Atom.WM_NAME,
-            .type = x.Atom.STRING,
+            .property = x11.Atom.WM_NAME,
+            .type = x11.Atom.STRING,
             .values = window_name,
         });
         try conn.sendOne(&sequence, msg_buf[0..]);
@@ -186,22 +186,22 @@ pub fn main() !u8 {
 
     // Test `get_property` by retrieving the property we just set
     {
-        var msg_buf: [x.get_property.len]u8 = undefined;
-        x.get_property.serialize(&msg_buf, .{
+        var msg_buf: [x11.get_property.len]u8 = undefined;
+        x11.get_property.serialize(&msg_buf, .{
             .window_id = ids.window(),
-            .property = x.Atom.WM_NAME,
-            .type = x.Atom.STRING,
+            .property = x11.Atom.WM_NAME,
+            .type = x11.Atom.STRING,
             .offset = 0,
             .len = 64,
             .delete = false,
         });
         try conn.sendOne(&sequence, msg_buf[0..]);
     }
-    _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
-    switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+    _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+    switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
         .reply => |msg_reply| {
             expectSequence(sequence, msg_reply);
-            const msg: *x.get_property.Reply = @ptrCast(msg_reply);
+            const msg: *x11.get_property.Reply = @ptrCast(msg_reply);
             std.log.debug("get_property responded with: {}", .{msg});
             const opt_window_name = try msg.getValueBytes();
             if (opt_window_name) |window_name| {
@@ -211,7 +211,7 @@ pub fn main() !u8 {
             }
         },
         else => |msg| {
-            std.log.err("expected a reply for `x.get_property` but got {}", .{msg});
+            std.log.err("expected a reply for `x11.get_property` but got {}", .{msg});
             return error.ExpectedReplyForGetProperty;
         },
     }
@@ -219,15 +219,15 @@ pub fn main() !u8 {
     // Test `query_tree` by finding our own window in the list of children of the root
     // window
     {
-        var msg_buf: [x.query_tree.len]u8 = undefined;
-        x.query_tree.serialize(&msg_buf, screen.root);
+        var msg_buf: [x11.query_tree.len]u8 = undefined;
+        x11.query_tree.serialize(&msg_buf, screen.root);
         try conn.sendOne(&sequence, msg_buf[0..]);
     }
-    _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
-    switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+    _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+    switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
         .reply => |msg_reply| {
             expectSequence(sequence, msg_reply);
-            const msg: *x.query_tree.Reply = @ptrCast(msg_reply);
+            const msg: *x11.query_tree.Reply = @ptrCast(msg_reply);
             std.log.debug("query_tree found {d} child windows", .{msg.num_windows});
 
             // Try to find our own window in the list just to sanity check that query_tree works
@@ -241,14 +241,14 @@ pub fn main() !u8 {
             std.log.debug("Found our window in query_tree response? {}", .{found_window});
         },
         else => |msg| {
-            std.log.err("expected a reply for `x.query_tree` but got {}", .{msg});
+            std.log.err("expected a reply for `x11.query_tree` but got {}", .{msg});
             return error.ExpectedReplyForQueryTree;
         },
     }
 
     {
-        var msg_buf: [x.create_gc.max_len]u8 = undefined;
-        const len = x.create_gc.serialize(&msg_buf, .{
+        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
+        const len = x11.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.bg_gc(),
             .drawable_id = ids.window().drawable(),
         }, .{
@@ -257,13 +257,13 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, msg_buf[0..len]);
     }
     {
-        var msg_buf: [x.create_gc.max_len]u8 = undefined;
-        const len = x.create_gc.serialize(&msg_buf, .{
+        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
+        const len = x11.create_gc.serialize(&msg_buf, .{
             .gc_id = ids.fg_gc(),
             .drawable_id = ids.window().drawable(),
         }, .{
             .background = screen.black_pixel,
-            .foreground = x.rgb24To(0xffaadd, screen.root_depth),
+            .foreground = x11.rgb24To(0xffaadd, screen.root_depth),
             // prevent NoExposure events when we send CopyArea
             .graphics_exposures = false,
         });
@@ -273,18 +273,18 @@ pub fn main() !u8 {
     // get some font information
     {
         const text_literal = [_]u16{'m'};
-        const text = x.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
-        var msg: [x.query_text_extents.getLen(text.len)]u8 = undefined;
-        x.query_text_extents.serialize(&msg, ids.fg_gc().fontable(), text);
+        const text = x11.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
+        var msg: [x11.query_text_extents.getLen(text.len)]u8 = undefined;
+        x11.query_text_extents.serialize(&msg, ids.fg_gc().fontable(), text);
         try conn.sendOne(&sequence, &msg);
     }
 
     const font_dims: FontDims = blk: {
-        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
-        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
-                const msg: *x.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
+                const msg: *x11.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
                 break :blk .{
                     .width = @intCast(msg.overall_width),
                     .height = @intCast(msg.font_ascent + msg.font_descent),
@@ -303,18 +303,18 @@ pub fn main() !u8 {
     if (opt_render_ext) |render_ext| {
         const expected_version: common.ExtensionVersion = .{ .major_version = 0, .minor_version = 11 };
         {
-            var msg: [x.render.query_version.len]u8 = undefined;
-            x.render.query_version.serialize(&msg, render_ext.opcode, .{
+            var msg: [x11.render.query_version.len]u8 = undefined;
+            x11.render.query_version.serialize(&msg, render_ext.opcode, .{
                 .major_version = expected_version.major_version,
                 .minor_version = expected_version.minor_version,
             });
             try conn.sendOne(&sequence, &msg);
         }
-        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
-        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
-                const msg: *x.render.query_version.Reply = @ptrCast(msg_reply);
+                const msg: *x11.render.query_version.Reply = @ptrCast(msg_reply);
                 std.log.info("X RENDER extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
                     std.log.err("X RENDER extension major version is {} but we expect {}", .{
@@ -345,16 +345,16 @@ pub fn main() !u8 {
         const expected_version: common.ExtensionVersion = .{ .major_version = 1, .minor_version = 1 };
 
         {
-            var msg: [x.shape.query_version.len]u8 = undefined;
-            x.shape.query_version.serialize(&msg, shape_ext.opcode);
+            var msg: [x11.shape.query_version.len]u8 = undefined;
+            x11.shape.query_version.serialize(&msg, shape_ext.opcode);
             try conn.sendOne(&sequence, &msg);
         }
 
-        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
-        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
-                const msg: *x.shape.query_version.Reply = @ptrCast(msg_reply);
+                const msg: *x11.shape.query_version.Reply = @ptrCast(msg_reply);
                 std.log.info("X SHAPE extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
                     std.log.err("X SHAPE extension major version is {} but we expect {}", .{
@@ -384,19 +384,19 @@ pub fn main() !u8 {
     if (opt_test_ext) |test_ext| {
         const expected_version: common.ExtensionVersion = .{ .major_version = 2, .minor_version = 2 };
         {
-            var msg: [x.testext.get_version.len]u8 = undefined;
-            x.testext.get_version.serialize(&msg, .{
+            var msg: [x11.testext.get_version.len]u8 = undefined;
+            x11.testext.get_version.serialize(&msg, .{
                 .ext_opcode = test_ext.opcode,
                 .wanted_major_version = expected_version.major_version,
                 .wanted_minor_version = expected_version.minor_version,
             });
             try conn.sendOne(&sequence, &msg);
         }
-        _ = try x.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
-        switch (x.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
-                const msg: *x.testext.get_version.Reply = @ptrCast(msg_reply);
+                const msg: *x11.testext.get_version.Reply = @ptrCast(msg_reply);
                 std.log.info("XTEST extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
                     std.log.err("XTEST extension major version is {} but we expect {}", .{
@@ -423,18 +423,18 @@ pub fn main() !u8 {
     }
 
     {
-        var msg: [x.map_window.len]u8 = undefined;
-        x.map_window.serialize(&msg, ids.window());
+        var msg: [x11.map_window.len]u8 = undefined;
+        x11.map_window.serialize(&msg, ids.window());
         try conn.sendOne(&sequence, &msg);
     }
 
     // Send a fake mouse left-click event
     // if (opt_test_ext) |test_ext| {
     //     {
-    //         var msg: [x.testext.fake_input.len]u8 = undefined;
-    //         x.testext.fake_input.serialize(&msg, test_ext.opcode, .{
+    //         var msg: [x11.testext.fake_input.len]u8 = undefined;
+    //         x11.testext.fake_input.serialize(&msg, test_ext.opcode, .{
     //             .button_press = .{
-    //                 .event_type = x.testext.FakeEventType.button_press,
+    //                 .event_type = x11.testext.FakeEventType.button_press,
     //                 .detail = 1,
     //                 .delay_ms = 0,
     //                 .device_id = null,
@@ -444,10 +444,10 @@ pub fn main() !u8 {
     //     }
 
     //     {
-    //         var msg: [x.testext.fake_input.len]u8 = undefined;
-    //         x.testext.fake_input.serialize(&msg, test_ext.opcode, .{
+    //         var msg: [x11.testext.fake_input.len]u8 = undefined;
+    //         x11.testext.fake_input.serialize(&msg, test_ext.opcode, .{
     //             .button_press = .{
-    //                 .event_type = x.testext.FakeEventType.button_release,
+    //                 .event_type = x11.testext.FakeEventType.button_release,
     //                 .detail = 1,
     //                 .delay_ms = 0,
     //                 .device_id = null,
@@ -461,8 +461,8 @@ pub fn main() !u8 {
         // This will probably happen by default when you `map_window` (I'm guessing it
         // depends on your window manager) but we can be extra annoying and always bring
         // the window to the front (just testing this request out).
-        var msg: [x.configure_window.max_len]u8 = undefined;
-        const len = x.configure_window.serialize(&msg, .{
+        var msg: [x11.configure_window.max_len]u8 = undefined;
+        const len = x11.configure_window.serialize(&msg, .{
             .window_id = ids.window(),
         }, .{
             .stack_mode = .above,
@@ -479,7 +479,7 @@ pub fn main() !u8 {
                 std.log.err("buffer size {} not big enough!", .{buf.half_len});
                 return 1;
             }
-            const len = try x.readSock(conn.sock, recv_buf, 0);
+            const len = try x11.readSock(conn.sock, recv_buf, 0);
             if (len == 0) {
                 std.log.info("X server connection closed", .{});
                 return 0;
@@ -490,12 +490,12 @@ pub fn main() !u8 {
             const data = buf.nextReservedBuffer();
             if (data.len < 32)
                 break;
-            const msg_len = x.parseMsgLen(data[0..32].*);
+            const msg_len = x11.parseMsgLen(data[0..32].*);
             if (data.len < msg_len)
                 break;
             buf.release(msg_len);
             //buf.resetIfEmpty();
-            switch (x.serverMsgTaggedUnion(@alignCast(data.ptr))) {
+            switch (x11.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
                     std.log.err("{}", .{msg});
                     return 1;
@@ -552,8 +552,8 @@ pub fn main() !u8 {
                     );
 
                     if (maybe_get_img_sequence == null) {
-                        var get_image_msg: [x.get_image.len]u8 = undefined;
-                        x.get_image.serialize(&get_image_msg, .{
+                        var get_image_msg: [x11.get_image.len]u8 = undefined;
+                        x11.get_image.serialize(&get_image_msg, .{
                             .format = .z_pixmap,
                             .drawable_id = ids.window().drawable(),
                             // Coords match where we drew the test image
@@ -613,18 +613,18 @@ fn render(
     font_dims: FontDims,
 ) !void {
     {
-        var msg: [x.poly_fill_rectangle.getLen(1)]u8 = undefined;
-        x.poly_fill_rectangle.serialize(&msg, .{
+        var msg: [x11.poly_fill_rectangle.getLen(1)]u8 = undefined;
+        x11.poly_fill_rectangle.serialize(&msg, .{
             .drawable_id = ids.window().drawable(),
             .gc_id = ids.bg_gc(),
-        }, &[_]x.Rectangle{
+        }, &[_]x11.Rectangle{
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
         });
         try common.sendOne(sock, sequence, &msg);
     }
     {
-        var msg: [x.clear_area.len]u8 = undefined;
-        x.clear_area.serialize(&msg, false, ids.window(), .{
+        var msg: [x11.clear_area.len]u8 = undefined;
+        x11.clear_area.serialize(&msg, false, ids.window(), .{
             .x = 150,
             .y = 150,
             .width = 100,
@@ -633,15 +633,15 @@ fn render(
         try common.sendOne(sock, sequence, &msg);
     }
 
-    try changeGcColor(sock, sequence, ids.fg_gc(), x.rgb24To(0xffaadd, depth));
+    try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0xffaadd, depth));
     {
         const text_literal: []const u8 = "Hello X!";
-        const text = x.Slice(u8, [*]const u8){ .ptr = text_literal.ptr, .len = text_literal.len };
-        var msg: [x.image_text8.getLen(text.len)]u8 = undefined;
+        const text = x11.Slice(u8, [*]const u8){ .ptr = text_literal.ptr, .len = text_literal.len };
+        var msg: [x11.image_text8.getLen(text.len)]u8 = undefined;
 
         const text_width = font_dims.width * text_literal.len;
 
-        x.image_text8.serialize(&msg, text, .{
+        x11.image_text8.serialize(&msg, text, .{
             .drawable_id = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
@@ -650,27 +650,27 @@ fn render(
         try common.sendOne(sock, sequence, &msg);
     }
 
-    try changeGcColor(sock, sequence, ids.fg_gc(), x.rgb24To(0x00ff00, depth));
+    try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0x00ff00, depth));
     {
-        const rectangles = [_]x.Rectangle{
+        const rectangles = [_]x11.Rectangle{
             .{ .x = 20, .y = 20, .width = 15, .height = 15 },
             .{ .x = 40, .y = 20, .width = 15, .height = 15 },
         };
-        var msg: [x.poly_fill_rectangle.getLen(rectangles.len)]u8 = undefined;
-        x.poly_fill_rectangle.serialize(&msg, .{
+        var msg: [x11.poly_fill_rectangle.getLen(rectangles.len)]u8 = undefined;
+        x11.poly_fill_rectangle.serialize(&msg, .{
             .drawable_id = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
         }, &rectangles);
         try common.sendOne(sock, sequence, &msg);
     }
-    try changeGcColor(sock, sequence, ids.fg_gc(), x.rgb24To(0x0000ff, depth));
+    try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0x0000ff, depth));
     {
-        const rectangles = [_]x.Rectangle{
+        const rectangles = [_]x11.Rectangle{
             .{ .x = 60, .y = 20, .width = 15, .height = 15 },
             .{ .x = 80, .y = 20, .width = 15, .height = 15 },
         };
-        var msg: [x.poly_rectangle.getLen(rectangles.len)]u8 = undefined;
-        x.poly_rectangle.serialize(&msg, .{
+        var msg: [x11.poly_rectangle.getLen(rectangles.len)]u8 = undefined;
+        x11.poly_rectangle.serialize(&msg, .{
             .drawable_id = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
         }, &rectangles);
@@ -690,15 +690,15 @@ fn render(
     std.debug.assert(test_image_data_len <= test_image.max_data_len);
 
     {
-        var put_image_msg: [x.put_image.getLen(test_image.max_data_len)]u8 = undefined;
+        var put_image_msg: [x11.put_image.getLen(test_image.max_data_len)]u8 = undefined;
         populateTestImage(
             image_format,
             test_image.width,
             test_image.height,
             test_image_scanline_len,
-            put_image_msg[x.put_image.data_offset..],
+            put_image_msg[x11.put_image.data_offset..],
         );
-        x.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
+        x11.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
             .format = .z_pixmap,
             .drawable_id = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
@@ -709,12 +709,12 @@ fn render(
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.sendOne(sock, sequence, put_image_msg[0..x.put_image.getLen(test_image_data_len)]);
+        try common.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
 
         // test a pixmap
         {
-            var msg: [x.create_pixmap.len]u8 = undefined;
-            x.create_pixmap.serialize(&msg, .{
+            var msg: [x11.create_pixmap.len]u8 = undefined;
+            x11.create_pixmap.serialize(&msg, .{
                 .id = ids.pixmap(),
                 .drawable_id = ids.window().drawable(),
                 .depth = image_format.depth,
@@ -723,7 +723,7 @@ fn render(
             });
             try common.sendOne(sock, sequence, &msg);
         }
-        x.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
+        x11.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
             .format = .z_pixmap,
             .drawable_id = ids.pixmap().drawable(),
             .gc_id = ids.fg_gc(),
@@ -734,11 +734,11 @@ fn render(
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.sendOne(sock, sequence, put_image_msg[0..x.put_image.getLen(test_image_data_len)]);
+        try common.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
 
         {
-            var msg: [x.copy_area.len]u8 = undefined;
-            x.copy_area.serialize(&msg, .{
+            var msg: [x11.copy_area.len]u8 = undefined;
+            x11.copy_area.serialize(&msg, .{
                 .src_drawable_id = ids.pixmap().drawable(),
                 .dst_drawable_id = ids.window().drawable(),
                 .gc_id = ids.fg_gc(),
@@ -753,16 +753,16 @@ fn render(
         }
 
         {
-            var msg: [x.free_pixmap.len]u8 = undefined;
-            x.free_pixmap.serialize(&msg, ids.pixmap());
+            var msg: [x11.free_pixmap.len]u8 = undefined;
+            x11.free_pixmap.serialize(&msg, ids.pixmap());
             try common.sendOne(sock, sequence, &msg);
         }
     }
 }
 
-fn changeGcColor(sock: std.posix.socket_t, sequence: *u16, gc_id: x.GraphicsContext, color: u32) !void {
-    var msg_buf: [x.change_gc.max_len]u8 = undefined;
-    const len = x.change_gc.serialize(&msg_buf, gc_id, .{
+fn changeGcColor(sock: std.posix.socket_t, sequence: *u16, gc_id: x11.GraphicsContext, color: u32) !void {
+    var msg_buf: [x11.change_gc.max_len]u8 = undefined;
+    const len = x11.change_gc.serialize(&msg_buf, gc_id, .{
         .foreground = color,
     });
     try common.sendOne(sock, sequence, msg_buf[0..len]);
@@ -793,7 +793,7 @@ fn populateTestImage(
                 16 => std.mem.writeInt(
                     u16,
                     data[data_off..][0..2],
-                    x.rgb24To16(color),
+                    x11.rgb24To16(color),
                     image_format.endian,
                 ),
                 24 => std.mem.writeInt(
@@ -805,7 +805,7 @@ fn populateTestImage(
                 32 => std.mem.writeInt(
                     u32,
                     data[data_off..][0..4],
-                    x.rgb24To(color, 32),
+                    x11.rgb24To(color, 32),
                     image_format.endian,
                 ),
                 else => std.debug.panic("TODO: implement image depth {}", .{image_format.depth}),
@@ -818,21 +818,21 @@ fn populateTestImage(
 /// Grab the pixels from the window after we've rendered to it using `get_image` and
 /// check that the test image pattern was *actually* drawn to the window.
 fn checkTestImageIsDrawnToWindow(
-    msg_reply: *x.ServerMsg.Reply,
+    msg_reply: *x11.ServerMsg.Reply,
     image_format: ImageFormat,
 ) !void {
-    const msg: *x.get_image.Reply = @ptrCast(msg_reply);
+    const msg: *x11.get_image.Reply = @ptrCast(msg_reply);
     const image_data = msg.getData();
 
     // Given our request for an image with the width/height specified,
     // make sure we got at least the right amount of data back to
     // represent that size of image (there may also be padding at the
     // end).
-    std.debug.assert(image_data.len >= (test_image.width * test_image.height * x.get_image.Reply.scanline_pad_bytes));
+    std.debug.assert(image_data.len >= (test_image.width * test_image.height * x11.get_image.Reply.scanline_pad_bytes));
     // Currently, we only support one image format that matches the root window depth
     std.debug.assert(msg.depth == image_format.depth);
 
-    const bytes_per_pixel_in_data = x.get_image.Reply.scanline_pad_bytes;
+    const bytes_per_pixel_in_data = x11.get_image.Reply.scanline_pad_bytes;
 
     var width_index: u16 = 0;
     var height_index: u16 = 0;

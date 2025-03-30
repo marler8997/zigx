@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
 
     // In almost all cases, Zig programs should only use this module, not the
     // library defined below, that's for C programs.
-    const x_mod = b.addModule("x", .{
+    const x_mod = b.addModule("x11", .{
         .root_source_file = b.path("src/x.zig"),
     });
 
@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .target = target,
             .imports = &.{
-                .{ .name = "x", .module = x_mod },
+                .{ .name = "x11", .module = x_mod },
             },
         });
 
@@ -61,7 +61,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    x11_lib.root_module.addImport("x", x_mod);
+    x11_lib.root_module.addImport("x11", x_mod);
     x11_lib.addIncludePath(b.path("c/include"));
     x11_lib.installHeadersDirectory(
         b.path("c/include/X11"),
