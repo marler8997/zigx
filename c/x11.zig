@@ -168,7 +168,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
 }
 
 fn connectSetupAuth(
-    display_num: ?u32,
+    display_num: ?x11.DisplayNum,
     sock: std.posix.socket_t,
     auth_filename: []const u8,
 ) error{ Reported, OutOfMemory }!?x11.ConnectSetup.Header {
