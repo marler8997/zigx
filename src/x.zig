@@ -200,7 +200,7 @@ pub fn parseDisplay(display: []const u8) InvalidDisplayError!ParsedDisplay {
     return parsed;
 }
 
-fn testParseDisplay(display: []const u8, proto: ?Protocol, host: []const u8, display_num: DisplayNumInt, screen: ?u32) !void {
+fn testParseDisplay(display: []const u8, proto: ?Protocol, host: []const u8, display_num: u16, screen: ?u32) !void {
     const parsed = try parseDisplay(display);
     try testing.expectEqual(proto, parsed.proto);
     try testing.expect(std.mem.eql(u8, host, parsed.hostSlice(display.ptr)));
@@ -247,13 +247,6 @@ const ConnectError = error{
     ConnectFailed,
 };
 
-pub fn isUnixProtocol(optionalProtocol: ?[]const u8) bool {
-    if (optionalProtocol) |protocol| {
-        return std.mem.eql(u8, "unix", protocol);
-    }
-    return false;
-}
-
 // NOTE: this function takes the display/parsed display because the app
 //       should know the display to provide to the user in case of an error
 //       and should also have handled an invalid display error before
@@ -270,12 +263,11 @@ fn defaultTcpHost(optional_host: ?[]const u8) []const u8 {
     return if (optional_host) |host| host else "localhost";
 }
 
-const DisplayNumInt = std.math.IntFittingRange(0, max_display_num);
-pub const DisplayNum = enum(DisplayNumInt) {
+pub const DisplayNum = enum(u16) {
     @"0" = 0,
     _,
 
-    pub fn fromInt(int: DisplayNumInt) error{BadDisplayNumber}!DisplayNum {
+    pub fn fromInt(int: u16) error{BadDisplayNumber}!DisplayNum {
         if (int > max_display_num) return error.BadDisplayNumber;
         return @enumFromInt(int);
     }
