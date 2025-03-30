@@ -69,7 +69,8 @@ pub fn optEql(optLeft: anytype, optRight: anytype) bool {
 }
 
 pub const ParsedDisplay = struct {
-    protoLen: u16, // if not specified, then hostIndex will be 0 causing this to be empty
+    proto: ?Protocol,
+    hostStart: u16,
     hostLimit: u16,
     display_num: DisplayNum,
     preferredScreen: ?u32,
@@ -78,14 +79,8 @@ pub const ParsedDisplay = struct {
         if (ptr[0] != '/') return null;
         return ptr[0..self.hostLimit];
     }
-    pub fn protoSlice(self: @This(), ptr: [*]const u8) []const u8 {
-        return ptr[0..self.protoLen];
-    }
-    fn hostIndex(self: @This()) u16 {
-        return if (self.protoLen == 0) 0 else (self.protoLen + 1);
-    }
     pub fn hostSlice(self: @This(), ptr: [*]const u8) []const u8 {
-        return ptr[self.hostIndex()..self.hostLimit];
+        return ptr[self.hostStart..self.hostLimit];
     }
     pub fn equals(self: @This(), other: @This()) bool {
         return self.protoLen == other.protoLen and self.hostLimit == other.hostLimit and self.display_num == other.display_num and optEql(self.preferredScreen, other.preferredScreen);
@@ -108,8 +103,26 @@ pub fn getDisplay() []const u8 {
     return posix.getenv("DISPLAY") orelse ":0";
 }
 
+pub const Protocol = enum {
+    unix,
+    tcp,
+    inet,
+    inet6,
+};
+
+const proto_map = std.StaticStringMap(Protocol).initComptime(.{
+    .{ "unix", .unix },
+    .{ "tcp", .tcp },
+    .{ "inet", .inet },
+    .{ "inet6", .inet6 },
+});
+fn protoFromString(s: []const u8) error{UnknownProtocol}!Protocol {
+    return proto_map.get(s) orelse error.UnknownProtocol;
+}
+
 pub const InvalidDisplayError = error{
     IsEmpty, // TODO: is this an error?
+    UnknownProtocol,
     HasMultipleProtocols,
     IsTooLarge,
     NoDisplayNumber,
@@ -120,12 +133,13 @@ pub const InvalidDisplayError = error{
 // display format: [PROTOCOL/]HOST:DISPLAYNUM[.SCREEN]
 // assumption: display.len > 0
 pub fn parseDisplay(display: []const u8) InvalidDisplayError!ParsedDisplay {
-    if (display.len == 0) return InvalidDisplayError.IsEmpty;
+    if (display.len == 0) return error.IsEmpty;
     if (display.len >= std.math.maxInt(u16))
-        return InvalidDisplayError.IsTooLarge;
+        return error.IsTooLarge;
 
     var parsed: ParsedDisplay = .{
-        .protoLen = 0,
+        .proto = null,
+        .hostStart = 0,
         .hostLimit = undefined,
         .display_num = undefined,
         .preferredScreen = undefined,
@@ -143,24 +157,26 @@ pub fn parseDisplay(display: []const u8) InvalidDisplayError!ParsedDisplay {
             // I guess a DISPLAY that starts with '/' is a file path?
             // This is the case on my M1 macos laptop.
             if (index == 0) return .{
-                .protoLen = 0,
+                .proto = null,
+                .hostStart = 0,
                 .hostLimit = @intCast(display.len),
                 .display_num = .@"0",
                 .preferredScreen = null,
             };
-            if (parsed.protoLen > 0)
-                return InvalidDisplayError.HasMultipleProtocols;
-            parsed.protoLen = index;
+            if (parsed.proto) |_|
+                return error.HasMultipleProtocols;
+            parsed.proto = try protoFromString(display[0..index]);
+            parsed.hostStart = index + 1;
         }
         index += 1;
         if (index == display.len)
-            return InvalidDisplayError.NoDisplayNumber;
+            return error.NoDisplayNumber;
     }
 
     parsed.hostLimit = index;
     index += 1;
     if (index == display.len)
-        return InvalidDisplayError.NoDisplayNumber;
+        return error.NoDisplayNumber;
 
     while (true) {
         const c = display[index];
@@ -173,54 +189,55 @@ pub fn parseDisplay(display: []const u8) InvalidDisplayError!ParsedDisplay {
 
     //std.debug.warn("num '{}'\n", .{display[parsed.hostLimit + 1..index]});
     parsed.display_num = try DisplayNum.fromInt(std.fmt.parseInt(u16, display[parsed.hostLimit + 1 .. index], 10) catch
-        return InvalidDisplayError.BadDisplayNumber);
+        return error.BadDisplayNumber);
     if (index == display.len) {
         parsed.preferredScreen = null;
     } else {
         index += 1;
         parsed.preferredScreen = std.fmt.parseInt(u32, display[index..], 10) catch
-            return InvalidDisplayError.BadScreenNumber;
+            return error.BadScreenNumber;
     }
     return parsed;
 }
 
-fn testParseDisplay(display: []const u8, proto: []const u8, host: []const u8, display_num: u32, screen: ?u32) !void {
+fn testParseDisplay(display: []const u8, proto: ?Protocol, host: []const u8, display_num: DisplayNumInt, screen: ?u32) !void {
     const parsed = try parseDisplay(display);
-    try testing.expect(std.mem.eql(u8, proto, parsed.protoSlice(display.ptr)));
+    try testing.expectEqual(proto, parsed.proto);
     try testing.expect(std.mem.eql(u8, host, parsed.hostSlice(display.ptr)));
-    try testing.expectEqual(display_num, parsed.display_num);
+    try testing.expectEqual(DisplayNum.fromInt(display_num), parsed.display_num);
     try testing.expectEqual(screen, parsed.preferredScreen);
 }
 
 test "parseDisplay" {
     // no need to test the empty string case, it triggers an assert and a client passing
     // one is a bug that needs to be fixed
-    try testing.expectError(InvalidDisplayError.HasMultipleProtocols, parseDisplay("a//"));
-    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay("0"));
-    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay("0/"));
-    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay("0/1"));
-    try testing.expectError(InvalidDisplayError.NoDisplayNumber, parseDisplay(":"));
+    try testing.expectError(error.HasMultipleProtocols, parseDisplay("tcp//"));
+    try testing.expectError(error.NoDisplayNumber, parseDisplay("0"));
+    try testing.expectError(error.NoDisplayNumber, parseDisplay("unix/"));
+    try testing.expectError(error.NoDisplayNumber, parseDisplay("inet/1"));
+    try testing.expectError(error.NoDisplayNumber, parseDisplay(":"));
 
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":a"));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":0a"));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":0a."));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":0a.0"));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":1x"));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":1x."));
-    try testing.expectError(InvalidDisplayError.BadDisplayNumber, parseDisplay(":1x.10"));
+    try testing.expectError(error.BadDisplayNumber, parseDisplay(":a"));
+    try testing.expectError(error.BadDisplayNumber, parseDisplay(":0a"));
+    try testing.expectError(error.BadDisplayNumber, parseDisplay(":0a."));
+    try testing.expectError(error.BadDisplayNumber, parseDisplay(":0a.0"));
+    try testing.expectError(error.BadDisplayNumber, parseDisplay(":1x"));
+    try testing.expectError(error.BadDisplayNumber, parseDisplay(":1x."));
+    try testing.expectError(error.BadDisplayNumber, parseDisplay(":1x.10"));
+    try testing.expectError(error.BadDisplayNumber, parseDisplay(":70000"));
 
-    try testing.expectError(InvalidDisplayError.BadScreenNumber, parseDisplay(":1.x"));
-    try testing.expectError(InvalidDisplayError.BadScreenNumber, parseDisplay(":1.0x"));
+    try testing.expectError(error.BadScreenNumber, parseDisplay(":1.x"));
+    try testing.expectError(error.BadScreenNumber, parseDisplay(":1.0x"));
     // TODO: should this be an error or no????
-    //try testing.expectError(InvalidDisplayError.BadScreenNumber, parseDisplay(":1."));
+    //try testing.expectError(error.BadScreenNumber, parseDisplay(":1."));
 
-    try testParseDisplay("proto/host:123.456", "proto", "host", 123, 456);
-    try testParseDisplay("host:123.456", "", "host", 123, 456);
-    try testParseDisplay(":123.456", "", "", 123, 456);
-    try testParseDisplay(":123", "", "", 123, null);
-    try testParseDisplay("a/:43", "a", "", 43, null);
-    try testParseDisplay("/", "", "/", 0, null);
-    try testParseDisplay("/some/file/path/x0", "", "/some/file/path/x0", 0, null);
+    try testParseDisplay("tcp/host:123.456", .tcp, "host", 123, 456);
+    try testParseDisplay("host:123.456", null, "host", 123, 456);
+    try testParseDisplay(":123.456", null, "", 123, 456);
+    try testParseDisplay(":123", null, "", 123, null);
+    try testParseDisplay("inet6/:43", .inet6, "", 43, null);
+    try testParseDisplay("/", null, "/", 0, null);
+    try testParseDisplay("/some/file/path/x0", null, "/some/file/path/x0", 0, null);
 }
 
 const ConnectError = error{
@@ -228,7 +245,6 @@ const ConnectError = error{
     AccessDenied,
     UnknownHostName,
     ConnectFailed,
-    UnsupportedDisplayProtocol,
 };
 
 pub fn isUnixProtocol(optionalProtocol: ?[]const u8) bool {
@@ -247,11 +263,7 @@ pub fn connect(display: []const u8, parsed: ParsedDisplay) !posix.socket_t {
         const host_slice = parsed.hostSlice(display.ptr);
         break :blk if (host_slice.len == 0) null else host_slice;
     };
-    const optional_proto: ?[]const u8 = blk: {
-        const proto_slice = parsed.protoSlice(display.ptr);
-        break :blk if (proto_slice.len == 0) null else proto_slice;
-    };
-    return connectExplicit(optional_host, optional_proto, parsed.display_num);
+    return connectExplicit(optional_host, parsed.proto, parsed.display_num);
 }
 
 fn defaultTcpHost(optional_host: ?[]const u8) []const u8 {
@@ -284,19 +296,16 @@ pub const DisplayNum = enum(DisplayNumInt) {
     }
 };
 
-pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?[]const u8, display_num: DisplayNum) ConnectError!posix.socket_t {
-    if (optional_protocol) |proto| {
-        if (std.mem.eql(u8, proto, "unix")) {
+pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?Protocol, display_num: DisplayNum) ConnectError!posix.socket_t {
+    if (optional_protocol) |proto| return switch (proto) {
+        .unix => {
             if (optional_host) |_|
                 @panic("TODO: DISPLAY is unix protocol with a host? Is this possible?");
             return connectUnixDisplayNum(display_num);
-        }
-        if (std.mem.eql(u8, proto, "tcp") or std.mem.eql(u8, proto, "inet"))
-            return connectTcp(defaultTcpHost(optional_host), display_num.asPort(), .{});
-        if (std.mem.eql(u8, proto, "inet6"))
-            return connectTcp(defaultTcpHost(optional_host), display_num.asPort(), .{ .inet6 = true });
-        return error.UnsupportedDisplayProtocol;
-    }
+        },
+        .tcp, .inet => connectTcp(defaultTcpHost(optional_host), display_num.asPort(), .{}),
+        .inet6 => connectTcp(defaultTcpHost(optional_host), display_num.asPort(), .{ .inet6 = true }),
+    };
 
     if (optional_host) |host| {
         if (std.mem.eql(u8, host, "unix")) {
@@ -446,7 +455,7 @@ pub fn ArrayPointer(comptime T: type) type {
     switch (@typeInfo(T)) {
         .pointer => |info| {
             switch (info.size) {
-                .One => {
+                .one => {
                     switch (@typeInfo(info.child)) {
                         .Array => |array_info| {
                             return @Type(std.builtin.Type{ .pointer = .{
@@ -463,16 +472,16 @@ pub fn ArrayPointer(comptime T: type) type {
                         else => @compileError("here"),
                     }
                 },
-                .Slice => {
+                .slice => {
                     return @Type(std.builtin.Type{ .pointer = .{
-                        .size = .Many,
+                        .size = .many,
                         .is_const = info.is_const,
                         .is_volatile = info.is_volatile,
                         .alignment = info.alignment,
                         .address_space = info.address_space,
                         .child = info.child,
                         .is_allowzero = info.is_allowzero,
-                        .sentinel = info.sentinel,
+                        .sentinel_ptr = info.sentinel_ptr,
                     } });
                 },
                 else => @compileError(err),
@@ -484,9 +493,9 @@ pub fn ArrayPointer(comptime T: type) type {
 
 pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@TypeOf(s))) {
     switch (@typeInfo(@TypeOf(s))) {
-        .Pointer => |info| {
+        .pointer => |info| {
             switch (info.size) {
-                .One => {
+                .one => {
                     switch (@typeInfo(info.child)) {
                         .Array => |array_info| {
                             _ = array_info;
@@ -504,7 +513,7 @@ pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@Ty
                         else => @compileError("here"),
                     }
                 },
-                .Slice => return .{ .ptr = s.ptr, .len = @intCast(s.len) },
+                .slice => return .{ .ptr = s.ptr, .len = @intCast(s.len) },
                 else => @compileError("cannot slice"),
             }
         },
