@@ -252,10 +252,19 @@ test "parseDisplay" {
 }
 
 const ConnectError = error{
-    SystemResources,
-    AccessDenied,
     UnknownHostName,
     ConnectionRefused,
+
+    BadXauthEnv,
+    XauthEnvFileNotFound,
+
+    AccessDenied,
+    SystemResources,
+    InputOutput,
+    SymLinkLoop,
+    FileBusy,
+
+    Unexpected,
 };
 
 // NOTE: this function takes the display/parsed display because the app
@@ -405,7 +414,7 @@ fn tcpConnect(addr: std.net.Address) TcpConnectError!posix.socket_t {
         error.ProtocolNotSupported,
         error.SocketTypeNotSupported,
         => |e| std.debug.panic("TCP connect to {} failed with {s}", .{ addr, @errorName(e) }),
-   }).handle;
+    }).handle;
 }
 
 pub fn disconnect(sock: posix.socket_t) void {
@@ -550,39 +559,69 @@ pub const AuthFilename = struct {
     }
 };
 
+pub const AuthFilenameError = error{
+    BadXauthEnv,
+    XauthEnvFileNotFound,
+
+    OutOfMemory,
+
+    AccessDenied,
+    SystemResources,
+    InputOutput,
+    SymLinkLoop,
+    FileBusy,
+
+    Unexpected,
+};
+
 // returns the auth filename only if it exists.
-pub fn getAuthFilename(allocator: std.mem.Allocator) !?AuthFilename {
+pub fn getAuthFilename(allocator: std.mem.Allocator) AuthFilenameError!?AuthFilename {
     if (builtin.os.tag == .windows) {
         if (std.process.getEnvVarOwned(allocator, "XAUTHORITY")) |filename| {
             return .{ .str = filename, .owned = true };
-        } else |err| switch (err) {
-            error.EnvironmentVariableNotFound => {},
-            else => |e| return e,
-        }
-        // TODO: is there a default path on windows?
-        return null;
+        } else |err| return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.EnvironmentVariableNotFound => null,
+            error.InvalidWtf8 => error.BadXauthEnv,
+        };
     }
 
-    if (posix.getenv("XAUTHORITY")) |e| {
-        if (std.fs.cwd().accessZ(e, .{})) {
-            return .{ .str = e, .owned = false };
-        } else |err| switch (err) {
-            error.FileNotFound => return error.BadXAuthorityEnv,
-            else => return err,
-        }
-    }
+    if (posix.getenv("XAUTHORITY")) |xauth| return if (try xauthFileExists(std.fs.cwd(), xauth))
+        .{ .str = xauth, .owned = false }
+    else
+        error.XauthEnvFileNotFound;
 
     if (posix.getenv("HOME")) |e| {
         const path = try std.fs.path.joinZ(allocator, &.{ e, ".Xauthority" });
-        errdefer allocator.free(path);
-        if (std.fs.cwd().accessZ(path, .{})) {
+        var free_path = true;
+        defer if (free_path) allocator.free(path);
+        if (try xauthFileExists(std.fs.cwd(), path)) {
+            free_path = false;
             return .{ .str = path, .owned = true };
-        } else |err| switch (err) {
-            error.FileNotFound => {},
-            else => return err,
         }
     }
     return null;
+}
+
+fn xauthFileExists(dir: std.fs.Dir, sub_path: [*:0]const u8) !bool {
+    if (dir.accessZ(sub_path, .{})) {
+        return true;
+    } else |err| switch (err) {
+        error.InvalidUtf8,
+        error.NameTooLong,
+        error.InvalidWtf8,
+        error.BadPathName,
+        => return error.BadXauthEnv,
+        error.InputOutput,
+        error.SystemResources,
+        error.Unexpected,
+        error.SymLinkLoop,
+        error.FileBusy,
+        => |e| return e,
+        error.FileNotFound => return false,
+        error.PermissionDenied => return error.AccessDenied,
+        error.ReadOnlyFileSystem => unreachable,
+    }
 }
 
 pub const AuthFamily = enum(u16) {
