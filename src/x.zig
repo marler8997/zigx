@@ -108,6 +108,7 @@ pub const Protocol = enum {
     tcp,
     inet,
     inet6,
+    w32,
 };
 
 const proto_map = std.StaticStringMap(Protocol).initComptime(.{
@@ -136,6 +137,15 @@ pub fn parseDisplay(display: []const u8) InvalidDisplayError!ParsedDisplay {
     if (display.len == 0) return error.IsEmpty;
     if (display.len >= std.math.maxInt(u16))
         return error.IsTooLarge;
+
+    // Xming (X server for windows) set this
+    if (std.mem.eql(u8, display, "w32")) return .{
+        .proto = .w32,
+        .hostStart = 0,
+        .hostLimit = undefined,
+        .display_num = undefined,
+        .preferredScreen = undefined,
+    };
 
     var parsed: ParsedDisplay = .{
         .proto = null,
@@ -238,13 +248,14 @@ test "parseDisplay" {
     try testParseDisplay("inet6/:43", .inet6, "", 43, null);
     try testParseDisplay("/", null, "/", 0, null);
     try testParseDisplay("/some/file/path/x0", null, "/some/file/path/x0", 0, null);
+    try testParseDisplay("w32", .w32, "", 0, null);
 }
 
 const ConnectError = error{
     SystemResources,
     AccessDenied,
     UnknownHostName,
-    ConnectFailed,
+    ConnectionRefused,
 };
 
 // NOTE: this function takes the display/parsed display because the app
@@ -260,7 +271,7 @@ pub fn connect(display: []const u8, parsed: ParsedDisplay) !posix.socket_t {
 }
 
 fn defaultTcpHost(optional_host: ?[]const u8) []const u8 {
-    return if (optional_host) |host| host else "localhost";
+    return if (optional_host) |host| host else "127.0.0.1";
 }
 
 pub const DisplayNum = enum(u16) {
@@ -297,6 +308,7 @@ pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?Protocol,
         },
         .tcp, .inet => connectTcp(defaultTcpHost(optional_host), display_num.asPort(), .{}),
         .inet6 => connectTcp(defaultTcpHost(optional_host), display_num.asPort(), .{ .inet6 = true }),
+        .w32 => return tcpConnect(std.net.Address.parseIp4("127.0.0.1", TcpBasePort) catch unreachable),
     };
 
     if (optional_host) |host| {
@@ -333,7 +345,7 @@ pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16)
         => |e| return e,
         error.ConnectionResetByPeer,
         error.ConnectionTimedOut,
-        => return error.ConnectFailed,
+        => return error.ConnectionRefused,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
         => return error.SystemResources,
@@ -354,32 +366,46 @@ pub fn connectTcp(name: []const u8, port: u16, options: ConnectTcpOptions) Conne
     const list = try getAddressList(arena.allocator(), name, port);
     defer list.deinit();
     for (list.addrs) |addr| {
-        return (std.net.tcpConnectToAddress(addr) catch |err| switch (err) {
-            error.ConnectionTimedOut,
-            error.ConnectionRefused,
-            error.NetworkUnreachable,
-            error.ConnectionPending,
-            error.ConnectionResetByPeer,
-            => continue,
+        return tcpConnect(addr) catch |err| switch (err) {
+            error.ConnectionRefused => continue,
+            error.AccessDenied,
             error.SystemResources,
-            error.ProcessFdQuotaExceeded,
-            error.SystemFdQuotaExceeded,
-            => return error.SystemResources,
-            error.PermissionDenied => return error.AccessDenied,
-            error.AddressInUse,
-            error.AddressNotAvailable,
-            error.WouldBlock,
-            error.Unexpected,
-            error.FileNotFound,
-            error.AddressFamilyNotSupported,
-            error.ProtocolFamilyNotAvailable,
-            error.ProtocolNotSupported,
-            error.SocketTypeNotSupported,
-            => |e| std.debug.panic("TCP connect to {} failed with {s}", .{ addr, @errorName(e) }),
-        }).handle;
+            => |e| return e,
+        };
     }
     if (list.addrs.len == 0) return error.UnknownHostName;
-    return error.ConnectFailed;
+    return error.ConnectionRefused;
+}
+
+const TcpConnectError = error{
+    AccessDenied,
+    ConnectionRefused,
+    SystemResources,
+};
+fn tcpConnect(addr: std.net.Address) TcpConnectError!posix.socket_t {
+    return (std.net.tcpConnectToAddress(addr) catch |err| switch (err) {
+        error.ConnectionTimedOut,
+        error.ConnectionRefused,
+        error.NetworkUnreachable,
+        error.ConnectionPending,
+        error.ConnectionResetByPeer,
+        => return error.ConnectionRefused,
+        error.SystemResources,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        => return error.SystemResources,
+        error.PermissionDenied => return error.AccessDenied,
+        error.AddressInUse,
+        error.AddressNotAvailable,
+        error.WouldBlock,
+        error.Unexpected,
+        error.FileNotFound,
+        error.AddressFamilyNotSupported,
+        error.ProtocolFamilyNotAvailable,
+        error.ProtocolNotSupported,
+        error.SocketTypeNotSupported,
+        => |e| std.debug.panic("TCP connect to {} failed with {s}", .{ addr, @errorName(e) }),
+   }).handle;
 }
 
 pub fn disconnect(sock: posix.socket_t) void {
