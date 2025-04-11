@@ -139,13 +139,15 @@ pub fn parseDisplay(display: []const u8) InvalidDisplayError!ParsedDisplay {
         return error.IsTooLarge;
 
     // Xming (X server for windows) set this
-    if (std.mem.eql(u8, display, "w32")) return .{
-        .proto = .w32,
-        .hostStart = 0,
-        .hostLimit = undefined,
-        .display_num = undefined,
-        .preferredScreen = undefined,
-    };
+    if (builtin.os.tag == .windows) {
+        if (std.mem.eql(u8, display, "w32")) return .{
+            .proto = .w32,
+            .hostStart = 0,
+            .hostLimit = undefined,
+            .display_num = undefined,
+            .preferredScreen = undefined,
+        };
+    }
 
     var parsed: ParsedDisplay = .{
         .proto = null,
@@ -248,7 +250,12 @@ test "parseDisplay" {
     try testParseDisplay("inet6/:43", .inet6, "", 43, null);
     try testParseDisplay("/", null, "/", 0, null);
     try testParseDisplay("/some/file/path/x0", null, "/some/file/path/x0", 0, null);
-    try testParseDisplay("w32", .w32, "", 0, null);
+
+    if (builtin.os.tag == .windows) {
+        try testParseDisplay("w32", .w32, "", 0, null);
+    } else {
+        try testing.expectError(error.NoDisplayNumber, parseDisplay("w32"));
+    }
 }
 
 const ConnectError = error{
