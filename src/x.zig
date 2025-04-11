@@ -1162,6 +1162,7 @@ pub const Timestamp = enum(u32) {
 pub const Opcode = enum(u8) {
     create_window = 1,
     change_window_attributes = 2,
+    destroy_window = 4,
     map_window = 8,
     configure_window = 12,
     query_tree = 15,
@@ -1447,6 +1448,16 @@ pub const change_window_attributes = struct {
         std.debug.assert((request_len & 0x3) == 0);
         writeIntNative(u16, buf + 2, request_len >> 2);
         return request_len;
+    }
+};
+
+pub const destroy_window = struct {
+    pub const len = 8;
+    pub fn serialize(buf: [*]u8, window_id: Window) void {
+        buf[0] = @intFromEnum(Opcode.destroy_window);
+        buf[1] = 0; // unused
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, @intFromEnum(window_id));
     }
 };
 
