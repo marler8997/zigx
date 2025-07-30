@@ -154,7 +154,7 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
         std.process.exit(0xff);
     };
 
-    const sock = x11.connect(display, parsed_display) catch |err| {
+    const sock = x11.connect(display, parsed_display, .{}) catch |err| {
         std.log.err("failed to connect to display '{s}': {s}", .{ display, @errorName(err) });
         std.process.exit(0xff);
     };

@@ -62,7 +62,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
     const parsed_display = x11.parseDisplay(display_spec) catch |err|
         return reportError("invalid DISPLAY '{s}': {s}", .{ display_spec, @errorName(err) });
 
-    const sock = x11.connect(display_spec, parsed_display) catch |err|
+    const sock = x11.connect(display_spec, parsed_display, .{}) catch |err|
         return reportError("failed to connect to DISPLAY '{s}': {s}", .{ display_spec, @errorName(err) });
     errdefer x11.disconnect(sock);
 

@@ -20,3 +20,22 @@ pub const enums = struct {
         return false;
     }
 };
+
+pub const net = struct {
+    // copied from std because it doesn't support setting the nonblocking flag
+    pub fn tcpConnectToAddress(address: std.net.Address, nonblocking: bool) std.net.TcpConnectToAddressError!std.net.Stream {
+        const sock_flags = posix.SOCK.STREAM | @as(u32, if (nonblocking) posix.SOCK.NONBLOCK else 0) |
+            (if (native_os == .windows) 0 else posix.SOCK.CLOEXEC);
+        const sockfd = try posix.socket(address.any.family, sock_flags, posix.IPPROTO.TCP);
+        errdefer std.net.Stream.close(.{ .handle = sockfd });
+
+        try posix.connect(sockfd, &address.any, address.getOsSockLen());
+
+        return std.net.Stream{ .handle = sockfd };
+    }
+};
+
+const builtin = @import("builtin");
+const std = @import("std");
+const posix = std.posix;
+const native_os = builtin.os.tag;

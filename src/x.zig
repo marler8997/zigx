@@ -274,16 +274,24 @@ const ConnectError = error{
     Unexpected,
 };
 
+pub const BlockMode = enum { blocking, nonblocking };
+pub const ConnectOptions = struct {
+    socket_block_mode: BlockMode = .blocking,
+};
+pub const SocketConnectOptions = struct {
+    block_mode: BlockMode = .blocking,
+};
+
 // NOTE: this function takes the display/parsed display because the app
 //       should know the display to provide to the user in case of an error
 //       and should also have handled an invalid display error before
 //       calling connect.
-pub fn connect(display: []const u8, parsed: ParsedDisplay) !posix.socket_t {
+pub fn connect(display: []const u8, parsed: ParsedDisplay, opt: ConnectOptions) !posix.socket_t {
     const optional_host: ?[]const u8 = blk: {
         const host_slice = parsed.hostSlice(display.ptr);
         break :blk if (host_slice.len == 0) null else host_slice;
     };
-    return connectExplicit(optional_host, parsed.proto, parsed.display_num);
+    return connectExplicit(optional_host, parsed.proto, parsed.display_num, opt);
 }
 
 fn defaultTcpHost(optional_host: ?[]const u8) []const u8 {
@@ -315,16 +323,21 @@ pub const DisplayNum = enum(u16) {
     }
 };
 
-pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?Protocol, display_num: DisplayNum) ConnectError!posix.socket_t {
+pub fn connectExplicit(
+    optional_host: ?[]const u8,
+    optional_protocol: ?Protocol,
+    display_num: DisplayNum,
+    opt: ConnectOptions,
+) ConnectError!posix.socket_t {
     if (optional_protocol) |proto| return switch (proto) {
         .unix => {
             if (optional_host) |_|
                 @panic("TODO: DISPLAY is unix protocol with a host? Is this possible?");
-            return connectUnixDisplayNum(display_num);
+            return connectUnixDisplayNum(display_num, .{ .block_mode = opt.socket_block_mode });
         },
-        .tcp, .inet => connectTcp(defaultTcpHost(optional_host), display_num.asPort(), .{}),
-        .inet6 => connectTcp(defaultTcpHost(optional_host), display_num.asPort(), .{ .inet6 = true }),
-        .w32 => return tcpConnect(std.net.Address.parseIp4("127.0.0.1", TcpBasePort) catch unreachable),
+        .tcp, .inet => connectTcp(defaultTcpHost(optional_host), display_num.asPort(), .{ .block_mode = opt.socket_block_mode }),
+        .inet6 => connectTcp(defaultTcpHost(optional_host), display_num.asPort(), .{ .block_mode = opt.socket_block_mode, .inet6 = true }),
+        .w32 => return tcpConnect(std.net.Address.parseIp4("127.0.0.1", TcpBasePort) catch unreachable, .{ .block_mode = opt.socket_block_mode }),
     };
 
     if (optional_host) |host| {
@@ -333,8 +346,8 @@ pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?Protocol,
             std.debug.panic("host is 'unix' this might mean 'unix domain socket' but not sure, giving up for now", .{});
         }
         if (host[0] == '/')
-            return connectUnixPath(host);
-        return connectTcp(host, display_num.asPort(), .{});
+            return connectUnixPath(host, .{ .block_mode = opt.socket_block_mode });
+        return connectTcp(host, display_num.asPort(), .{ .block_mode = opt.socket_block_mode });
     } else {
         if (builtin.os.tag == .windows) {
             std.log.err(
@@ -345,12 +358,12 @@ pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?Protocol,
         }
         // otherwise, strategy is to try connecting to a unix domain socket first
         // and fall back to tcp localhost otherwise
-        return connectUnixDisplayNum(display_num) catch |err| switch (err) {
+        return connectUnixDisplayNum(display_num, .{ .block_mode = opt.socket_block_mode }) catch |err| switch (err) {
             else => |e| return e,
         };
 
         // TODO: uncomment this one we handle some of the errors from connectUnix
-        //return connectTcp("localhost", try displayToTcpPort(display_num), .{});
+        //return connectTcp("localhost", try displayToTcpPort(display_num), .{ .block_mode = opt.socket_block_mode });
     }
 }
 
@@ -373,16 +386,17 @@ pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16)
 }
 
 pub const ConnectTcpOptions = struct {
+    block_mode: BlockMode = .blocking,
     inet6: bool = false,
 };
-pub fn connectTcp(name: []const u8, port: u16, options: ConnectTcpOptions) ConnectError!posix.socket_t {
-    if (options.inet6) @panic("inet6 protocol not implemented");
+pub fn connectTcp(name: []const u8, port: u16, opt: ConnectTcpOptions) ConnectError!posix.socket_t {
+    if (opt.inet6) @panic("inet6 protocol not implemented");
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const list = try getAddressList(arena.allocator(), name, port);
     defer list.deinit();
     for (list.addrs) |addr| {
-        return tcpConnect(addr) catch |err| switch (err) {
+        return tcpConnect(addr, .{ .block_mode = opt.block_mode }) catch |err| switch (err) {
             error.ConnectionRefused => continue,
             error.AccessDenied,
             error.SystemResources,
@@ -398,8 +412,8 @@ const TcpConnectError = error{
     ConnectionRefused,
     SystemResources,
 };
-fn tcpConnect(addr: std.net.Address) TcpConnectError!posix.socket_t {
-    return (std.net.tcpConnectToAddress(addr) catch |err| switch (err) {
+fn tcpConnect(addr: std.net.Address, opt: SocketConnectOptions) TcpConnectError!posix.socket_t {
+    return (stdext.net.tcpConnectToAddress(addr, opt.block_mode == .nonblocking) catch |err| switch (err) {
         error.ConnectionTimedOut,
         error.ConnectionRefused,
         error.NetworkUnreachable,
@@ -429,7 +443,7 @@ pub fn disconnect(sock: posix.socket_t) void {
     posix.close(sock);
 }
 
-pub fn connectUnixDisplayNum(display_num: DisplayNum) ConnectError!posix.socket_t {
+pub fn connectUnixDisplayNum(display_num: DisplayNum, opt: SocketConnectOptions) ConnectError!posix.socket_t {
     const path_prefix = "/tmp/.X11-unix/X";
     var addr = posix.sockaddr.un{ .family = posix.AF.UNIX, .path = undefined };
     const path = std.fmt.bufPrintZ(
@@ -437,21 +451,25 @@ pub fn connectUnixDisplayNum(display_num: DisplayNum) ConnectError!posix.socket_
         "{s}{}",
         .{ path_prefix, display_num },
     ) catch unreachable;
-    return connectUnixAddr(&addr, path.len);
+    return connectUnixAddr(&addr, path.len, opt);
 }
 
-pub fn connectUnixPath(socket_path: []const u8) ConnectError!posix.socket_t {
+pub fn connectUnixPath(socket_path: []const u8, opt: SocketConnectOptions) ConnectError!posix.socket_t {
     var addr = posix.sockaddr.un{ .family = posix.AF.UNIX, .path = undefined };
     const path = std.fmt.bufPrintZ(
         &addr.path,
         "{s}",
         .{socket_path},
     ) catch unreachable;
-    return connectUnixAddr(&addr, path.len);
+    return connectUnixAddr(&addr, path.len, opt);
 }
 
-pub fn connectUnixAddr(addr: *const posix.sockaddr.un, path_len: usize) ConnectError!posix.socket_t {
-    const sock = posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| switch (err) {
+pub fn connectUnixAddr(addr: *const posix.sockaddr.un, path_len: usize, opt: SocketConnectOptions) ConnectError!posix.socket_t {
+    const sock_flags: u32 = posix.SOCK.STREAM | @as(u32, switch (opt.block_mode) {
+        .blocking => 0,
+        .nonblocking => std.posix.SOCK.NONBLOCK,
+    });
+    const sock = posix.socket(posix.AF.UNIX, sock_flags, 0) catch |err| switch (err) {
         error.SystemResources => |e| return e,
         error.PermissionDenied => return error.AccessDenied,
         error.ProcessFdQuotaExceeded,
