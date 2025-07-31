@@ -246,6 +246,25 @@ pub fn main() !u8 {
         },
     }
 
+    // test creating/freeing GCs
+    for (0..3) |_| {
+        {
+            var msg_buf: [x11.create_gc.max_len]u8 = undefined;
+            const len = x11.create_gc.serialize(&msg_buf, .{
+                .gc_id = ids.bg_gc(),
+                .drawable_id = ids.window().drawable(),
+            }, .{
+                .foreground = screen.black_pixel,
+            });
+            try conn.sendOne(&sequence, msg_buf[0..len]);
+        }
+        {
+            var msg: [x11.free_gc.len]u8 = undefined;
+            x11.free_gc.serialize(&msg, ids.bg_gc());
+            try conn.sendOne(&sequence, &msg);
+        }
+    }
+
     {
         var msg_buf: [x11.create_gc.max_len]u8 = undefined;
         const len = x11.create_gc.serialize(&msg_buf, .{

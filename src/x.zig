@@ -1189,6 +1189,7 @@ pub const Opcode = enum(u8) {
     free_pixmap = 54,
     create_gc = 55,
     change_gc = 56,
+    free_gc = 60,
     clear_area = 61,
     copy_area = 62,
     poly_line = 65,
@@ -2091,6 +2092,16 @@ pub const change_gc = struct {
 
     pub fn serialize(buf: [*]u8, gc_id: GraphicsContext, options: GcOptions) u16 {
         return createOrChangeGcSerialize(buf, gc_id, .change, options);
+    }
+};
+
+pub const free_gc = struct {
+    pub const len = 8;
+    pub fn serialize(buf: [*]u8, gc_id: GraphicsContext) void {
+        buf[0] = @intFromEnum(Opcode.free_gc);
+        buf[1] = 0;
+        writeIntNative(u16, buf + 2, len >> 2);
+        writeIntNative(u32, buf + 4, @intFromEnum(gc_id));
     }
 };
 
