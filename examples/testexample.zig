@@ -301,7 +301,7 @@ pub fn main() !u8 {
 
     const opt_render_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, "RENDER");
     if (opt_render_ext) |render_ext| {
-        const expected_version: common.ExtensionVersion = .{ .major_version = 0, .minor_version = 11 };
+        const expected_version: common.ExtensionVersion = .{ .major_version = 0, .minor_version = 10 };
         {
             var msg: [x11.render.query_version.len]u8 = undefined;
             x11.render.query_version.serialize(&msg, render_ext.opcode, .{
