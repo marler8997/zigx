@@ -9,6 +9,7 @@ const examples = [_][]const u8{
     "example",
     "fontviewer",
     "input",
+    "dbe",
 };
 
 pub fn build(b: *std.Build) void {
