@@ -654,8 +654,8 @@ fn render(
 
     try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0xffaadd, depth));
     {
-        const text_literal: []const u8 = "Hello X!";
-        const text = x11.Slice(u8, [*]const u8){ .ptr = text_literal.ptr, .len = text_literal.len };
+        const text_literal: []const u8 = "ImageText8";
+        const text: x11.Slice(u8, [*]const u8) = comptime .initComptime(text_literal);
         var msg: [x11.image_text8.getLen(text.len)]u8 = undefined;
 
         const text_width = font_dims.width * text_literal.len;
@@ -665,6 +665,23 @@ fn render(
             .gc_id = ids.fg_gc(),
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
+        });
+        try common.sendOne(sock, sequence, &msg);
+    }
+    {
+        const text_literal: []const u8 = "PolyText8";
+        const items = comptime [_]x11.TextItem8{
+            .{ .text_element = .{ .delta = 0, .string = .initComptime(text_literal) } },
+        };
+        var msg: [x11.poly_text8.getLen(&items)]u8 = undefined;
+
+        const text_width = font_dims.width * text_literal.len;
+
+        x11.poly_text8.serialize(&msg, &items, .{
+            .drawable_id = ids.window().drawable(),
+            .gc_id = ids.fg_gc(),
+            .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
+            .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent + font_dims.height + 1,
         });
         try common.sendOne(sock, sequence, &msg);
     }

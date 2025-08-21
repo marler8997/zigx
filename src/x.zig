@@ -45,6 +45,7 @@ pub const Charset = charset.Charset;
 pub const DoubleBuffer = @import("DoubleBuffer.zig");
 pub const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 pub const Slice = @import("x/slice.zig").Slice;
+pub const SliceWithMaxLen = @import("x/slice.zig").SliceWithMaxLen;
 pub const keymap = @import("keymap.zig");
 
 pub const TcpBasePort = 6000;
@@ -1197,6 +1198,7 @@ pub const Opcode = enum(u8) {
     poly_fill_rectangle = 70,
     put_image = 72,
     get_image = 73,
+    poly_text8 = 74,
     image_text8 = 76,
     create_colormap = 78,
     free_colormap = 79,
@@ -2362,6 +2364,77 @@ pub const get_image = struct {
     }
 };
 
+pub const TextItem8 = union(enum) {
+    text_element: TextElement8,
+    font_change: Font,
+};
+pub const TextElement8 = struct {
+    delta: i8, // position offset along x-axis
+    // 255 is reserved for font changes
+    string: SliceWithMaxLen(u8, [*]const u8, 254),
+};
+
+pub const poly_text8 = struct {
+    pub const non_list_len =
+        2 // opcode and string_length
+        + 2 // request length
+        + 4 // drawable id
+        + 4 // gc id
+        + 4 // x, y coordinates
+    ;
+    pub fn getLen(items: []const TextItem8) u16 {
+        var total_len: u16 = non_list_len;
+        for (items) |item| switch (item) {
+            .text_element => |text_elem| {
+                // 1 byte for string length + 1 byte for delta + string data
+                total_len += 1 + 1 + @as(u16, text_elem.string.len);
+            },
+            .font_change => {
+                // Font changes are encoded as: length=255, followed by 4 bytes for font ID
+                total_len += 1 + 4;
+            },
+        };
+        return std.mem.alignForward(u16, total_len, 4);
+    }
+    pub const max_len = getLen(255);
+    pub const Args = struct {
+        drawable_id: Drawable,
+        gc_id: GraphicsContext,
+        x: i16,
+        y: i16,
+    };
+    pub const text_offset = non_list_len;
+    pub fn serialize(buf: [*]u8, items: []const TextItem8, args: Args) void {
+        buf[0] = @intFromEnum(Opcode.poly_text8);
+        buf[1] = 0; // unused
+        const request_len = getLen(items);
+        std.debug.assert(request_len & 0x3 == 0);
+        writeIntNative(u16, buf + 2, request_len >> 2);
+        writeIntNative(u32, buf + 4, @intFromEnum(args.drawable_id));
+        writeIntNative(u32, buf + 8, @intFromEnum(args.gc_id));
+        writeIntNative(i16, buf + 12, args.x);
+        writeIntNative(i16, buf + 14, args.y);
+        var offset: u16 = 16;
+        for (items) |item| switch (item) {
+            .text_element => |text_elem| {
+                text_elem.string.validateMaxLen();
+                buf[offset + 0] = text_elem.string.len;
+                buf[offset + 1] = @bitCast(text_elem.delta);
+                @memcpy(buf[offset + 2 ..][0..text_elem.string.len], text_elem.string.nativeSlice());
+                offset += 2 + text_elem.string.len;
+            },
+            .font_change => |font| {
+                buf[offset] = 255;
+                writeIntNative(u32, buf + offset + 1, @intFromEnum(font));
+                offset += 5;
+            },
+        };
+        const actual_len = std.mem.alignForward(u16, offset, 4);
+        std.debug.assert(actual_len == request_len);
+        @memset(buf[offset..actual_len], 0);
+    }
+};
+
 pub const image_text8 = struct {
     pub const non_list_len =
         2 // opcode and string_length
@@ -2384,6 +2457,7 @@ pub const image_text8 = struct {
     pub fn serialize(buf: [*]u8, text: Slice(u8, [*]const u8), args: Args) void {
         serializeNoTextCopy(buf, text.len, args);
         @memcpy(buf[text_offset..][0..text.len], text.nativeSlice());
+        @memset(buf[text_offset + text.len .. getLen(text.len)], 0);
     }
     pub fn serializeNoTextCopy(buf: [*]u8, text_len: u8, args: Args) void {
         buf[0] = @intFromEnum(Opcode.image_text8);
