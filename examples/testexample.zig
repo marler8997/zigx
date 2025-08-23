@@ -594,6 +594,8 @@ pub fn main() !u8 {
                     std.log.info("todo: server msg {}", .{msg});
                     return error.UnhandledServerMsg;
                 },
+                .destroy_notify => |msg| std.log.info("destroy_notify: {}", .{msg}),
+                .unmap_notify => |msg| std.log.info("unmap_notify: {}", .{msg}),
                 .map_notify => |msg| std.log.info("map_notify: {}", .{msg}),
                 .reparent_notify => |msg| std.log.info("reparent_notify: {}", .{msg}),
                 .configure_notify => |msg| std.log.info("configure_notify: {}", .{msg}),

@@ -229,6 +229,8 @@ pub fn main() !u8 {
                     std.log.info("todo: server msg {}", .{msg});
                     return error.UnhandledServerMsg;
                 },
+                .destroy_notify,
+                .unmap_notify,
                 .map_notify,
                 .reparent_notify,
                 .configure_notify,

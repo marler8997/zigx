@@ -2724,6 +2724,8 @@ pub const ServerMsgTaggedUnion = union(enum) {
     keymap_notify: *align(4) Event.KeymapNotify,
     expose: *align(4) Event.Expose,
     no_exposure: *align(4) Event.NoExposure,
+    destroy_notify: *align(4) Event.DestroyNotify,
+    unmap_notify: *align(4) Event.UnmapNotify,
     map_notify: *align(4) Event.MapNotify,
     reparent_notify: *align(4) Event.ReparentNotify,
     configure_notify: *align(4) Event.ConfigureNotify,
@@ -2743,6 +2745,8 @@ pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
         .keymap_notify => return .{ .keymap_notify = @ptrCast(msg_ptr) },
         .expose => return .{ .expose = @ptrCast(msg_ptr) },
         .no_exposure => return .{ .no_exposure = @ptrCast(msg_ptr) },
+        .destroy_notify => return .{ .destroy_notify = @ptrCast(msg_ptr) },
+        .unmap_notify => return .{ .unmap_notify = @ptrCast(msg_ptr) },
         .map_notify => return .{ .map_notify = @ptrCast(msg_ptr) },
         .reparent_notify => return .{ .reparent_notify = @ptrCast(msg_ptr) },
         .configure_notify => return .{ .configure_notify = @ptrCast(msg_ptr) },
@@ -3056,15 +3060,41 @@ pub const Event = extern union {
     };
 
     comptime {
+        std.debug.assert(@sizeOf(DestroyNotify) == 32);
+    }
+    pub const DestroyNotify = extern struct {
+        code: u8,
+        unused: u8,
+        sequence: u16,
+        event: Window,
+        window: Window,
+        _: [20]u8,
+    };
+
+    comptime {
+        std.debug.assert(@sizeOf(UnmapNotify) == 32);
+    }
+    pub const UnmapNotify = extern struct {
+        code: u8,
+        unused: u8,
+        sequence: u16,
+        event: Window,
+        window: Window,
+        from_configure: u8,
+        _: [19]u8,
+    };
+
+    comptime {
         std.debug.assert(@sizeOf(MapNotify) == 32);
     }
     pub const MapNotify = extern struct {
         code: u8,
         unused: u8,
         sequence: u16,
-        parent: Window,
+        event: Window,
         window: Window,
-        _: [20]u8,
+        override_redirect: u8,
+        _: [19]u8,
     };
 
     comptime {
