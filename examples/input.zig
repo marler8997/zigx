@@ -264,8 +264,12 @@ pub fn main() !u8 {
                         .c => {
                             state.confine_grab = !state.confine_grab;
                         },
-                        .i => {
+                        .i => if (state.window_created) {
+                            try destroyWindow(conn.sock, &sequence, ids.childWindow());
+                            state.window_created = false;
+                        } else {
                             try createWindow(conn.sock, &sequence, screen.root, ids.childWindow());
+                            state.window_created = true;
                         },
                         .d => {
                             try disableInputDevice(conn.sock, &sequence, &state);
@@ -565,6 +569,12 @@ fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.
     }
 }
 
+fn destroyWindow(sock: std.posix.socket_t, sequence: *u16, window_id: x11.Window) !void {
+    var msg: [x11.destroy_window.len]u8 = undefined;
+    x11.destroy_window.serialize(&msg, window_id);
+    try common.sendOne(sock, sequence, &msg);
+}
+
 fn disableInputDevice(sock: std.posix.socket_t, sequence: *u16, state: *State) !void {
     const already_fmt = "disable input device already requested, {s}...";
     switch (state.disable_input_device) {
@@ -639,6 +649,7 @@ const State = struct {
             atom: u32,
         },
     } = .initial,
+    window_created: bool = false,
 
     fn toggleGrab(self: *State, sock: std.posix.socket_t, sequence: *u16, grab_window: x11.Window) !void {
         switch (self.grab) {
@@ -788,8 +799,8 @@ fn render(
         fg_gc_id,
         font_dims.font_left,
         font_dims.font_ascent + (5 * font_dims.height),
-        "Create W(i)ndow",
-        .{},
+        "{s} W(i)ndow",
+        .{if (state.window_created) "Destroy" else "Create"},
     );
     {
         const suffix: []const u8 = switch (state.disable_input_device) {
