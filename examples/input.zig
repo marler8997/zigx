@@ -96,6 +96,19 @@ pub fn main() !u8 {
         break :blk screen;
     };
 
+    const double_buf = try x11.DoubleBuffer.init(
+        std.mem.alignForward(usize, 1000, std.heap.pageSize()),
+        .{ .memfd_name = "ZigX11DoubleBuffer" },
+    );
+    // double_buf.deinit() (not necessary)
+    std.log.info("read buffer capacity is {}", .{double_buf.half_len});
+    var buf = double_buf.contiguousReadBuffer();
+
+    const wm_protocol_atoms: WmProtocolAtoms = .{
+        .WM_PROTOCOLS = try internAtom(conn.sock, &buf, &sequence, "WM_PROTOCOLS"),
+        .WM_DELETE_WINDOW = try internAtom(conn.sock, &buf, &sequence, "WM_DELETE_WINDOW"),
+    };
+
     // TODO: maybe need to call conn.setup.verify or something?
     const ids: Ids = .{ .base = conn.setup.fixed().resource_id_base };
 
@@ -140,6 +153,8 @@ pub fn main() !u8 {
         try common.sendOne(conn.sock, &sequence, msg_buf[0..len]);
     }
 
+    try setupWmProtocols(conn.sock, &sequence, ids.window(), wm_protocol_atoms);
+
     {
         var msg_buf: [x11.create_gc.max_len]u8 = undefined;
         const len = x11.create_gc.serialize(&msg_buf, .{
@@ -170,14 +185,6 @@ pub fn main() !u8 {
         x11.query_text_extents.serialize(&msg, ids.fg().fontable(), text);
         try common.sendOne(conn.sock, &sequence, &msg);
     }
-
-    const double_buf = try x11.DoubleBuffer.init(
-        std.mem.alignForward(usize, 1000, std.heap.pageSize()),
-        .{ .memfd_name = "ZigX11DoubleBuffer" },
-    );
-    // double_buf.deinit() (not necessary)
-    std.log.info("read buffer capacity is {}", .{double_buf.half_len});
-    var buf = double_buf.contiguousReadBuffer();
 
     const font_dims: FontDims = blk: {
         _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
@@ -268,7 +275,7 @@ pub fn main() !u8 {
                             try destroyWindow(conn.sock, &sequence, ids.childWindow());
                             state.window_created = false;
                         } else {
-                            try createWindow(conn.sock, &sequence, screen.root, ids.childWindow());
+                            try createWindow(conn.sock, &sequence, screen.root, ids.childWindow(), wm_protocol_atoms);
                             state.window_created = true;
                         },
                         .d => {
@@ -334,6 +341,68 @@ pub fn main() !u8 {
             }
         }
     }
+}
+
+fn internAtom(
+    sock: std.posix.socket_t,
+    buf: *x11.ContiguousReadBuffer,
+    sequence: *u16,
+    comptime name: []const u8,
+) !u32 {
+    const name_x11 = comptime x11.Slice(u16, [*]const u8).initComptime(name);
+    var msg: [x11.intern_atom.getLen(name_x11.len)]u8 = undefined;
+    x11.intern_atom.serialize(&msg, .{
+        .only_if_exists = false,
+        .name = name_x11,
+    });
+    return internAtom2(sock, buf, &msg, sequence);
+}
+fn internAtom2(
+    sock: std.posix.socket_t,
+    buf: *x11.ContiguousReadBuffer,
+    request_msg: []const u8,
+    sequence: *u16,
+) !u32 {
+    const intern_sequence = sequence.*;
+    try common.sendOne(sock, sequence, request_msg);
+    const reader = common.SocketReader{ .context = sock };
+    _ = try x11.readOneMsg(reader, @alignCast(buf.nextReadBuffer()));
+    switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+        .reply => |reply| {
+            if (reply.sequence != intern_sequence) {
+                std.log.err("expected reply to sequence {} but got {}", .{ intern_sequence, reply });
+                return 1;
+            }
+            return x11.readIntNative(u32, reply.reserve_min[0..]);
+        },
+        else => |msg_server| {
+            std.log.err("expected a reply but got {}", .{msg_server});
+            return 1;
+        },
+    }
+
+    if (true) @panic("todo: intern atoms for WM_PROTOCOLS and WM_DELETE_WINDOW");
+}
+
+fn setupWmProtocols(
+    sock: std.posix.socket_t,
+    sequence: *u16,
+    window_id: x11.Window,
+    wm_protocol_atoms: WmProtocolAtoms,
+) !void {
+    const change_prop_u32 = x11.change_property.withFormat(u32);
+    var msg: [change_prop_u32.getLen(1)]u8 = undefined;
+    change_prop_u32.serialize(&msg, .{
+        .mode = .replace,
+        .window_id = window_id,
+        .property = @enumFromInt(wm_protocol_atoms.WM_PROTOCOLS),
+        .type = @enumFromInt(@intFromEnum(x11.Atom.ATOM)),
+        .values = x11.Slice(u16, [*]const u32){
+            .ptr = @ptrCast(&wm_protocol_atoms.WM_DELETE_WINDOW),
+            .len = 1,
+        },
+    });
+    try common.sendOne(sock, sequence, &msg);
 }
 
 fn handleReply(
@@ -515,7 +584,18 @@ fn warpPointer(sock: std.posix.socket_t, sequence: *u16) !void {
     try common.sendOne(sock, sequence, &msg);
 }
 
-fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.Window, window_id: x11.Window) !void {
+const WmProtocolAtoms = struct {
+    WM_PROTOCOLS: u32,
+    WM_DELETE_WINDOW: u32,
+};
+
+fn createWindow(
+    sock: std.posix.socket_t,
+    sequence: *u16,
+    parent_window_id: x11.Window,
+    window_id: x11.Window,
+    wm_protocol_atoms: WmProtocolAtoms,
+) !void {
     {
         var msg_buf: [x11.create_window.max_len]u8 = undefined;
         const len = x11.create_window.serialize(&msg_buf, .{
@@ -564,6 +644,9 @@ fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.
         });
         try common.sendOne(sock, sequence, msg_buf[0..len]);
     }
+
+    try setupWmProtocols(sock, sequence, window_id, wm_protocol_atoms);
+
     {
         var msg: [x11.map_window.len]u8 = undefined;
         x11.map_window.serialize(&msg, window_id);
