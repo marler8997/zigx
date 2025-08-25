@@ -3153,6 +3153,31 @@ pub const KeyButtonMask = packed struct(u16) {
     button5: bool, // #x1000     Button5
     _reserved: u3 = 0, // #xE000     unused but must be zero
 
+    pub const all_5_mods: KeyButtonMask = .{
+        .shift = false,
+        .lock = false,
+        .control = false,
+        .mod1 = true,
+        .mod2 = true,
+        .mod3 = true,
+        .mod4 = true,
+        .mod5 = true,
+        .button1 = false,
+        .button2 = false,
+        .button3 = false,
+        .button4 = false,
+        .button5 = false,
+    };
+    pub fn hasAnyModFlag(mask: KeyButtonMask) bool {
+        return 0 != @as(u16, @bitCast(mask)) & @as(u16, @bitCast(KeyButtonMask.all_5_mods));
+    }
+    pub fn mod(mask: KeyButtonMask) KeycodeMod {
+        var result: u2 = 0;
+        if (mask.shift) result += 1;
+        if (mask.hasAnyModFlag()) result += 2;
+        return @enumFromInt(result);
+    }
+
     pub fn format(kbm: KeyButtonMask, fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         var any = false;
 
@@ -3179,6 +3204,42 @@ pub const KeyButtonMask = packed struct(u16) {
         _ = fmt;
         _ = options;
     }
+};
+
+// Every Keycode has a standard mapping to 4 possible symbols:
+//
+//      Group 1       Group 2
+//         |             |
+//      |------|      |------|
+//     Sym0   Sym1   Sym2   Sym3
+//      |      |      |      |
+//    lower  upper  lower  upper
+//
+// The presence of any modifier flag (Mod1 through Mod5) indicates
+// Group 2 should be used instead of Group 1.
+//
+// The "shift/caps lock" flag indicates the second symbol in the group
+// should be used instead of the first.
+//
+// The Keymap may include less or more than 4 symbols per code.  More than
+// 4 entries are for non-standard mappings, less than 4 can be interpreted
+// as 4 using the following mapping:
+//
+//      |  Sym0  |   Sym1   |  Sym2   |   Sym3   |
+//   ---------------------------------------------
+//    1 |  first | NoSymbol |  first  | NoSymbol |
+//    2 |  first |  second  |  first  |  second  |
+//    3 |  first |  second  |  third  | NoSymbol |
+//
+// NOTE: A group of the form
+//    Keysym NoSymbol
+// Is the same as:
+//    lowercase(Keysym) uppercase(Keysym)
+pub const KeycodeMod = enum(u2) {
+    lower,
+    upper,
+    lower_mod,
+    upper_mod,
 };
 
 const FontProp = extern struct {
