@@ -8,6 +8,7 @@ const examples = [_][]const u8{
     "queryfont",
     "example",
     "fontviewer",
+    "keys",
     "input",
     "dbe",
 };

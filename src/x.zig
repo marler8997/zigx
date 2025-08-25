@@ -3153,6 +3153,17 @@ pub const KeyButtonMask = packed struct(u16) {
     button5: bool, // #x1000     Button5
     _reserved: u3 = 0, // #xE000     unused but must be zero
 
+    pub const all_5_mods: KeyButtonMask = .{
+        .mod1 = true,
+        .mod2 = true,
+        .mod3 = true,
+        .mod4 = true,
+        .mod5 = true,
+    };
+    pub fn hasAnyModFlag(mask: KeyButtonMask) bool {
+        return 0 != @as(u16, @bitCast(mask)) & @as(u16, @bitCast(KeyButtonMask.all_5_mods));
+    }
+
     pub fn format(kbm: KeyButtonMask, fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         var any = false;
 
@@ -3180,6 +3191,102 @@ pub const KeyButtonMask = packed struct(u16) {
         _ = options;
     }
 };
+
+// Every Keycode has a standard mapping to 4 possible symbols:
+//
+//      Group 1       Group 2
+//         |             |
+//      |------|      |------|
+//     Sym0   Sym1   Sym2   Sym3
+//      |      |      |      |
+//    lower  upper  lower  upper
+//
+// The presence of any modifier flag (Mod1 through Mod5) indicates
+// Group 2 should be used instead of Group 1.
+//
+// The "shift/caps lock" flag indicates the second symbol in the group
+// should be used instead of the first.
+//
+// The Keymap may include less or more than 4 symbols per code.  More than
+// 4 entries are for non-standard mappings, less than 4 can be interpreted
+// as 4 using the following mapping:
+//
+//      |  Sym0  |   Sym1   |  Sym2   |   Sym3   |
+//   ---------------------------------------------
+//    1 |  first | NoSymbol |  first  | NoSymbol |
+//    2 |  first |  second  |  first  |  second  |
+//    3 |  first |  second  |  third  | NoSymbol |
+//
+// NOTE: A group of the form
+//    Keysym NoSymbol
+// Is the same as:
+//    lowercase(Keysym) uppercase(Keysym)
+// pub const KeycodeMod = enum(u2) {
+//     lower,
+//     upper,
+//     lower_mod,
+//     upper_mod,
+//     pub fn init(button_mask: KeyButtonMask) KeycodeMod {
+//         var result: u2 = 0;
+//         if (button_mask.shift) result += 1;
+//         if (button_mask.hasAnyModFlag()) result += 2;
+//         return @enumFromInt(result);
+//     }
+// };
+// fn keymapEntrySyms(syms_per_code: u8, syms: []u32) [4]charset.Combined {
+//     std.debug.assert(syms.len >= syms_per_code);
+//     switch (syms_per_code) {
+//         0 => @panic("keymap syms_per_code can't be 0"),
+//         1 => @panic("todo"),
+//         2 => @panic("todo"),
+//         3 => @panic("todo"),
+//         4...255 => return [4]charset.Combined{
+//             @enumFromInt(syms[0] & 0xffff),
+//             @enumFromInt(syms[1] & 0xffff),
+//             @enumFromInt(syms[2] & 0xffff),
+//             @enumFromInt(syms[3] & 0xffff),
+//         },
+//     }
+// }
+// const Keymap = struct {
+//     map: [248][4]charset.Combined,
+//     pub fn initVoid() Keymap {
+//         var result: Keymap = undefined;
+//         for (&result.map) |*entry_ref| {
+//             // TODO: initialize to VoidSymbol instead of 0
+//             entry_ref.* = [1]charset.Combined{@enumFromInt(0)} ** 4;
+//         }
+//         return result;
+//     }
+//     pub fn load(
+//         self: *Keymap,
+//         min_keycode: u8,
+//         keymap: keymap.Keymap,
+//     ) void {
+//         if (min_keycode < 8)
+//             std.debug.panic("min_keycode is too small {}", .{min_keycode});
+//         if (keymap.keycode_count > 248)
+//             std.debug.panic("keymap has too many keycodes {}", .{keymap.keycode_count});
+//         if (keymap.syms_per_code == 0)
+//             @panic("keymap syms_per_code cannot be 0");
+
+//         std.log.info("Keymap: syms_per_code={} total_syms={}", .{ keymap.syms_per_code, keymap.syms.len });
+//         var keycode_index: usize = 0;
+//         var sym_offset: usize = 0;
+//         while (keycode_index < keymap.keycode_count) : (keycode_index += 1) {
+//             const keycode: u8 = @intCast(min_keycode + keycode_index);
+//             self.map[keycode - 8] = keymapEntrySyms(
+//                 keymap.syms_per_code,
+//                 keymap.syms[sym_offset..],
+//             );
+//             sym_offset += keymap.syms_per_code;
+//         }
+//     }
+//     pub fn getKeysym(self: Keymap, keycode: u8, mod: KeycodeMod) x.charset.Combined {
+//         if (keycode < 8) @panic("invalid keycode");
+//         return self.map[keycode - 8][@intFromEnum(mod)];
+//     }
+// };
 
 const FontProp = extern struct {
     atom: Atom,
