@@ -33,7 +33,7 @@ pub fn request(
     allocator: std.mem.Allocator,
     sock: posix.socket_t,
     sequence: *u16,
-    fixed: x11.ConnectSetup.Fixed,
+    fixed: *const x11.ConnectSetup.Fixed,
 ) !Reply {
     const keycode_count: u8 = fixed.max_keycode - fixed.min_keycode + 1;
 

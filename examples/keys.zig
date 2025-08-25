@@ -54,7 +54,7 @@ pub fn main() !u8 {
             allocator,
             conn.sock,
             &sequence,
-            conn.setup.fixed().*,
+            conn.setup.fixed(),
         );
         defer keymap_response.deinit(allocator);
         try keymap.load(conn.setup.fixed().min_keycode, keymap_response);

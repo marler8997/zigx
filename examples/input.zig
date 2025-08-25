@@ -55,7 +55,7 @@ pub fn main() !u8 {
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_g), Key.g);
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_c), Key.c);
 
-        const keymap = try x11.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed().*);
+        const keymap = try x11.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed());
         defer keymap.deinit(allocator);
         std.log.info("Keymap: syms_per_code={} total_syms={}", .{ keymap.syms_per_code, keymap.syms.len });
         {

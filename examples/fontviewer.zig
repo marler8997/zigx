@@ -40,7 +40,7 @@ pub fn main() !u8 {
     };
     var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
     {
-        const keymap = try x11.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed().*);
+        const keymap = try x11.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed());
         defer keymap.deinit(allocator);
         std.log.info("Keymap: syms_per_code={} total_syms={}", .{ keymap.syms_per_code, keymap.syms.len });
         {

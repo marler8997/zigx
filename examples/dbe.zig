@@ -45,7 +45,7 @@ pub fn main() !u8 {
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_S), Key.s);
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_d), Key.d);
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_D), Key.d);
-        const keymap = try x11.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed().*);
+        const keymap = try x11.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed());
         defer keymap.deinit(allocator);
         {
             var i: usize = 0;
