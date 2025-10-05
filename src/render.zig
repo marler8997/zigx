@@ -1,7 +1,7 @@
 /// https://www.x.org/releases/current/doc/renderproto/renderproto.txt
 const std = @import("std");
 
-const x = @import("x.zig");
+const x11 = @import("x.zig");
 
 pub const Picture = enum(u32) {
     none = 0,
@@ -172,12 +172,12 @@ pub const query_version = struct {
         buf[0] = ext_opcode;
         buf[1] = @intFromEnum(ExtOpcode.query_version);
         std.debug.assert(len & 0x3 == 0);
-        x.writeIntNative(u16, buf + 2, len >> 2);
-        x.writeIntNative(u32, buf + 4, args.major_version);
-        x.writeIntNative(u32, buf + 8, args.minor_version);
+        x11.writeIntNative(u16, buf + 2, len >> 2);
+        x11.writeIntNative(u32, buf + 4, args.major_version);
+        x11.writeIntNative(u32, buf + 8, args.minor_version);
     }
     pub const Reply = extern struct {
-        response_type: x.ReplyKind,
+        response_type: x11.ReplyKind,
         unused_pad: u8,
         sequence: u16,
         word_len: u32,
@@ -226,11 +226,11 @@ pub const query_pict_formats = struct {
     pub fn serialize(buf: [*]u8, ext_opcode: u8) void {
         buf[0] = ext_opcode;
         buf[1] = @intFromEnum(ExtOpcode.query_pict_formats);
-        x.writeIntNative(u16, buf + 2, len >> 2);
+        x11.writeIntNative(u16, buf + 2, len >> 2);
     }
 
     pub const Reply = extern struct {
-        response_type: x.ReplyKind,
+        response_type: x11.ReplyKind,
         unused_pad: u8,
         sequence: u16,
         word_len: u32,
@@ -292,10 +292,10 @@ pub const create_picture = struct {
         clip_y_origin: i16 = 0,
         clip_mask: u32 = 0, // optional
         graphics_exposures: bool = false,
-        subwindow_mode: x.SubWindowMode = .clip_by_children,
+        subwindow_mode: x11.SubWindowMode = .clip_by_children,
         poly_edge: PolyEdge = .sharp,
         poly_mode: PolyMode = .precise,
-        dither: x.Atom = @enumFromInt(0), // optional
+        dither: x11.Atom = @enumFromInt(0), // optional
         component_alpha: bool = false,
     };
 
@@ -310,7 +310,7 @@ pub const create_picture = struct {
     pub const max_len = non_option_len + (create_picture_option_count * 4);
     pub const Args = struct {
         picture_id: Picture,
-        drawable_id: x.Drawable,
+        drawable_id: x11.Drawable,
         format_id: PictureFormat,
         options: CreatePictureOptions,
     };
@@ -318,22 +318,22 @@ pub const create_picture = struct {
         buf[0] = ext_opcode;
         buf[1] = @intFromEnum(ExtOpcode.create_picture);
         // buf[2-3] is the len, set at the end of the function
-        x.writeIntNative(u32, buf + 4, @intFromEnum(args.picture_id));
-        x.writeIntNative(u32, buf + 8, @intFromEnum(args.drawable_id));
-        x.writeIntNative(u32, buf + 12, @intFromEnum(args.format_id));
+        x11.writeIntNative(u32, buf + 4, @intFromEnum(args.picture_id));
+        x11.writeIntNative(u32, buf + 8, @intFromEnum(args.drawable_id));
+        x11.writeIntNative(u32, buf + 12, @intFromEnum(args.format_id));
 
         var option_mask: u32 = 0;
         var request_len: u16 = non_option_len;
 
         inline for (std.meta.fields(CreatePictureOptions)) |field| {
-            if (!x.isDefaultValue(args.options, field)) {
-                x.writeIntNative(u32, buf + request_len, x.optionToU32(@field(args.options, field.name)));
+            if (!x11.isDefaultValue(args.options, field)) {
+                x11.writeIntNative(u32, buf + request_len, x11.optionToU32(@field(args.options, field.name)));
                 option_mask |= @field(create_picture_option_flag, field.name);
                 request_len += 4;
             }
         }
-        x.writeIntNative(u32, buf + non_option_len - 4, option_mask);
-        x.writeIntNative(u16, buf + 2, request_len >> 2);
+        x11.writeIntNative(u32, buf + non_option_len - 4, option_mask);
+        x11.writeIntNative(u16, buf + 2, request_len >> 2);
         return request_len;
     }
 };
@@ -377,19 +377,19 @@ pub const composite = struct {
     pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) void {
         buf[0] = ext_opcode;
         buf[1] = @intFromEnum(ExtOpcode.composite);
-        x.writeIntNative(u16, buf + 2, len >> 2);
+        x11.writeIntNative(u16, buf + 2, len >> 2);
         buf[4] = @intFromEnum(args.picture_operation);
         // 3 bytes of padding
-        x.writeIntNative(u32, buf + 8, @intFromEnum(args.src_picture_id));
-        x.writeIntNative(u32, buf + 12, @intFromEnum(args.mask_picture_id));
-        x.writeIntNative(u32, buf + 16, @intFromEnum(args.dst_picture_id));
-        x.writeIntNative(i16, buf + 20, args.src_x);
-        x.writeIntNative(i16, buf + 22, args.src_y);
-        x.writeIntNative(i16, buf + 24, args.mask_x);
-        x.writeIntNative(i16, buf + 26, args.mask_y);
-        x.writeIntNative(i16, buf + 28, args.dst_x);
-        x.writeIntNative(i16, buf + 30, args.dst_y);
-        x.writeIntNative(u16, buf + 32, args.width);
-        x.writeIntNative(u16, buf + 34, args.height);
+        x11.writeIntNative(u32, buf + 8, @intFromEnum(args.src_picture_id));
+        x11.writeIntNative(u32, buf + 12, @intFromEnum(args.mask_picture_id));
+        x11.writeIntNative(u32, buf + 16, @intFromEnum(args.dst_picture_id));
+        x11.writeIntNative(i16, buf + 20, args.src_x);
+        x11.writeIntNative(i16, buf + 22, args.src_y);
+        x11.writeIntNative(i16, buf + 24, args.mask_x);
+        x11.writeIntNative(i16, buf + 26, args.mask_y);
+        x11.writeIntNative(i16, buf + 28, args.dst_x);
+        x11.writeIntNative(i16, buf + 30, args.dst_y);
+        x11.writeIntNative(u16, buf + 32, args.width);
+        x11.writeIntNative(u16, buf + 34, args.height);
     }
 };
