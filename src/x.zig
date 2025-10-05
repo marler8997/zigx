@@ -924,6 +924,10 @@ pub const Resource = enum(u32) {
         return @enumFromInt(@intFromEnum(r));
     }
 
+    pub fn picture(r: Resource) render.Picture {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
     pub fn format(v: Resource, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = opt;

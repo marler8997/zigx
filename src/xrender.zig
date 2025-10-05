@@ -3,6 +3,25 @@ const std = @import("std");
 
 const x = @import("x.zig");
 
+pub const Picture = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn fromInt(i: u32) Picture {
+        return @enumFromInt(i);
+    }
+
+    pub fn format(v: Picture, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .copy_from_parent) {
+            try writer.writeAll("Picture(<copy from parent>)");
+        } else {
+            try writer.print("Picture({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
 pub const ExtOpcode = enum(u8) {
     query_version = 0,
     query_pict_formats = 1,
@@ -56,7 +75,6 @@ pub const ErrorCode = enum(u8) {
     Glyph = 4,
     _, // allow unknown errors
 };
-
 
 // Disjoint* and Conjoint* are new in version 0.2
 // PDF blend modes are new in version 0.11
@@ -177,12 +195,14 @@ pub const PictureFormatInfo = extern struct {
     direct: DirectFormat,
     colormap: u32,
 };
-comptime { if (@sizeOf(PictureFormatInfo) != 28) @compileError("PictureFormatInfo size is wrong"); }
+comptime {
+    if (@sizeOf(PictureFormatInfo) != 28) @compileError("PictureFormatInfo size is wrong");
+}
 
 pub const query_pict_formats = struct {
     pub const len =
-              2 // extension and command opcodes
-            + 2 // request length
+        2 // extension and command opcodes
+        + 2 // request length
     ;
     pub fn serialize(buf: [*]u8, ext_opcode: u8) void {
         buf[0] = ext_opcode;
@@ -210,7 +230,9 @@ pub const query_pict_formats = struct {
 
         // TODO: Get lists of screens, depths, visuals, subpixels
     };
-    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+    comptime {
+        std.debug.assert(@sizeOf(Reply) == 32);
+    }
 };
 
 pub const create_picture = struct {
@@ -221,31 +243,25 @@ pub const create_picture = struct {
         reflect,
     };
 
-    pub const PolyEdge = enum(u32) {
-        sharp,
-        smooth
-    };
+    pub const PolyEdge = enum(u32) { sharp, smooth };
 
-    pub const PolyMode = enum(u32) {
-        precise,
-        imprecise
-    };
+    pub const PolyMode = enum(u32) { precise, imprecise };
 
     pub const create_picture_option_count = 13;
     pub const create_picture_option_flag = struct {
-        pub const repeat            : u32 = (1 <<  0);
-        pub const alpha_map         : u32 = (1 <<  1);
-        pub const alpha_x_origin    : u32 = (1 <<  2);
-        pub const alpha_y_origin    : u32 = (1 <<  3);
-        pub const clip_x_origin     : u32 = (1 <<  4);
-        pub const clip_y_origin     : u32 = (1 <<  5);
-        pub const clip_mask         : u32 = (1 <<  6);
-        pub const graphics_exposures: u32 = (1 <<  7);
-        pub const subwindow_mode    : u32 = (1 <<  8);
-        pub const poly_edge         : u32 = (1 <<  9);
-        pub const poly_mode         : u32 = (1 <<  10);
-        pub const dither            : u32 = (1 <<  11);
-        pub const component_alpha   : u32 = (1 <<  12);
+        pub const repeat: u32 = (1 << 0);
+        pub const alpha_map: u32 = (1 << 1);
+        pub const alpha_x_origin: u32 = (1 << 2);
+        pub const alpha_y_origin: u32 = (1 << 3);
+        pub const clip_x_origin: u32 = (1 << 4);
+        pub const clip_y_origin: u32 = (1 << 5);
+        pub const clip_mask: u32 = (1 << 6);
+        pub const graphics_exposures: u32 = (1 << 7);
+        pub const subwindow_mode: u32 = (1 << 8);
+        pub const poly_edge: u32 = (1 << 9);
+        pub const poly_mode: u32 = (1 << 10);
+        pub const dither: u32 = (1 << 11);
+        pub const component_alpha: u32 = (1 << 12);
     };
 
     const CreatePictureOptions = struct {
@@ -265,26 +281,26 @@ pub const create_picture = struct {
     };
 
     pub const non_option_len =
-              2 // extension and command opcodes
-            + 2 // request length
-            + 4 // picture ID
-            + 4 // drawable ID
-            + 4 // format ID
-            + 4 // option mask
+        2 // extension and command opcodes
+        + 2 // request length
+        + 4 // picture ID
+        + 4 // drawable ID
+        + 4 // format ID
+        + 4 // option mask
     ;
     pub const max_len = non_option_len + (create_picture_option_count * 4);
     pub const Args = struct {
-        picture_id: u32,
-        drawable_id: u32,
+        picture_id: Picture,
+        drawable_id: x.Drawable,
         format_id: u32,
-        options: CreatePictureOptions
+        options: CreatePictureOptions,
     };
     pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) u16 {
         buf[0] = ext_opcode;
         buf[1] = @intFromEnum(ExtOpcode.create_picture);
         // buf[2-3] is the len, set at the end of the function
-        x.writeIntNative(u32, buf + 4, args.picture_id);
-        x.writeIntNative(u32, buf + 8, args.drawable_id);
+        x.writeIntNative(u32, buf + 4, @intFromEnum(args.picture_id));
+        x.writeIntNative(u32, buf + 8, @intFromEnum(args.drawable_id));
         x.writeIntNative(u32, buf + 12, args.format_id);
 
         var option_mask: u32 = 0;
@@ -304,32 +320,32 @@ pub const create_picture = struct {
 };
 
 /// Combine the src and destination pictures with the specified operation.
-/// 
+///
 /// For example, if you want to copy the src picture to the destination picture, you
 /// would use `PictureOperation.over`.
 pub const composite = struct {
     pub const len =
-              2 // extension and command opcodes
-            + 2 // request length
-            + 1 // picture operation
-            + 3 // padding
-            + 4 // src_picture_id
-            + 4 // mask_picture_id
-            + 4 // dst_picture_id
-            + 2 // src_x
-            + 2 // src_y
-            + 2 // mask_x
-            + 2 // mask_y
-            + 2 // dst_x
-            + 2 // dst_y
-            + 2 // width
-            + 2 // height
+        2 // extension and command opcodes
+        + 2 // request length
+        + 1 // picture operation
+        + 3 // padding
+        + 4 // src_picture_id
+        + 4 // mask_picture_id
+        + 4 // dst_picture_id
+        + 2 // src_x
+        + 2 // src_y
+        + 2 // mask_x
+        + 2 // mask_y
+        + 2 // dst_x
+        + 2 // dst_y
+        + 2 // width
+        + 2 // height
     ;
     pub const Args = struct {
         picture_operation: PictureOperation,
-        src_picture_id: u32,
-        mask_picture_id: u32,
-        dst_picture_id: u32,
+        src_picture_id: Picture,
+        mask_picture_id: Picture,
+        dst_picture_id: Picture,
         src_x: i16,
         src_y: i16,
         mask_x: i16,
@@ -345,9 +361,9 @@ pub const composite = struct {
         x.writeIntNative(u16, buf + 2, len >> 2);
         buf[4] = @intFromEnum(args.picture_operation);
         // 3 bytes of padding
-        x.writeIntNative(u32, buf + 8, args.src_picture_id);
-        x.writeIntNative(u32, buf + 12, args.mask_picture_id);
-        x.writeIntNative(u32, buf + 16, args.dst_picture_id);
+        x.writeIntNative(u32, buf + 8, @intFromEnum(args.src_picture_id));
+        x.writeIntNative(u32, buf + 12, @intFromEnum(args.mask_picture_id));
+        x.writeIntNative(u32, buf + 16, @intFromEnum(args.dst_picture_id));
         x.writeIntNative(i16, buf + 20, args.src_x);
         x.writeIntNative(i16, buf + 22, args.src_y);
         x.writeIntNative(i16, buf + 24, args.mask_x);
