@@ -926,7 +926,7 @@ fn render(
             x11.render.composite.serialize(&msg, render_ext.opcode, .{
                 .picture_operation = .over,
                 .src_picture_id = ids.picture_root(),
-                .mask_picture_id = x11.render.Picture.fromInt(0),
+                .mask_picture_id = x11.render.Picture.none,
                 .dst_picture_id = ids.picture_window(),
                 .src_x = 0,
                 .src_y = 0,

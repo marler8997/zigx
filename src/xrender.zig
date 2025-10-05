@@ -14,10 +14,29 @@ pub const Picture = enum(u32) {
     pub fn format(v: Picture, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = opt;
-        if (v == .copy_from_parent) {
-            try writer.writeAll("Picture(<copy from parent>)");
+        if (v == .none) {
+            try writer.writeAll("Picture(<none>)");
         } else {
             try writer.print("Picture({})", .{@intFromEnum(v)});
+        }
+    }
+};
+
+pub const PictureFormat = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn fromInt(i: u32) PictureFormat {
+        return @enumFromInt(i);
+    }
+
+    pub fn format(v: PictureFormat, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .none) {
+            try writer.writeAll("PictureFormat(<none>)");
+        } else {
+            try writer.print("PictureFormat({})", .{@intFromEnum(v)});
         }
     }
 };
@@ -188,7 +207,7 @@ pub const DirectFormat = extern struct {
 };
 
 pub const PictureFormatInfo = extern struct {
-    picture_format_id: u32,
+    picture_format_id: PictureFormat,
     type: PictureType,
     depth: u8,
     _: [2]u8,
@@ -292,7 +311,7 @@ pub const create_picture = struct {
     pub const Args = struct {
         picture_id: Picture,
         drawable_id: x.Drawable,
-        format_id: u32,
+        format_id: PictureFormat,
         options: CreatePictureOptions,
     };
     pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) u16 {
@@ -301,7 +320,7 @@ pub const create_picture = struct {
         // buf[2-3] is the len, set at the end of the function
         x.writeIntNative(u32, buf + 4, @intFromEnum(args.picture_id));
         x.writeIntNative(u32, buf + 8, @intFromEnum(args.drawable_id));
-        x.writeIntNative(u32, buf + 12, args.format_id);
+        x.writeIntNative(u32, buf + 12, @intFromEnum(args.format_id));
 
         var option_mask: u32 = 0;
         var request_len: u16 = non_option_len;
