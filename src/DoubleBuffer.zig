@@ -19,7 +19,7 @@ const impl: enum { memfd, shm, windows } = switch (builtin.os.tag) {
     else => @compileError("DoubleBuffer not implemented for OS " ++ @tagName(builtin.os.tag)),
 };
 
-ptr: [*]align(std.mem.page_size) u8,
+ptr: [*]align(std.heap.page_size_min) u8,
 half_len: usize,
 data: switch (impl) {
     .memfd => posix.fd_t,
@@ -61,14 +61,18 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
                 break :blk std.fmt.bufPrintZ(
                     &unique_name_buf,
                     "{}",
-                    .{ std.fmt.fmtSliceHexLower(&rand_bytes) },
+                    .{std.fmt.fmtSliceHexLower(&rand_bytes)},
                 ) catch unreachable;
             };
             std.debug.assert(unique_name.len + 1 == unique_name_buf.len);
 
             const fd = std.c.shm_open(
                 unique_name,
-                std.posix.O.RDWR | std.posix.O.CREAT | std.posix.O.EXCL,
+                @bitCast(std.posix.O{
+                    .ACCMODE = .RDWR,
+                    .CREAT = true,
+                    .EXCL = true,
+                }),
                 std.posix.S.IRUSR | std.posix.S.IWUSR,
             );
             if (fd == -1) switch (@as(std.posix.E, @enumFromInt(std.c._errno().*))) {
@@ -86,12 +90,14 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
         },
         .windows => {
             const full_len = half_len * 2;
-            const ptr: [*]align(std.mem.page_size) u8 = @alignCast(@ptrCast(win32.VirtualAlloc2FromApp(
-                null, null,
+            const ptr: [*]align(std.heap.page_size_min) u8 = @alignCast(@ptrCast(win32.VirtualAlloc2FromApp(
+                null,
+                null,
                 full_len,
                 win32.MEM_RESERVE | win32.MEM_RESERVE_PLACEHOLDER,
                 win32.PAGE_NOACCESS,
-                null, 0,
+                null,
+                0,
             ) orelse switch (win32.GetLastError()) {
                 else => |err| return std.os.windows.unexpectedError(err),
             }));
@@ -118,7 +124,7 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
                 null,
                 win32.PAGE_READWRITE,
                 @intCast((half_len >> 32)),
-                @intCast((half_len >>  0) & std.math.maxInt(u32)),
+                @intCast((half_len >> 0) & std.math.maxInt(u32)),
                 null,
             ) orelse switch (win32.GetLastError()) {
                 else => |err| return std.os.windows.unexpectedError(err),
@@ -133,7 +139,8 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
                 half_len,
                 win32.MEM_REPLACE_PLACEHOLDER,
                 win32.PAGE_READWRITE,
-                null, 0,
+                null,
+                0,
             ) orelse switch (win32.GetLastError()) {
                 else => |err| return std.os.windows.unexpectedError(err),
             };
@@ -149,7 +156,8 @@ pub fn init(half_len: usize, opt: InitOptions) !DoubleBuffer {
                 half_len,
                 win32.MEM_REPLACE_PLACEHOLDER,
                 win32.PAGE_READWRITE,
-                null, 0,
+                null,
+                0,
             ) orelse switch (win32.GetLastError()) {
                 else => |err| return std.os.windows.unexpectedError(err),
             };
@@ -186,9 +194,8 @@ pub fn contiguousReadBuffer(self: DoubleBuffer) ContiguousReadBuffer {
     };
 }
 
-
-pub fn mapFdDouble(fd: posix.fd_t, half_size: usize) ![*]align(std.mem.page_size) u8 {
-    std.debug.assert((half_size % std.mem.page_size) == 0);
+pub fn mapFdDouble(fd: posix.fd_t, half_size: usize) ![*]align(std.heap.page_size_min) u8 {
+    std.debug.assert(std.mem.isAligned(half_size, std.heap.page_size_min));
     try posix.ftruncate(fd, half_size);
     const ptr = (try posix.mmap(
         null,
@@ -198,12 +205,8 @@ pub fn mapFdDouble(fd: posix.fd_t, half_size: usize) ![*]align(std.mem.page_size
         -1,
         0,
     )).ptr;
-    _ = try posix.mmap(
-        ptr, half_size, posix.PROT.READ | posix.PROT.WRITE, .{ .TYPE = .SHARED, .FIXED = true }, fd, 0
-    );
-    _ = try posix.mmap(
-        @alignCast(ptr + half_size), half_size, posix.PROT.READ | posix.PROT.WRITE, .{ .TYPE = .SHARED, .FIXED = true }, fd, 0
-    );
+    _ = try posix.mmap(ptr, half_size, posix.PROT.READ | posix.PROT.WRITE, .{ .TYPE = .SHARED, .FIXED = true }, fd, 0);
+    _ = try posix.mmap(@alignCast(ptr + half_size), half_size, posix.PROT.READ | posix.PROT.WRITE, .{ .TYPE = .SHARED, .FIXED = true }, fd, 0);
     return ptr;
 }
 
@@ -222,13 +225,13 @@ const win32 = struct {
         lpName: ?[*:0]const u16,
     ) callconv(@import("std").os.windows.WINAPI) ?HANDLE;
     pub const MEM_PRESERVE_PLACEHOLDER = 0x00002;
-    pub const MEM_COMMIT               = 0x01000;
-    pub const MEM_RESERVE              = 0x02000;
-    pub const MEM_REPLACE_PLACEHOLDER  = 0x04000;
-    pub const MEM_RELEASE              = 0x08000;
-    pub const MEM_FREE                 = 0x10000;
-    pub const MEM_RESERVE_PLACEHOLDER  = 0x40000;
-    pub const MEM_RESET                = 0x80000;
+    pub const MEM_COMMIT = 0x01000;
+    pub const MEM_RESERVE = 0x02000;
+    pub const MEM_REPLACE_PLACEHOLDER = 0x04000;
+    pub const MEM_RELEASE = 0x08000;
+    pub const MEM_FREE = 0x10000;
+    pub const MEM_RESERVE_PLACEHOLDER = 0x40000;
+    pub const MEM_RESET = 0x80000;
     pub extern "api-ms-win-core-memory-l1-1-6" fn VirtualAlloc2FromApp(
         Process: ?HANDLE,
         BaseAddress: ?*anyopaque,
