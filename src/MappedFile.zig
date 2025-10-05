@@ -4,18 +4,20 @@ const builtin = @import("builtin");
 const std = @import("std");
 const HANDLE = std.os.windows.HANDLE;
 
-mem: []align(std.mem.page_size) u8,
+mem: []align(std.heap.page_size_min) u8,
 mapping: if (builtin.os.tag == .windows) HANDLE else void,
 
 pub const Options = struct {
     mode: enum { read_only, read_write } = .read_only,
 };
-const empty_mem: [0]u8 align(std.mem.page_size) = undefined;
+const empty_mem: [0]u8 align(std.heap.page_size_min) = .{};
 
 pub fn init(filename: []const u8, opt: Options) !MappedFile {
     var file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
-    const file_size = try file.getEndPos();
+    const file_size_u64: u64 = try file.getEndPos();
+
+    const file_size: usize = std.math.cast(usize, file_size_u64) orelse return error.FileTooBig;
 
     if (builtin.os.tag == .windows) {
         if (file_size == 0) return MappedFile{
@@ -48,7 +50,9 @@ pub fn init(filename: []const u8, opt: Options) !MappedFile {
                 .read_only => win32.FILE_MAP_READ,
                 .read_write => win32.FILE_MAP_READ | win32.FILE_MAP_READ,
             },
-            0, 0, 0,
+            0,
+            0,
+            0,
         ) orelse return switch (win32.GetLastError()) {
             // TODO: handle some error codes
             else => |err| std.os.windows.unexpectedError(err),
@@ -56,7 +60,7 @@ pub fn init(filename: []const u8, opt: Options) !MappedFile {
         errdefer std.debug.assert(0 != win32.UnmapViewOfFile(ptr));
 
         return .{
-            .mem = @as([*]align(std.mem.page_size)u8, @alignCast(@ptrCast(ptr)))[0 .. file_size],
+            .mem = @as([*]align(std.heap.page_size_min) u8, @alignCast(@ptrCast(ptr)))[0..file_size],
             .mapping = mapping,
         };
     }

@@ -9,10 +9,10 @@ pub const ExtOpcode = enum(u8) {
 
 pub const query_version = struct {
     pub const len =
-              2 // extension and command opcodes
-            + 2 // request length
-            + 4 // client major version
-            + 4 // client minor version
+        2 // extension and command opcodes
+        + 2 // request length
+        + 4 // client major version
+        + 4 // client minor version
     ;
     pub const Args = struct {
         major_version: u32,
@@ -35,5 +35,7 @@ pub const query_version = struct {
         minor_version: u32,
         reserved: [15]u8,
     };
-    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+    comptime {
+        std.debug.assert(@sizeOf(Reply) == 32);
+    }
 };
