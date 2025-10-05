@@ -11,6 +11,7 @@ const examples = [_][]const u8{
     "keys",
     "input",
     "dbe",
+    "renderext",
 };
 
 pub fn build(b: *std.Build) void {
