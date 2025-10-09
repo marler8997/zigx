@@ -134,8 +134,10 @@ pub fn main() !u8 {
     std.log.info("read buffer capacity is {}", .{double_buf.half_len});
     var buf = double_buf.contiguousReadBuffer();
 
+    var reader: x11.SocketReader = .init(conn.sock);
+
     const font_dims: FontDims = blk: {
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 const msg: *x11.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);

@@ -2,7 +2,7 @@ const std = @import("std");
 const x11 = @import("x11");
 const common = @This();
 
-pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocket);
+const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
 
 /// Sanity check that we're not running into data integrity (corruption) issues caused
 /// by overflowing and wrapping around to the front ofq the buffer.
@@ -30,9 +30,7 @@ pub fn sendOne(sock: std.posix.socket_t, sequence: *u16, data: []const u8) !void
 pub const ConnectResult = struct {
     sock: std.posix.socket_t,
     setup: x11.ConnectSetup,
-    pub fn reader(self: ConnectResult) SocketReader {
-        return .{ .context = self.sock };
-    }
+
     pub fn sendOne(self: *const ConnectResult, sequence: *u16, data: []const u8) !void {
         try common.sendNoSequencing(self.sock, data);
         sequence.* +%= 1;
@@ -66,11 +64,13 @@ pub fn connectSetup(
     x11.connect_setup.serialize(msg.ptr, 11, 0, auth_name, auth_data);
     try sendNoSequencing(sock, msg);
 
-    const reader = SocketReader{ .context = sock };
+    var reader_instance: x11.SocketReader = .init(sock);
+    const reader = reader_instance.interface();
+
     const connect_setup_header = try x11.readConnectSetupHeader(reader, .{});
     switch (connect_setup_header.status) {
         .failed => {
-            std.log.err("connect setup failed, version={}.{}, reason='{s}'", .{
+            std.log.err("connect setup failed, version={}.{}, reason='{f}'", .{
                 connect_setup_header.proto_major_ver,
                 connect_setup_header.proto_minor_ver,
                 connect_setup_header.readFailReason(reader),
@@ -114,7 +114,7 @@ fn connectSetupAuth(
 
     var addr_buf: [x11.max_sock_filter_addr]u8 = undefined;
     if (auth_filter.applySocket(sock, &addr_buf)) {
-        std.log.debug("applied address filter {}", .{auth_filter.addr});
+        std.log.debug("applied address filter {f}", .{auth_filter.addr});
     } else |err| {
         // not a huge deal, we'll just try all auth methods
         std.log.warn("failed to apply socket to auth filter with {s}", .{@errorName(err)});
@@ -126,7 +126,7 @@ fn connectSetupAuth(
         return null;
     }) |entry| {
         if (auth_filter.isFiltered(auth_mapped.mem, entry)) |reason| {
-            std.log.debug("ignoring auth because {s} does not match: {}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
+            std.log.debug("ignoring auth because {s} does not match: {f}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
             continue;
         }
         const name = entry.name(auth_mapped.mem);
@@ -139,7 +139,7 @@ fn connectSetupAuth(
             .ptr = data.ptr,
             .len = @intCast(data.len),
         };
-        std.log.debug("trying auth {}", .{entry.fmt(auth_mapped.mem)});
+        std.log.debug("trying auth {f}", .{entry.fmt(auth_mapped.mem)});
         if (try connectSetupMaxAuth(sock, 1000, name_x, data_x)) |reply_len|
             return reply_len;
     }
@@ -184,10 +184,12 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
     };
 
     const connect_setup = x11.ConnectSetup{
-        .buf = try allocator.allocWithOptions(u8, setup_reply_len, 4, null),
+        .buf = try allocator.allocWithOptions(u8, setup_reply_len, if (zig_atleast_15) .@"4" else 4, null),
     };
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
-    const reader = SocketReader{ .context = sock };
+
+    var reader_instance: x11.SocketReader = .init(sock);
+    const reader = reader_instance.interface();
     try x11.readFull(reader, connect_setup.buf);
 
     return ConnectResult{ .sock = sock, .setup = connect_setup };
@@ -199,11 +201,7 @@ pub fn asReply(comptime T: type, msg_bytes: []align(4) u8) !*T {
         std.log.err("expected reply but got {}", .{generic_msg});
         return error.UnexpectedReply;
     }
-    return @alignCast(@ptrCast(generic_msg));
-}
-
-fn readSocket(sock: std.posix.socket_t, buffer: []u8) !usize {
-    return x11.readSock(sock, buffer, 0);
+    return @ptrCast(@alignCast(generic_msg));
 }
 
 /// X server extension info.
@@ -229,7 +227,9 @@ pub fn getExtensionInfo(
     buffer: *x11.ContiguousReadBuffer,
     comptime extension_name: []const u8,
 ) !?ExtensionInfo {
-    const reader = common.SocketReader{ .context = sock };
+    var reader_instance: x11.SocketReader = .init(sock);
+    const reader = reader_instance.interface();
+
     const buffer_limit = buffer.half_len;
 
     {

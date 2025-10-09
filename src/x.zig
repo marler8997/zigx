@@ -39,6 +39,7 @@ pub const shape = @import("xshape.zig");
 pub const testext = @import("xtest.zig");
 
 // Expose some helpful stuff
+pub const BoundedArray = @import("bounded_array.zig").BoundedArray;
 pub const MappedFile = @import("MappedFile.zig");
 pub const charset = @import("charset.zig");
 pub const Charset = charset.Charset;
@@ -47,6 +48,8 @@ pub const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 pub const Slice = @import("x/slice.zig").Slice;
 pub const SliceWithMaxLen = @import("x/slice.zig").SliceWithMaxLen;
 pub const keymap = @import("keymap.zig");
+
+pub const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
 
 pub const TcpBasePort = 6000;
 
@@ -304,7 +307,8 @@ pub const DisplayNum = enum(u16) {
         return TcpBasePort + @as(u16, @intFromEnum(self));
     }
 
-    pub fn format(
+    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
+    fn formatLegacy(
         self: DisplayNum,
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
@@ -312,6 +316,9 @@ pub const DisplayNum = enum(u16) {
     ) !void {
         _ = fmt;
         _ = options;
+        try writer.print("{}", .{@intFromEnum(self)});
+    }
+    fn formatNew(self: DisplayNum, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("{}", .{@intFromEnum(self)});
     }
 };
@@ -340,7 +347,7 @@ pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?Protocol,
         if (builtin.os.tag == .windows) {
             std.log.err(
                 "unsure how to connect to DISPLAY :{} on windows, how about specifing a hostname? i.e. localhost:{0}",
-                .{display_num},
+                .{@intFromEnum(display_num)},
             );
             std.process.exit(0xff);
         }
@@ -400,6 +407,31 @@ const TcpConnectError = error{
     SystemResources,
 };
 fn tcpConnect(addr: std.net.Address) TcpConnectError!posix.socket_t {
+    if (zig_atleast_15) return (std.net.tcpConnectToAddress(addr) catch |err| switch (err) {
+        error.ConnectionTimedOut,
+        error.ConnectionRefused,
+        error.NetworkUnreachable,
+        error.ConnectionPending,
+        error.ConnectionResetByPeer,
+        => return error.ConnectionRefused,
+        error.SystemResources,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        => return error.SystemResources,
+        error.AccessDenied,
+        error.PermissionDenied,
+        => return error.AccessDenied,
+        error.AddressInUse,
+        error.AddressNotAvailable,
+        error.WouldBlock,
+        error.Unexpected,
+        error.FileNotFound,
+        error.AddressFamilyNotSupported,
+        error.ProtocolFamilyNotAvailable,
+        error.ProtocolNotSupported,
+        error.SocketTypeNotSupported,
+        => |e| std.debug.panic("TCP connect to {f} failed with {s}", .{ addr, @errorName(e) }),
+    }).handle;
     return (std.net.tcpConnectToAddress(addr) catch |err| switch (err) {
         error.ConnectionTimedOut,
         error.ConnectionRefused,
@@ -435,8 +467,8 @@ pub fn connectUnixDisplayNum(display_num: DisplayNum) ConnectError!posix.socket_
     var addr = posix.sockaddr.un{ .family = posix.AF.UNIX, .path = undefined };
     const path = std.fmt.bufPrintZ(
         &addr.path,
-        "{s}{}",
-        .{ path_prefix, display_num },
+        "{s}{d}",
+        .{ path_prefix, @intFromEnum(display_num) },
     ) catch unreachable;
     return connectUnixAddr(&addr, path.len);
 }
@@ -452,7 +484,19 @@ pub fn connectUnixPath(socket_path: []const u8) ConnectError!posix.socket_t {
 }
 
 pub fn connectUnixAddr(addr: *const posix.sockaddr.un, path_len: usize) ConnectError!posix.socket_t {
-    const sock = posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| switch (err) {
+    const sock = if (zig_atleast_15) posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| switch (err) {
+        error.SystemResources => |e| return e,
+        error.AccessDenied => return error.AccessDenied,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        => return error.SystemResources,
+        error.AddressFamilyNotSupported,
+        error.ProtocolFamilyNotAvailable,
+        error.ProtocolNotSupported,
+        error.SocketTypeNotSupported,
+        error.Unexpected,
+        => |e| std.debug.panic("create socket failed with {s}", .{@errorName(e)}),
+    } else posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| switch (err) {
         error.SystemResources => |e| return e,
         error.PermissionDenied => return error.AccessDenied,
         error.ProcessFdQuotaExceeded,
@@ -614,7 +658,24 @@ pub fn getAuthFilename(allocator: std.mem.Allocator) AuthFilenameError!?AuthFile
 fn xauthFileExists(dir: std.fs.Dir, sub_path: [*:0]const u8) !bool {
     if (dir.accessZ(sub_path, .{})) {
         return true;
-    } else |err| switch (err) {
+    } else |err| if (zig_atleast_15) switch (err) {
+        error.InvalidUtf8,
+        error.NameTooLong,
+        error.InvalidWtf8,
+        error.BadPathName,
+        => return error.BadXauthEnv,
+        error.InputOutput,
+        error.SystemResources,
+        error.Unexpected,
+        error.SymLinkLoop,
+        error.FileBusy,
+        => |e| return e,
+        error.FileNotFound => return false,
+        error.PermissionDenied,
+        error.AccessDenied,
+        => return error.AccessDenied,
+        error.ReadOnlyFileSystem => unreachable,
+    } else switch (err) {
         error.InvalidUtf8,
         error.NameTooLong,
         error.InvalidWtf8,
@@ -659,7 +720,11 @@ pub const Addr = struct {
     family: AuthFamily,
     data: []const u8,
 
-    pub fn format(
+    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+        formatLegacy
+    else
+        formatNew;
+    fn formatLegacy(
         self: Addr,
         comptime fmt_spec: []const u8,
         options: std.fmt.FormatOptions,
@@ -681,6 +746,20 @@ pub const Addr = struct {
                 std.fmt.fmtSliceHexLower(d),
                 family,
             }),
+        }
+    }
+    fn formatNew(self: Addr, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        const d = self.data;
+        switch (self.family) {
+            .inet => if (d.len == 4) {
+                try writer.print("{}.{}.{}.{}", .{ d[0], d[1], d[2], d[3] });
+            } else {
+                // TODO: support ipv6?
+                try writer.print("{x}/inet", .{d});
+            },
+            .unix => try writer.print("{s}/unix", .{d}),
+            .wild => try writer.print("*", .{}),
+            else => |family| try writer.print("{x}/{}", .{ d, family }),
         }
     }
 };
@@ -756,7 +835,11 @@ pub const AuthIteratorEntry = struct {
     const Formatter = struct {
         mem: []const u8,
         entry: AuthIteratorEntry,
-        pub fn format(
+        pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+            formatLegacy
+        else
+            formatNew;
+        fn formatLegacy(
             self: Formatter,
             comptime fmt_spec: []const u8,
             options: std.fmt.FormatOptions,
@@ -775,6 +858,19 @@ pub const AuthIteratorEntry = struct {
                 std.zig.fmtEscapes(self.entry.name(self.mem)),
                 data_slice.len,
                 std.fmt.fmtSliceHexUpper(data_slice),
+            });
+        }
+        fn formatNew(self: Formatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            const data_slice = self.entry.data(self.mem);
+            try writer.print("address={f} display={?f} name='{f}' data {} bytes: {X}", .{
+                Addr{
+                    .family = self.entry.family,
+                    .data = self.entry.addr(self.mem),
+                },
+                self.entry.display_num,
+                std.zig.fmtString(self.entry.name(self.mem)),
+                data_slice.len,
+                data_slice,
             });
         }
     };
@@ -889,9 +985,16 @@ pub const ResourceBase = enum(u32) {
         return @enumFromInt(@intFromEnum(r) + offset);
     }
 
-    pub fn format(v: ResourceBase, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+        formatLegacy
+    else
+        formatNew;
+    fn formatLegacy(v: ResourceBase, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = opt;
+        try writer.print("ResourceBase({})", .{@intFromEnum(v)});
+    }
+    fn formatNew(v: ResourceBase, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("ResourceBase({})", .{@intFromEnum(v)});
     }
 };
@@ -928,9 +1031,20 @@ pub const Resource = enum(u32) {
         return @enumFromInt(@intFromEnum(r));
     }
 
-    pub fn format(v: Resource, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+        formatLegacy
+    else
+        formatNew;
+    fn formatLegacy(v: Resource, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = opt;
+        if (v == .none) {
+            try writer.writeAll("Resource(<none>)");
+        } else {
+            try writer.print("Resource({})", .{@intFromEnum(v)});
+        }
+    }
+    fn formatNew(v: Resource, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (v == .none) {
             try writer.writeAll("Resource(<none>)");
         } else {
@@ -2531,6 +2645,26 @@ pub fn readIntNative(comptime T: type, buf: [*]const u8) T {
     return @as(*align(1) const T, @ptrCast(buf)).*;
 }
 
+const SocketReaderLegacy = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocketLegacy);
+pub fn readSocketLegacy(sock: std.posix.socket_t, buffer: []u8) !usize {
+    return readSock(sock, buffer, 0);
+}
+
+pub const SocketReader = struct {
+    pub const Error = if (zig_atleast_15) std.Io.Reader.Error else std.posix.RecvFromError;
+
+    context: if (zig_atleast_15) std.net.Stream.Reader else std.posix.socket_t,
+    pub fn init(sock: std.posix.socket_t) SocketReader {
+        return if (zig_atleast_15)
+            .{ .context = (std.net.Stream{ .handle = sock }).reader(&.{}) }
+        else
+            .{ .context = sock };
+    }
+    pub fn interface(self: *SocketReader) if (zig_atleast_15) *std.Io.Reader else SocketReaderLegacy {
+        return if (zig_atleast_15) self.context.interface() else .{ .context = self.context };
+    }
+};
+
 pub fn recvFull(sock: posix.socket_t, buf: []u8) !void {
     std.debug.assert(buf.len > 0);
     var total_received: usize = 0;
@@ -3362,7 +3496,31 @@ pub const VisualType = extern struct {
     unused: u32,
 };
 
-pub fn readFull(reader: anytype, buf: []u8) (@TypeOf(reader).Error || error{EndOfStream})!void {
+// const SocketReadError = if (zig_atleast_15) std.Io.Reader.Error else std.posix.RecvFromError;
+// pub fn readFullSock(sock: std.posix.socket_t, buf: []u8) SocketReadError!void {
+//     std.debug.assert(buf.len > 0);
+
+//     if (zig_atleast_15) {
+//         var reader = (std.net.Stream{ .handle = sock }).reader();
+//         return reader.readSliceAll(buf);
+//     }
+
+//     var total_received: usize = 0;
+//     while (true) {
+//         const last_received = try readSock(buf[total_received..]);
+//         if (last_received == 0)
+//             return error.EndOfStream;
+//         total_received += last_received;
+//         if (total_received == buf.len)
+//             break;
+//     }
+// }
+
+pub const readFull = if (zig_atleast_15) readFullNew else readFullLegacy;
+fn readFullNew(reader: *std.Io.Reader, buf: []u8) std.Io.Reader.Error!void {
+    return reader.readSliceAll(buf);
+}
+fn readFullLegacy(reader: anytype, buf: []u8) (@TypeOf(reader).Error || error{EndOfStream})!void {
     std.debug.assert(buf.len > 0);
     var total_received: usize = 0;
     while (true) {
@@ -3379,7 +3537,26 @@ pub const ReadConnectSetupHeaderOptions = struct {
     read_timeout_ms: i32 = -1,
 };
 
-pub fn readConnectSetupHeader(reader: anytype, options: ReadConnectSetupHeaderOptions) !ConnectSetup.Header {
+pub const readConnectSetupHeader = if (zig_atleast_15)
+    readConnectSetupHeaderNew
+else
+    readConnectSetupHeaderLegacy;
+
+fn readConnectSetupHeaderNew(
+    reader: *std.Io.Reader,
+    options: ReadConnectSetupHeaderOptions,
+) !ConnectSetup.Header {
+    var header: ConnectSetup.Header = undefined;
+    if (options.read_timeout_ms == -1) {
+        try readFull(reader, header.asBuf());
+        return header;
+    }
+    @panic("read timeout not implemented");
+}
+fn readConnectSetupHeaderLegacy(
+    reader: anytype,
+    options: ReadConnectSetupHeaderOptions,
+) !ConnectSetup.Header {
     var header: ConnectSetup.Header = undefined;
     if (options.read_timeout_ms == -1) {
         try readFull(reader, header.asBuf());
@@ -3391,7 +3568,11 @@ pub fn readConnectSetupHeader(reader: anytype, options: ReadConnectSetupHeaderOp
 pub const FailReason = struct {
     buf: [256]u8,
     len: u8,
-    pub fn format(
+    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
+    pub fn formatNew(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.writeAll(self.buf[0..self.len]);
+    }
+    pub fn formatLegacy(
         self: @This(),
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
@@ -3453,10 +3634,13 @@ pub const ConnectSetup = struct {
 
         pub fn readFailReason(self: @This(), reader: anytype) FailReason {
             var result: FailReason = undefined;
-            result.len = @intCast(reader.readAll(result.buf[0..self.status_opt]) catch |read_err|
-                (std.fmt.bufPrint(&result.buf, "failed to read failure reason: {s}", .{@errorName(read_err)}) catch |err| switch (err) {
+            if (readFull(reader, result.buf[0..self.status_opt])) {
+                result.len = self.status_opt;
+            } else |read_err| {
+                result.len = @intCast((std.fmt.bufPrint(&result.buf, "failed to read failure reason: {s}", .{@errorName(read_err)}) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 }).len);
+            }
             return result;
         }
     };
@@ -3501,7 +3685,7 @@ pub const ConnectSetup = struct {
         return format_list_offset + (@sizeOf(Format) * format_count);
     }
     pub fn getFormatListPtr(self: @This(), format_list_offset: u32) [*]align(4) Format {
-        return @alignCast(@ptrCast(self.buf.ptr + format_list_offset));
+        return @ptrCast(@alignCast(self.buf.ptr + format_list_offset));
     }
     pub fn getFormatList(self: @This(), format_list_offset: u32, format_list_limit: u32) ![]align(4) Format {
         if (format_list_limit > self.buf.len)
@@ -3510,10 +3694,10 @@ pub const ConnectSetup = struct {
     }
 
     pub fn getFirstScreenPtr(self: @This(), format_list_limit: u32) *align(4) Screen {
-        return @alignCast(@ptrCast(self.buf.ptr + format_list_limit));
+        return @ptrCast(@alignCast(self.buf.ptr + format_list_limit));
     }
     pub fn getScreensPtr(self: @This(), format_list_limit: u32) [*]align(4) Screen {
-        return @alignCast(@ptrCast(self.buf.ptr + format_list_limit));
+        return @ptrCast(@alignCast(self.buf.ptr + format_list_limit));
     }
 };
 
@@ -3543,7 +3727,7 @@ pub fn rgb24To(color: u24, depth_bits: u8) u32 {
 }
 
 pub fn readOneMsgAlloc(allocator: std.mem.Allocator, reader: anytype) ![]align(4) u8 {
-    var buf = try allocator.allocWithOptions(u8, 32, 4, null);
+    var buf = try allocator.allocWithOptions(u8, 32, if (zig_atleast_15) .@"4" else 4, null);
     errdefer allocator.free(buf);
     const len = try readOneMsg(reader, buf);
     if (len > 32) {
@@ -3557,7 +3741,17 @@ pub fn readOneMsgAlloc(allocator: std.mem.Allocator, reader: anytype) ![]align(4
 /// If it is, then only the first 32-bytes have been read.  The caller can allocate a new
 /// buffer large enough to accomodate and finish reading the message by copying the first
 /// 32 bytes to the new buffer then calling `readOneMsgFinish`.
-pub fn readOneMsg(reader: anytype, buf: []align(4) u8) !u32 {
+pub const readOneMsg = if (zig_atleast_15) readOneMsgNew else readOneMsgLegacy;
+pub fn readOneMsgNew(reader: *std.Io.Reader, buf: []align(4) u8) std.Io.Reader.Error!u32 {
+    std.debug.assert(buf.len >= 32);
+    try readFull(reader, buf[0..32]);
+    const msg_len = parseMsgLen(buf[0..32].*);
+    if (msg_len > 32 and msg_len < buf.len) {
+        try readOneMsgFinish(reader, buf[0..msg_len]);
+    }
+    return msg_len;
+}
+pub fn readOneMsgLegacy(reader: anytype, buf: []align(4) u8) !u32 {
     std.debug.assert(buf.len >= 32);
     try readFull(reader, buf[0..32]);
     const msg_len = parseMsgLen(buf[0..32].*);

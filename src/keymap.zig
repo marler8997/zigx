@@ -11,10 +11,6 @@ fn sendOne(sock: std.posix.socket_t, sequence: *u16, data: []const u8) !void {
     }
     sequence.* +%= 1;
 }
-fn readSocket(sock: posix.socket_t, buffer: []u8) !usize {
-    return x11.readSock(sock, buffer, 0);
-}
-pub const SocketReader = std.io.Reader(posix.socket_t, posix.RecvFromError, readSocket);
 
 pub const Reply = struct {
     keycode_count: u8,
@@ -44,7 +40,8 @@ pub fn request(
     }
 
     var header: [32]u8 align(4) = undefined;
-    try x11.readFull(SocketReader{ .context = sock }, &header);
+    var reader: x11.SocketReader = .init(sock);
+    try x11.readFull(reader.interface(), &header);
 
     {
         const generic: *x11.ServerMsg.Generic = @ptrCast(&header);
@@ -64,7 +61,7 @@ pub fn request(
     const syms = try allocator.alloc(u32, syms_len);
     errdefer allocator.free(syms);
 
-    try x11.readFull(SocketReader{ .context = sock }, @as([*]u8, @ptrCast(syms.ptr))[0 .. syms_len * 4]);
+    try x11.readFull(reader.interface(), @as([*]u8, @ptrCast(syms.ptr))[0 .. syms_len * 4]);
 
     return Reply{
         .keycode_count = keycode_count,

@@ -15,12 +15,8 @@ fn sendAll(sock: std.posix.socket_t, data: []const u8) !void {
         if (total_sent == data.len) return;
     }
 }
-pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocket);
-fn readSocket(sock: std.posix.socket_t, buffer: []u8) !usize {
-    return x11.readSock(sock, buffer, 0);
-}
 
-export fn ZigXSetErrorHandler(handler: *const fn (*anyopaque, [*:0]const u8) callconv(.C) void, ctx: *anyopaque) void {
+export fn ZigXSetErrorHandler(handler: *const fn (*anyopaque, [*:0]const u8) callconv(.c) void, ctx: *anyopaque) void {
     _ = handler;
     _ = ctx;
     std.log.err("TODO: set error handler!", .{});
@@ -80,12 +76,12 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
         sendAll(sock, &msg) catch |err|
             return reportError("send connect setup failed with {s}", .{@errorName(err)});
 
-        const reader = SocketReader{ .context = sock };
-        const connect_setup_header = x11.readConnectSetupHeader(reader, .{}) catch |err|
+        var reader: x11.SocketReader = .init(sock);
+        const connect_setup_header = x11.readConnectSetupHeader(reader.interface(), .{}) catch |err|
             return reportError("failed to read connect setup with {s}", .{@errorName(err)});
         switch (connect_setup_header.status) {
             .failed => {
-                std.log.debug("no auth connect setup failed, version={}.{}, reason='{s}'", .{
+                std.log.debug("no auth connect setup failed, version={}.{}, reason='{f}'", .{
                     connect_setup_header.proto_major_ver,
                     connect_setup_header.proto_minor_ver,
                     connect_setup_header.readFailReason(reader),
@@ -108,8 +104,8 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
 
     const connect_setup = x11.ConnectSetup{ .buf = buf };
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
-    const reader = SocketReader{ .context = sock };
-    x11.readFull(reader, connect_setup.buf) catch |err|
+    var reader: x11.SocketReader = .init(sock);
+    x11.readFull(reader.interface(), connect_setup.buf) catch |err|
         return reportError("failed to read connect setup with {s}", .{@errorName(err)});
 
     const fixed = connect_setup.fixed();
@@ -192,7 +188,7 @@ fn connectSetupAuth(
         return null;
     }) |entry| {
         if (auth_filter.isFiltered(auth_mapped.mem, entry)) |reason| {
-            std.log.debug("ignoring auth because {s} does not match: {}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
+            std.log.debug("ignoring auth because {s} does not match: {f}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
             continue;
         }
         const name = entry.name(auth_mapped.mem);
@@ -213,12 +209,12 @@ fn connectSetupAuth(
         sendAll(sock, msg) catch |err|
             return reportError("send connect setup failed with {s}", .{@errorName(err)});
 
-        const reader = SocketReader{ .context = sock };
-        const connect_setup_header = x11.readConnectSetupHeader(reader, .{}) catch |err|
+        var reader: x11.SocketReader = .init(sock);
+        const connect_setup_header = x11.readConnectSetupHeader(reader.interface(), .{}) catch |err|
             return reportError("failed to read connect setup with {s}", .{@errorName(err)});
         switch (connect_setup_header.status) {
             .failed => {
-                std.log.debug("connect setup failed, version={}.{}, reason='{s}'", .{
+                std.log.debug("connect setup failed, version={}.{}, reason='{f}'", .{
                     connect_setup_header.proto_major_ver,
                     connect_setup_header.proto_minor_ver,
                     connect_setup_header.readFailReason(reader),
@@ -226,7 +222,7 @@ fn connectSetupAuth(
                 // try the next?
             },
             .authenticate => {
-                std.log.debug("AUTHENTICATE with {} failed", .{entry.fmt(auth_mapped.mem)});
+                std.log.debug("AUTHENTICATE with {f} failed", .{entry.fmt(auth_mapped.mem)});
                 // try the next auth
             },
             .success => {
@@ -380,12 +376,13 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
     const display_full: *Display = @fieldParentPtr("public", display);
 
     //var header_buf: [32]u8 align(4) = undefined;
-    const len = x11.readOneMsg(SocketReader{ .context = display.fd }, display_full.read_buf) catch |err| handleReadError(err);
+    var reader: x11.SocketReader = .init(display.fd);
+    const len = x11.readOneMsg(reader.interface(), display_full.read_buf) catch |err| handleReadError(err);
 
     if (len > display_full.read_buf.len) {
         std.log.err("TODO: realloc read_buf len to be bigger", .{});
         //c_allocator.realloc();
-        x11.readOneMsgFinish(SocketReader{ .context = display.fd }, display_full.read_buf) catch |err| handleReadError(err);
+        x11.readOneMsgFinish(reader.interface(), display_full.read_buf) catch |err| handleReadError(err);
         @panic("todo");
     }
 

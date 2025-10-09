@@ -121,8 +121,10 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, &msg);
     }
 
+    var reader: x11.SocketReader = .init(conn.sock);
+
     const font_dims: FontDims = blk: {
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 const msg: *x11.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
@@ -146,7 +148,7 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, &msg);
     }
 
-    var key_log: std.BoundedArray(KeyEvent, 80) = .{ .len = 0, .buffer = undefined };
+    var key_log: x11.BoundedArray(KeyEvent, 80) = .{ .len = 0, .buffer = undefined };
     var key_log_next: usize = 0;
 
     while (true) {

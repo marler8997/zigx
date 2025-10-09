@@ -223,7 +223,7 @@ const win32 = struct {
         dwMaximumSizeHigh: u32,
         dwMaximumSizeLow: u32,
         lpName: ?[*:0]const u16,
-    ) callconv(@import("std").os.windows.WINAPI) ?HANDLE;
+    ) callconv(.winapi) ?HANDLE;
     pub const MEM_PRESERVE_PLACEHOLDER = 0x00002;
     pub const MEM_COMMIT = 0x01000;
     pub const MEM_RESERVE = 0x02000;
@@ -240,7 +240,7 @@ const win32 = struct {
         PageProtection: u32,
         ExtendedParameters: ?*anyopaque,
         ParameterCount: u32,
-    ) callconv(@import("std").os.windows.WINAPI) ?*anyopaque;
+    ) callconv(.winapi) ?*anyopaque;
     pub extern "api-ms-win-core-memory-l1-1-6" fn MapViewOfFile3FromApp(
         FileMapping: ?HANDLE,
         Process: ?HANDLE,
@@ -251,8 +251,8 @@ const win32 = struct {
         PageProtection: u32,
         ExtendedParameters: ?*anyopaque,
         ParameterCount: u32,
-    ) callconv(@import("std").os.windows.WINAPI) ?[*]u8;
+    ) callconv(.winapi) ?[*]u8;
     pub extern "kernel32" fn UnmapViewOfFile(
         lpBaseAddress: ?[*]const u8,
-    ) callconv(@import("std").os.windows.WINAPI) BOOL;
+    ) callconv(.winapi) BOOL;
 };

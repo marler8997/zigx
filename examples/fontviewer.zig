@@ -72,8 +72,10 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, &msg);
     }
 
+    var reader: x11.SocketReader = .init(conn.sock);
+
     const fonts = blk: {
-        const msg_bytes = try x11.readOneMsgAlloc(allocator, conn.reader());
+        const msg_bytes = try x11.readOneMsgAlloc(allocator, reader.interface());
         expectSequence(sequence, try common.asReply(x11.ServerMsg.Reply, msg_bytes));
         const msg = try common.asReply(x11.ServerMsg.ListFonts, msg_bytes);
         const fonts = try allocator.alloc(x11.Slice(u8, [*]const u8), msg.string_count);
@@ -422,7 +424,7 @@ fn render(
     const font_height = font_info.font_ascent + font_info.font_descent;
 
     try renderText(sock, sequence, ids.window().drawable(), ids.gcText(), 10, 10 + (font_height * 1), "font {}/{}", .{ font_index + 1, fonts.len });
-    try renderText(sock, sequence, ids.window().drawable(), ids.gcText(), 10, 10 + (font_height * 2), "{s}", .{font_name});
+    try renderText(sock, sequence, ids.window().drawable(), ids.gcText(), 10, 10 + (font_height * 2), "{f}", .{font_name});
     try renderText(sock, sequence, ids.window().drawable(), ids.gcText(), 10, 10 + (font_height * 3), "property_count={} char_info_count={}", .{ font_info.property_count, font_info.info_count });
     try renderText(sock, sequence, ids.window().drawable(), ids.gcText(), 10, 10 + (font_height * 4), "The quick brown fox jumped over the lazy dog", .{});
     try renderText(sock, sequence, ids.window().drawable(), ids.gcText(), 10, 10 + (font_height * 5), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", .{});
@@ -493,7 +495,7 @@ fn openAndQueryFont(
     font_name: x11.Slice(u8, [*]const u8),
 ) !void {
     // TODO: combine these into 1 send
-    std.log.info("open and query '{s}'", .{font_name});
+    std.log.info("open and query '{f}'", .{font_name});
     {
         const msg = try allocator.alloc(u8, x11.open_font.getLen(font_name.len));
         defer allocator.free(msg);

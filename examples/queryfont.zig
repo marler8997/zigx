@@ -4,6 +4,8 @@ const common = @import("common.zig");
 
 pub const log_level = std.log.Level.info;
 
+const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
+
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
@@ -41,12 +43,16 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, &msg);
     }
 
-    const stdout = std.io.getStdOut().writer();
+    var buffer: [4096]u8 = undefined;
+    var stdout = if (zig_atleast_15) std.fs.File.stdout().writer(&buffer) else std.io.bufferedWriter(std.io.getStdOut().writer());
+    const writer = if (zig_atleast_15) &stdout.interface else stdout.writer();
+
     {
-        const msg_bytes = try x11.readOneMsgAlloc(allocator, conn.reader());
+        var reader: x11.SocketReader = .init(conn.sock);
+        const msg_bytes = try x11.readOneMsgAlloc(allocator, reader.interface());
         defer allocator.free(msg_bytes);
         const msg = try common.asReply(x11.ServerMsg.QueryFont, msg_bytes);
-        try stdout.print("{}\n", .{msg});
+        try writer.print("{}\n", .{msg});
         std.debug.assert(sequence == msg.sequence);
         const lists = msg.lists();
         if (!lists.inBounds(msg.*)) {
@@ -54,11 +60,13 @@ pub fn main() !u8 {
             return 1;
         }
         for (msg.properties()) |prop| {
-            try stdout.print("{}\n", .{prop});
+            try writer.print("{}\n", .{prop});
         }
         for (lists.charInfos(msg)) |char_info| {
-            try stdout.print("{}\n", .{char_info});
+            try writer.print("{}\n", .{char_info});
         }
     }
+    if (zig_atleast_15) try writer.flush() else try stdout.flush();
+
     return 0;
 }

@@ -233,7 +233,9 @@ pub fn main() !u8 {
         });
         try conn.sendOne(&sequence, msg_buf[0..]);
     }
-    _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+
+    var reader: x11.SocketReader = .init(conn.sock);
+    _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
     switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
         .reply => |msg_reply| {
             expectSequence(sequence, msg_reply);
@@ -259,7 +261,7 @@ pub fn main() !u8 {
         x11.query_tree.serialize(&msg_buf, screen.root);
         try conn.sendOne(&sequence, msg_buf[0..]);
     }
-    _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+    _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
     switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
         .reply => |msg_reply| {
             expectSequence(sequence, msg_reply);
@@ -335,7 +337,7 @@ pub fn main() !u8 {
     }
 
     const font_dims: FontDims = blk: {
-        const message_length = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
@@ -367,7 +369,7 @@ pub fn main() !u8 {
             try conn.sendOne(&sequence, &msg);
         }
         {
-            const message_length = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+            const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
             try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
         }
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
@@ -406,7 +408,7 @@ pub fn main() !u8 {
             try conn.sendOne(&sequence, &msg);
         }
         {
-            const message_length = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+            const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
             try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
         }
         const pict_formats_data: ?struct { matching_picture_format: x11.render.PictureFormatInfo } = blk: {
@@ -486,7 +488,7 @@ pub fn main() !u8 {
             try conn.sendOne(&sequence, &msg);
         }
 
-        const message_length = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
@@ -529,7 +531,7 @@ pub fn main() !u8 {
             });
             try conn.sendOne(&sequence, &msg);
         }
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);

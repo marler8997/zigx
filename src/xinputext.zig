@@ -191,7 +191,12 @@ pub fn Length(comptime T: type, comptime value: T) type {
 pub const UnknownInfo = extern struct {
     class_id: u8,
     length: u8,
-    pub fn format(
+    pub const format = if (x.zig_atleast_15) formatNew else formatLegacy;
+    fn formatNew(self: *const UnknownInfo, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        const bytes = @as([*]const u8, @ptrCast(self))[0..self.length];
+        try writer.print("Unknown length={} data={X}", .{ self.length, bytes });
+    }
+    pub fn formatLegacy(
         self: *const UnknownInfo,
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
@@ -211,7 +216,11 @@ pub const KeyInfo = extern struct {
     max_keycode: u8,
     key_count: u16,
     unused: u16,
-    pub fn format(
+    pub const format = if (x.zig_atleast_15) formatNew else formatLegacy;
+    fn formatNew(self: KeyInfo, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("Key min={}, max={} count={}", .{ self.min_keycode, self.max_keycode, self.key_count });
+    }
+    pub fn formatLegacy(
         self: KeyInfo,
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
@@ -230,7 +239,11 @@ pub const ButtonInfo = extern struct {
     class_id: InputClassIdButtonKind,
     length: Length(u8, 4),
     button_count: u16,
-    pub fn format(
+    pub const format = if (x.zig_atleast_15) formatNew else formatLegacy;
+    fn formatNew(self: ButtonInfo, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("Button count={}", .{self.button_count});
+    }
+    pub fn formatLegacy(
         self: ButtonInfo,
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
@@ -251,7 +264,14 @@ pub const ValuatorInfo = extern struct {
     number_of_axes: u8,
     mode: u8,
     motion_buffer_size: u32,
-    pub fn format(
+    pub const format = if (x.zig_atleast_15) formatNew else formatLegacy;
+    fn formatNew(self: ValuatorInfo, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print(
+            "Valuator axes={}, mode=0x{x}, motion_buf_size={}",
+            .{ self.number_of_axes, self.mode, self.motion_buffer_size },
+        );
+    }
+    pub fn formatLegacy(
         self: ValuatorInfo,
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
@@ -274,7 +294,17 @@ pub const InputInfoIterator = struct {
         button: *align(4) const ButtonInfo,
         valuator: *align(4) const ValuatorInfo,
         unknown: *align(4) const UnknownInfo,
-        pub fn format(
+
+        pub const format = if (x.zig_atleast_15) formatNew else formatLegacy;
+        fn formatNew(self: TaggedUnion, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            switch (self) {
+                .key => |key| try key.format(writer),
+                .button => |button| try button.format(writer),
+                .valuator => |valuator| try valuator.format(writer),
+                .unknown => |unknown| try unknown.format(writer),
+            }
+        }
+        fn formatLegacy(
             self: TaggedUnion,
             comptime fmt: []const u8,
             options: std.fmt.FormatOptions,

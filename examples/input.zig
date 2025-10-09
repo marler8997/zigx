@@ -179,8 +179,10 @@ pub fn main() !u8 {
     std.log.info("read buffer capacity is {}", .{double_buf.half_len});
     var buf = double_buf.contiguousReadBuffer();
 
+    var reader: x11.SocketReader = .init(conn.sock);
+
     const font_dims: FontDims = blk: {
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 const msg: *x11.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
@@ -426,10 +428,10 @@ fn handleReply(
                     }
                     selected_pointer_id = device.id;
                 }
-                std.log.info("Device {} '{s}', type={}, use={s}:", .{ device.id, name, device.device_type, @tagName(device.use) });
+                std.log.info("Device {} '{f}', type={}, use={s}:", .{ device.id, name, device.device_type, @tagName(device.use) });
                 var info_index: u8 = 0;
                 while (info_index < device.class_count) : (info_index += 1) {
-                    std.log.info("  Input: {}", .{input_info_it.front()});
+                    std.log.info("  Input: {f}", .{input_info_it.front()});
                     input_info_it.pop();
                 }
             }
