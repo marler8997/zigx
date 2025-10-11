@@ -57,6 +57,7 @@ pub fn build(b: *std.Build) void {
         const install = b.addInstallArtifact(exe, .{});
         build_examples_step.dependOn(&install.step);
         b.getInstallStep().dependOn(&install.step);
+        b.step("build-" ++ example_name, "").dependOn(&install.step);
 
         run_examples.addArtifactArg(exe);
         run_examples.step.dependOn(&install.step);

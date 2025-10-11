@@ -53,10 +53,10 @@ pub const Writer = if (zig_atleast_15) std.Io.Writer else struct {
     }
 
     pub fn writeSplat(w: *Writer, data: []const []const u8, splat: usize) Error!usize {
-        std.debug.assert(data.len > 0);
+        assert(data.len > 0);
         const buffer = w.buffer;
         const count = countSplat(data, splat);
-        if (w.end + count > buffer.len) return w.drain(data, splat);
+        if (w.end + count > buffer.len) return w.vtable.drain(w, data, splat);
         for (data[0 .. data.len - 1]) |bytes| {
             @memcpy(buffer[w.end..][0..bytes.len], bytes);
             w.end += bytes.len;
@@ -94,6 +94,33 @@ pub const Writer = if (zig_atleast_15) std.Io.Writer else struct {
         var index: usize = 0;
         while (index < bytes.len) index += try w.write(bytes[index..]);
     }
+
+    pub fn writeByte(w: *Writer, byte: u8) Error!void {
+        while (w.buffer.len - w.end == 0) {
+            const n = try w.vtable.drain(w, &.{&.{byte}}, 1);
+            if (n > 0) return;
+        } else {
+            @branchHint(.likely);
+            w.buffer[w.end] = byte;
+            w.end += 1;
+        }
+    }
+
+    pub fn splatByteAll(w: *Writer, byte: u8, n: usize) Error!void {
+        var remaining: usize = n;
+        while (remaining > 0) remaining -= try w.splatByte(byte, remaining);
+    }
+
+    pub fn splatByte(w: *Writer, byte: u8, n: usize) Error!usize {
+        if (w.end + n <= w.buffer.len) {
+            @branchHint(.likely);
+            @memset(w.buffer[w.end..][0..n], byte);
+            w.end += n;
+            return n;
+        }
+        return writeSplat(w, &.{&.{byte}}, n);
+    }
+
     pub inline fn writeInt(w: *Writer, comptime T: type, value: T, endian: std.builtin.Endian) Error!void {
         var bytes: [@divExact(@typeInfo(T).int.bits, 8)]u8 = undefined;
         std.mem.writeInt(std.math.ByteAlignedInt(@TypeOf(value)), &bytes, value, endian);
@@ -119,4 +146,5 @@ pub const Writer = if (zig_atleast_15) std.Io.Writer else struct {
 
 const builtin = @import("builtin");
 const std = @import("std");
+const assert = std.debug.assert;
 const windows = std.os.windows;

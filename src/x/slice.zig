@@ -24,12 +24,20 @@ pub fn Slice(comptime LenType: type, comptime Ptr: type) type {
 
         pub const empty: @This() = .{ .ptr = undefined, .len = 0 };
 
-        pub fn nativeSlice(self: @This()) NativeSlice {
-            return self.ptr[0..self.len];
+        pub fn init(ptr: Ptr, len: LenType) @This() {
+            return .{ .ptr = ptr, .len = len };
+        }
+
+        pub fn initAssume(slice: NativeSlice) @This() {
+            return .{ .ptr = slice.ptr, .len = @intCast(slice.len) };
         }
 
         pub fn initComptime(comptime ct_slice: NativeSlice) @This() {
             return .{ .ptr = ct_slice.ptr, .len = @intCast(ct_slice.len) };
+        }
+
+        pub fn nativeSlice(self: @This()) NativeSlice {
+            return self.ptr[0..self.len];
         }
 
         pub fn lenCast(self: @This(), comptime NewLenType: type) Slice(NewLenType, Ptr) {
@@ -80,6 +88,8 @@ pub fn SliceWithMaxLen(comptime LenType: type, comptime Ptr: type, comptime max_
 
         ptr: Ptr,
         len: LenType,
+
+        pub const empty: @This() = .{ .ptr = undefined, .len = 0 };
 
         pub fn validateMaxLen(self: @This()) void {
             std.debug.assert(self.len <= max_len);

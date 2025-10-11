@@ -1,8 +1,8 @@
 /// Protocol Specification: https://www.x.org/docs/XProtocol/proto.pdf
 const std = @import("std");
-const x = @import("x.zig");
+const x11 = @import("x.zig");
 
-pub const name = x.Slice(u16, [*]const u8).initComptime("DOUBLE-BUFFER");
+pub const name: x11.Slice(u16, [*]const u8) = .initComptime("DOUBLE-BUFFER");
 
 pub const ExtOpcode = enum(u8) {
     get_version = 0,
@@ -33,7 +33,7 @@ pub const get_version = struct {
         comptime {
             std.debug.assert(len & 0x3 == 0);
         }
-        x.writeIntNative(u16, buf + 2, len >> 2);
+        x11.writeIntNative(u16, buf + 2, len >> 2);
         buf[4] = args.wanted_major_version;
         buf[5] = args.wanted_minor_version;
         buf[6] = 0; // unused
@@ -44,7 +44,7 @@ pub const get_version = struct {
         std.debug.assert(@sizeOf(Reply) == 32);
     }
     pub const Reply = extern struct {
-        response_type: x.ReplyKind,
+        response_type: x11.ReplyKind,
         unused: u8,
         sequence: u16,
         word_len: u32, // length in 4-byte words
@@ -65,91 +65,81 @@ pub const SwapAction = enum(u8) {
     _,
 };
 
-pub const allocate = struct {
-    pub const len =
-        2 // extension and command opcodes
-        + 2 // request length
-        + 4 // window
-        + 4 // backbuffer
-        + 1 // swapaction
-        + 3 // pad
-    ;
-    pub const Args = struct {
-        ext_opcode: u8,
-        window: x.Window,
-        backbuffer: x.Drawable,
-        swapaction: SwapAction,
-    };
-    pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = args.ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.allocate);
-        comptime {
-            std.debug.assert(len & 0x3 == 0);
-        }
-        x.writeIntNative(u16, buf + 2, len >> 2);
-        x.writeIntNative(u32, buf + 4, @intFromEnum(args.window));
-        x.writeIntNative(u32, buf + 8, @intFromEnum(args.backbuffer));
-        buf[12] = @intFromEnum(args.swapaction);
-        buf[13] = 0; // unused
-        buf[14] = 0; // unused
-        buf[15] = 0; // unused
-    }
-};
+pub fn Allocate(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    window: x11.Window,
+    backbuffer: x11.Drawable,
+    swapaction: SwapAction,
+) x11.Writer.Error!void {
+    const msg_len = 16;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.allocate),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(window));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(backbuffer));
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        @intFromEnum(swapaction),
+        0, // unused
+        0, // unused
+        0, // unused
+    });
+    std.debug.assert(msg_len == offset);
+    sink.sequence +%= 1;
+}
 
-pub const deallocate = struct {
-    pub const len =
-        2 // extension and command opcodes
-        + 2 // request length
-        + 4 // backbuffer
-    ;
-    pub const Args = struct {
-        ext_opcode: u8,
-        backbuffer: x.Drawable,
-    };
-    pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = args.ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.deallocate);
-        comptime {
-            std.debug.assert(len & 0x3 == 0);
-        }
-        x.writeIntNative(u16, buf + 2, len >> 2);
-        x.writeIntNative(u32, buf + 4, @intFromEnum(args.backbuffer));
-    }
-};
+pub fn Deallocate(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    backbuffer: x11.Drawable,
+) x11.Writer.Error!void {
+    const msg_len = 8;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.deallocate),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(backbuffer));
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
 
 pub const SwapInfo = struct {
-    window: x.Window,
+    window: x11.Window,
     action: SwapAction,
 };
 
-pub const swap = struct {
-    pub const non_list_len =
+pub fn Swap(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    swap_infos: x11.Slice(u32, [*]const SwapInfo),
+) x11.Writer.Error!void {
+    const msg_len =
         2 // extension and command opcodes
         + 2 // request length
         + 4 // swap info count
-    ;
-    pub fn getLen(swap_info_count: u32) u18 {
-        return @intCast(non_list_len + (swap_info_count * 8));
+        + swap_infos.len * 8; // each SwapInfo is 8 bytes
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.swap),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
+    try x11.writeInt(sink.writer, &offset, u32, swap_infos.len);
+    for (swap_infos.nativeSlice()) |info| {
+        try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(info.window));
+        try x11.writeAll(sink.writer, &offset, &[_]u8{
+            @intFromEnum(info.action),
+            0, // unused
+            0, // unused
+            0, // unused
+        });
     }
-    pub const Args = struct {
-        ext_opcode: u8,
-    };
-    pub fn serialize(buf: [*]u8, swap_infos: x.Slice(u32, [*]const SwapInfo), args: Args) void {
-        buf[0] = args.ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.swap);
-        x.writeIntNative(u32, buf + 4, swap_infos.len);
-
-        var i: usize = non_list_len;
-        for (swap_infos.nativeSlice()) |info| {
-            x.writeIntNative(u32, buf + i + 0, @intFromEnum(info.window));
-            buf[i + 4] = @intFromEnum(info.action);
-            buf[i + 5] = 0; // unused
-            buf[i + 6] = 0; // unused
-            buf[i + 7] = 0; // unused
-            i += 8;
-        }
-        std.debug.assert(i == getLen(swap_infos.len));
-        std.debug.assert((i & 0x3) == 0);
-        x.writeIntNative(u16, buf + 2, @intCast(i >> 2));
-    }
-};
+    std.debug.assert((offset & 0x3) == 0);
+    std.debug.assert(msg_len == offset);
+    sink.sequence +%= 1;
+}

@@ -84,7 +84,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
             var buffer: [1000]u8 = undefined;
             var socket_writer = x11.socketWriter(sock, &buffer);
             const writer = &socket_writer.interface;
-            x11.writeConnectSetup(writer, .{
+            x11.flushConnectSetup(writer, .{
                 .auth_name = .empty,
                 .auth_data = .empty,
             }) catch |err| return reportError("send connect setup failed with {s}", .{@errorName(err)});
@@ -220,7 +220,7 @@ fn connectSetupAuth(
             var write_buf: [2000]u8 = undefined;
             var socket_writer = x11.socketWriter(sock, &write_buf);
             const writer = &socket_writer.interface;
-            x11.writeConnectSetup(writer, .{
+            x11.flushConnectSetup(writer, .{
                 .auth_name = name_x,
                 .auth_data = data_x,
             }) catch |err| return reportError("send connect setup failed with {s}", .{@errorName(err)});
@@ -302,26 +302,31 @@ export fn XCreateSimpleWindow(
     const new_window: x11.Window = .fromInt(display_full.resource_id_base + display_full.next_resource_id_offset);
     display_full.next_resource_id_offset += 1;
 
-    var msg_buf: [x11.create_window.max_len]u8 = undefined;
-    const len = x11.create_window.serialize(&msg_buf, .{
-        .window_id = new_window,
-        .parent_window_id = .fromInt(root_window),
-        // TODO: set this correctly
-        .depth = 0,
-        .x = @intCast(x_pos),
-        .y = @intCast(y),
-        .width = @intCast(width),
-        .height = @intCast(height),
-        .border_width = @intCast(border_width),
-        // TODO
-        .class = .copy_from_parent,
-        // .class = .input_output,
-        .visual_id = .fromInt(display.screens[0].root_visual_num),
-    }, .{});
-    sendAll(display.fd, msg_buf[0..len]) catch |err| {
-        reportErrorRaw("failed to send CreateWindow message with {s}", .{@errorName(err)});
-        generateErrorEvent(display_full);
+    var write_buf: [1000]u8 = undefined;
+    var socket_writer = x11.socketWriter(display.fd, &write_buf);
+    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
+
+    const err = blk: {
+        sink.CreateWindow(.{
+            .window_id = new_window,
+            .parent_window_id = .fromInt(root_window),
+            // TODO: set this correctly
+            .depth = 0,
+            .x = @intCast(x_pos),
+            .y = @intCast(y),
+            .width = @intCast(width),
+            .height = @intCast(height),
+            .border_width = @intCast(border_width),
+            // TODO
+            .class = .copy_from_parent,
+            // .class = .input_output,
+            .visual_id = .fromInt(display.screens[0].root_visual_num),
+        }, .{}) catch |e| break :blk e;
+        sink.writer.flush() catch |e| break :blk e;
+        return @intFromEnum(new_window);
     };
+    reportErrorRaw("failed to send CreateWindow message with {s}", .{@errorName(err)});
+    generateErrorEvent(display_full);
     return @intFromEnum(new_window);
 }
 
@@ -344,18 +349,23 @@ export fn XCreateGC(
     if (value_mask != 0) @panic("todo: non-zero value_mask");
     if (values) |_| @panic("todo: non-zero values");
 
-    var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-    const len = x11.create_gc.serialize(&msg_buf, .{
-        .gc_id = gc_id,
-        .drawable_id = .fromInt(drawable),
-    }, .{
-        //.foreground = screen.black_pixel,
-    });
-    sendAll(display.fd, msg_buf[0..len]) catch |err| {
-        reportErrorRaw("failed to send CreateGC message with {s}", .{@errorName(err)});
-        generateErrorEvent(display_full);
-    };
+    var write_buf: [100]u8 = undefined;
+    var socket_writer = x11.socketWriter(display.fd, &write_buf);
+    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
 
+    const err = blk: {
+        sink.CreateGc(
+            gc_id,
+            .fromInt(drawable),
+            .{
+                //.foreground = screen.black_pixel,
+            },
+        ) catch |e| break :blk e;
+        sink.writer.flush() catch |e| break :blk e;
+        return @ptrCast(gc);
+    };
+    reportErrorRaw("failed to send CreateGC message with {s}", .{@errorName(err)});
+    generateErrorEvent(display_full);
     return @ptrCast(gc);
 }
 
@@ -363,12 +373,17 @@ export fn XMapRaised(display: *c.Display, window: c.Window) c_int {
     const display_full: *Display = @fieldParentPtr("public", display);
 
     std.log.info("TODO: send ConfigureWindow stack-mode=Above", .{});
-    var msg: [x11.map_window.len]u8 = undefined;
-    x11.map_window.serialize(&msg, .fromInt(window));
-    sendAll(display.fd, &msg) catch |err| {
-        reportErrorRaw("failed to send MapWindow message with {s}", .{@errorName(err)});
-        generateErrorEvent(display_full);
+
+    var write_buf: [100]u8 = undefined;
+    var socket_writer = x11.socketWriter(display.fd, &write_buf);
+    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
+    const err = blk: {
+        sink.MapWindow(.fromInt(window)) catch |err| break :blk err;
+        sink.writer.flush() catch |err| break :blk err;
+        return 0;
     };
+    reportErrorRaw("failed to send MapWindow message with {s}", .{@errorName(err)});
+    generateErrorEvent(display_full);
     return 0;
 }
 
