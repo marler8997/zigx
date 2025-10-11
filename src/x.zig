@@ -67,6 +67,8 @@ pub const max_display_num = max_port - TcpBasePort;
 pub const BigEndian = 'B';
 pub const LittleEndian = 'l';
 
+const align4 = if (zig_atleast_15) .@"4" else 4;
+
 pub fn Pad(comptime align_to: comptime_int) type {
     return switch (align_to) {
         4 => u2,
@@ -2670,8 +2672,10 @@ pub fn readSocketLegacy(sock: std.posix.socket_t, buffer: []u8) !usize {
     return readSock(sock, buffer, 0);
 }
 
+const SocketReadFullError = if (zig_atleast_15) std.Io.Reader.Error else (error{EndOfStream} || std.posix.RecvFromError);
+
 pub const SocketReader = struct {
-    pub const Error = if (zig_atleast_15) std.Io.Reader.Error else std.posix.RecvFromError;
+    pub const Error = if (zig_atleast_15) (error{EndOfStream} || std.net.Stream.Reader.Error) else SocketReadFullError;
 
     context: if (zig_atleast_15) std.net.Stream.Reader else std.posix.socket_t,
     pub fn init(sock: std.posix.socket_t) SocketReader {
@@ -2686,6 +2690,12 @@ pub const SocketReader = struct {
     pub fn read(self: SocketReader, buf: []u8) !usize {
         if (zig_atleast_15) return self.context.read(buf);
         return readSock(self.context, buf, 0);
+    }
+    pub fn getError(self: SocketReader, err: SocketReadFullError) ?Error {
+        return if (zig_atleast_15) switch (err) {
+            error.ReadFailed => self.context.getError(),
+            error.EndOfStream => error.EndOfStream,
+        } else err;
     }
 };
 
@@ -3579,7 +3589,7 @@ pub const readFull = if (zig_atleast_15) readFullNew else readFullLegacy;
 fn readFullNew(reader: *std.Io.Reader, buf: []u8) std.Io.Reader.Error!void {
     return reader.readSliceAll(buf);
 }
-fn readFullLegacy(reader: anytype, buf: []u8) (@TypeOf(reader).Error || error{EndOfStream})!void {
+fn readFullLegacy(reader: anytype, buf: []u8) ReadFullError(@TypeOf(reader))!void {
     std.debug.assert(buf.len > 0);
     var total_received: usize = 0;
     while (true) {
@@ -3785,8 +3795,13 @@ pub fn rgb24To(color: u24, depth_bits: u8) u32 {
     };
 }
 
-pub fn readOneMsgAlloc(allocator: std.mem.Allocator, reader: anytype) ![]align(4) u8 {
-    var buf = try allocator.allocWithOptions(u8, 32, if (zig_atleast_15) .@"4" else 4, null);
+fn ReadFullError(comptime Reader: type) type {
+    if (zig_atleast_15) return std.Io.Reader.Error;
+    return error{EndOfStream} || Reader.Error;
+}
+
+pub fn readOneMsgAlloc(allocator: std.mem.Allocator, reader: anytype) (error{OutOfMemory} || ReadFullError(@TypeOf(reader)))![]align(4) u8 {
+    var buf = try allocator.allocWithOptions(u8, 32, align4, null);
     errdefer allocator.free(buf);
     const len = try readOneMsg(reader, buf);
     if (len > 32) {
@@ -3810,7 +3825,7 @@ pub fn readOneMsgNew(reader: *std.Io.Reader, buf: []align(4) u8) std.Io.Reader.E
     }
     return msg_len;
 }
-pub fn readOneMsgLegacy(reader: anytype, buf: []align(4) u8) !u32 {
+pub fn readOneMsgLegacy(reader: anytype, buf: []align(4) u8) ReadFullError(@TypeOf(reader))!u32 {
     std.debug.assert(buf.len >= 32);
     try readFull(reader, buf[0..32]);
     const msg_len = parseMsgLen(buf[0..32].*);
@@ -3820,7 +3835,7 @@ pub fn readOneMsgLegacy(reader: anytype, buf: []align(4) u8) !u32 {
     return msg_len;
 }
 
-pub fn readOneMsgFinish(reader: anytype, buf: []align(4) u8) !void {
+pub fn readOneMsgFinish(reader: anytype, buf: []align(4) u8) ReadFullError(@TypeOf(reader))!void {
     //
     // for now this is the only case where this should happen
     // I've added this check to audit the code again if this every changes
