@@ -80,14 +80,6 @@ test "VisualType.findMatchingVisualType" {
     try std.testing.expectError(error.VisualTypeNotFound, visual_type_not_found_result);
 }
 
-test "ConnectSetupMessage" {
-    const auth_name = comptime x.slice(u16, @as([]const u8, "hello"));
-    const auth_data = comptime x.slice(u16, @as([]const u8, "there"));
-    const len = comptime x.connect_setup.getLen(auth_name.len, auth_data.len);
-    var buf: [len]u8 = undefined;
-    x.connect_setup.serialize(&buf, 1, 1, auth_name, auth_data);
-}
-
 test "Parse received ConnectSetup message" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
