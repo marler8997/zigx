@@ -32,6 +32,7 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const windows = std.os.windows;
 
+pub const ext = @import("x/ext.zig");
 pub const inputext = @import("xinputext.zig");
 pub const render = @import("render.zig");
 pub const dbe = @import("xdbe.zig");

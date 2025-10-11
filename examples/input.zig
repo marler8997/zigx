@@ -1,6 +1,5 @@
 const std = @import("std");
 const x11 = @import("x11");
-const common = @import("common.zig");
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
@@ -40,7 +39,7 @@ const Ids = struct {
 
 pub fn main() !u8 {
     try x11.wsaStartup();
-    const conn = try common.connect(allocator);
+    const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     var sequence: u16 = 0;
@@ -139,7 +138,7 @@ pub fn main() !u8 {
             },
             // .dont_propagate = 1,
         });
-        try common.sendOne(conn.sock, &sequence, msg_buf[0..len]);
+        try x11.ext.sendOne(conn.sock, &sequence, msg_buf[0..len]);
     }
 
     {
@@ -150,7 +149,7 @@ pub fn main() !u8 {
         }, .{
             .foreground = fg_color,
         });
-        try common.sendOne(conn.sock, &sequence, msg_buf[0..len]);
+        try x11.ext.sendOne(conn.sock, &sequence, msg_buf[0..len]);
     }
     {
         var msg_buf: [x11.create_gc.max_len]u8 = undefined;
@@ -161,7 +160,7 @@ pub fn main() !u8 {
             .background = bg_color,
             .foreground = fg_color,
         });
-        try common.sendOne(conn.sock, &sequence, msg_buf[0..len]);
+        try x11.ext.sendOne(conn.sock, &sequence, msg_buf[0..len]);
     }
 
     // get some font information
@@ -170,7 +169,7 @@ pub fn main() !u8 {
         const text = x11.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
         var msg: [x11.query_text_extents.getLen(text.len)]u8 = undefined;
         x11.query_text_extents.serialize(&msg, ids.fg().fontable(), text);
-        try common.sendOne(conn.sock, &sequence, &msg);
+        try x11.ext.sendOne(conn.sock, &sequence, &msg);
     }
 
     const double_buf = try x11.DoubleBuffer.init(
@@ -205,7 +204,7 @@ pub fn main() !u8 {
     {
         var msg: [x11.map_window.len]u8 = undefined;
         x11.map_window.serialize(&msg, ids.window());
-        try common.sendOne(conn.sock, &sequence, &msg);
+        try x11.ext.sendOne(conn.sock, &sequence, &msg);
     }
     var state = State{};
 
@@ -213,7 +212,7 @@ pub fn main() !u8 {
         const name = comptime x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
         var msg: [x11.query_extension.getLen(name.len)]u8 = undefined;
         x11.query_extension.serialize(&msg, name);
-        try common.sendOne(conn.sock, &sequence, &msg);
+        try x11.ext.sendOne(conn.sock, &sequence, &msg);
         state.xinput = .{ .sent_extension_query = .{
             .sequence = sequence,
         } };
@@ -414,7 +413,7 @@ fn handleReply(
                 const name = comptime x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
                 var get_version_msg: [x11.inputext.get_extension_version.getLen(name.len)]u8 = undefined;
                 x11.inputext.get_extension_version.serialize(&get_version_msg, msg_ext.major_opcode, name);
-                try common.sendOne(sock, sequence, &get_version_msg);
+                try x11.ext.sendOne(sock, sequence, &get_version_msg);
 
                 // Useful for debugging
                 std.log.info("{f} extension: opcode={} base_error_code={}", .{
@@ -496,7 +495,7 @@ fn handleReply(
                     .only_if_exists = false,
                     .name = name,
                 });
-                try common.sendOne(sock, sequence, &intern_atom_msg);
+                try x11.ext.sendOne(sock, sequence, &intern_atom_msg);
                 state.disable_input_device = .{ .intern_atom = .{
                     .sequence = sequence.*,
                     .ext_opcode = state_info.ext_opcode,
@@ -518,7 +517,7 @@ fn handleReply(
                 .len = 0,
                 .delete = false,
             });
-            try common.sendOne(sock, sequence, &get_prop_msg);
+            try x11.ext.sendOne(sock, sequence, &get_prop_msg);
             state.disable_input_device = .{ .get_prop = .{
                 .sequence = sequence.*,
                 .ext_opcode = info.ext_opcode,
@@ -540,7 +539,7 @@ fn handleReply(
                 .type = @intFromEnum(x11.Atom.INTEGER),
                 .values = x11.Slice(u16, [*]const u8).initComptime(&[_]u8{0}),
             });
-            try common.sendOne(sock, sequence, &change_prop_msg);
+            try x11.ext.sendOne(sock, sequence, &change_prop_msg);
             state.disable_input_device = .{ .disabled = .{
                 .ext_opcode = info.ext_opcode,
                 .pointer_id = info.pointer_id,
@@ -566,7 +565,7 @@ fn warpPointer(sock: std.posix.socket_t, sequence: *u16) !void {
         .dst_x = 20,
         .dst_y = 10,
     });
-    try common.sendOne(sock, sequence, &msg);
+    try x11.ext.sendOne(sock, sequence, &msg);
 }
 
 fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.Window, window_id: x11.Window) !void {
@@ -616,12 +615,12 @@ fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.
             //                ,
             ////            .dont_propagate = 1,
         });
-        try common.sendOne(sock, sequence, msg_buf[0..len]);
+        try x11.ext.sendOne(sock, sequence, msg_buf[0..len]);
     }
     {
         var msg: [x11.map_window.len]u8 = undefined;
         x11.map_window.serialize(&msg, window_id);
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 }
 
@@ -652,7 +651,7 @@ fn listenToRawEvents(sock: std.posix.socket_t, sequence: *u16, state: *State, ro
                 .window_id = root_window_id,
                 .masks = event_masks[0..],
             });
-            try common.sendOne(sock, sequence, message_buffer[0..len]);
+            try x11.ext.sendOne(sock, sequence, message_buffer[0..len]);
 
             state.listen_to_raw_events = .enabled;
         },
@@ -664,7 +663,7 @@ fn listenToRawEvents(sock: std.posix.socket_t, sequence: *u16, state: *State, ro
 fn destroyWindow(sock: std.posix.socket_t, sequence: *u16, window_id: x11.Window) !void {
     var msg: [x11.destroy_window.len]u8 = undefined;
     x11.destroy_window.serialize(&msg, window_id);
-    try common.sendOne(sock, sequence, &msg);
+    try x11.ext.sendOne(sock, sequence, &msg);
 }
 
 fn disableInputDevice(sock: std.posix.socket_t, sequence: *u16, state: *State) !void {
@@ -687,7 +686,7 @@ fn disableInputDevice(sock: std.posix.socket_t, sequence: *u16, state: *State) !
             const input_ext_opcode = state.xinput.enabled.input_extension_info.opcode;
             var list_devices_msg: [x11.inputext.list_input_devices.len]u8 = undefined;
             x11.inputext.list_input_devices.serialize(&list_devices_msg, input_ext_opcode);
-            try common.sendOne(sock, sequence, &list_devices_msg);
+            try x11.ext.sendOne(sock, sequence, &list_devices_msg);
             state.disable_input_device = .{ .list_devices = .{
                 .sequence = sequence.*,
                 .ext_opcode = input_ext_opcode,
@@ -734,10 +733,10 @@ const State = struct {
         extension_missing: void,
         get_version: struct {
             sequence: u16,
-            input_extension_info: common.ExtensionInfo,
+            input_extension_info: x11.ext.ExtensionInfo,
         },
         enabled: struct {
-            input_extension_info: common.ExtensionInfo,
+            input_extension_info: x11.ext.ExtensionInfo,
         },
     } = .initial,
 
@@ -792,7 +791,7 @@ const State = struct {
                     .cursor = .none,
                     .time = .current_time,
                 });
-                try common.sendOne(sock, sequence, &msg);
+                try x11.ext.sendOne(sock, sequence, &msg);
                 self.grab = .{ .requested = .{
                     .confined = self.confine_grab,
                     .sequence = sequence.*,
@@ -807,7 +806,7 @@ const State = struct {
                 x11.ungrab_pointer.serialize(&msg, .{
                     .time = .current_time,
                 });
-                try common.sendOne(sock, sequence, &msg);
+                try x11.ext.sendOne(sock, sequence, &msg);
                 self.grab = .disabled;
             },
         }
@@ -833,7 +832,7 @@ fn renderString(
         .x = pos_x,
         .y = pos_y,
     });
-    try common.sendOne(sock, sequence, msg[0..x11.image_text8.getLen(text_len)]);
+    try x11.ext.sendOne(sock, sequence, msg[0..x11.image_text8.getLen(text_len)]);
 }
 
 fn render(
@@ -854,7 +853,7 @@ fn render(
             .width = window_width,
             .height = window_height,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     try renderString(
         sock,

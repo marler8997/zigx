@@ -1,6 +1,8 @@
+//! This file contains apis that I'm unsure whether to include as they are.
+
 const std = @import("std");
-const x11 = @import("x11");
-const common = @This();
+const x11 = @import("../x.zig");
+const ext = @This();
 
 const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
 
@@ -32,11 +34,11 @@ pub const ConnectResult = struct {
     setup: x11.ConnectSetup,
 
     pub fn sendOne(self: *const ConnectResult, sequence: *u16, data: []const u8) !void {
-        try common.sendNoSequencing(self.sock, data);
+        try ext.sendNoSequencing(self.sock, data);
         sequence.* +%= 1;
     }
     pub fn sendNoSequencing(self: *const ConnectResult, data: []const u8) !void {
-        try common.sendNoSequencing(self.sock, data);
+        try ext.sendNoSequencing(self.sock, data);
     }
 };
 
@@ -221,7 +223,7 @@ pub fn getExtensionInfo(
         const ext_name = comptime x11.Slice(u16, [*]const u8).initComptime(extension_name);
         var message_buffer: [x11.query_extension.getLen(ext_name.len)]u8 = undefined;
         x11.query_extension.serialize(&message_buffer, ext_name);
-        try common.sendOne(sock, sequence, &message_buffer);
+        try ext.sendOne(sock, sequence, &message_buffer);
     }
     const message_length = try x11.readOneMsg(reader, @alignCast(buffer.nextReadBuffer()));
     try checkMessageLengthFitsInBuffer(message_length, buffer_limit);

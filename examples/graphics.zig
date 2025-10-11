@@ -1,6 +1,5 @@
 const std = @import("std");
 const x11 = @import("x11");
-const common = @import("common.zig");
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
@@ -23,7 +22,7 @@ const Ids = struct {
 
 pub fn main() !u8 {
     try x11.wsaStartup();
-    const conn = try common.connect(allocator);
+    const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     const screen = blk: {
@@ -266,7 +265,7 @@ fn render(
     //        }, &[_]x11.Rectangle {
     //            .{ .x = 100, .y = 100, .width = 200, .height = 200 },
     //        });
-    //        try common.send(sock, &msg);
+    //        try x11.ext.send(sock, &msg);
     //    }
     _ = bg_gc_id;
     {
@@ -277,7 +276,7 @@ fn render(
             .width = 0,
             .height = 0,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     _ = font_dims;
     {
@@ -291,7 +290,7 @@ fn render(
             .{ .x = 110, .y = 10 },
             .{ .x = 55, .y = 55 },
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     //    {
     //        const text_literal: []const u8 = "Hello X!";
@@ -307,6 +306,6 @@ fn render(
     //            .y = @divTrunc((window_height - @intCast(i16, font_dims.height)), 2) + font_dims.font_ascent,
     //            .text = text,
     //        });
-    //        try common.send(sock, &msg);
+    //        try x11.ext.send(sock, &msg);
     //    }
 }

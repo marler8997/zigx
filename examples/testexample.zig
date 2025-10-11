@@ -1,7 +1,6 @@
 // A working example to test various parts of the API
 const std = @import("std");
 const x11 = @import("x11");
-const common = @import("common.zig");
 
 const Endian = std.builtin.Endian;
 
@@ -105,7 +104,7 @@ pub fn findMatchingPictureFormat(
 
 pub fn main() !u8 {
     try x11.wsaStartup();
-    const conn = try common.connect(allocator);
+    const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
     var sequence: u16 = 0;
 
@@ -357,9 +356,9 @@ pub fn main() !u8 {
         }
     };
 
-    const opt_render_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, "RENDER");
+    const opt_render_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, "RENDER");
     if (opt_render_ext) |render_ext| {
-        const expected_version: common.ExtensionVersion = .{ .major_version = 0, .minor_version = 10 };
+        const expected_version: x11.ext.ExtensionVersion = .{ .major_version = 0, .minor_version = 10 };
         {
             var msg: [x11.render.query_version.len]u8 = undefined;
             x11.render.query_version.serialize(&msg, render_ext.opcode, .{
@@ -478,9 +477,9 @@ pub fn main() !u8 {
         }
     }
 
-    const opt_shape_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, "SHAPE");
+    const opt_shape_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, "SHAPE");
     if (opt_shape_ext) |shape_ext| {
-        const expected_version: common.ExtensionVersion = .{ .major_version = 1, .minor_version = 1 };
+        const expected_version: x11.ext.ExtensionVersion = .{ .major_version = 1, .minor_version = 1 };
 
         {
             var msg: [x11.shape.query_version.len]u8 = undefined;
@@ -519,9 +518,9 @@ pub fn main() !u8 {
         }
     }
 
-    const opt_test_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, "XTEST");
+    const opt_test_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, "XTEST");
     if (opt_test_ext) |test_ext| {
-        const expected_version: common.ExtensionVersion = .{ .major_version = 2, .minor_version = 2 };
+        const expected_version: x11.ext.ExtensionVersion = .{ .major_version = 2, .minor_version = 2 };
         {
             var msg: [x11.testext.get_version.len]u8 = undefined;
             x11.testext.get_version.serialize(&msg, .{
@@ -758,7 +757,7 @@ fn render(
     image_format: ImageFormat,
     ids: Ids,
     font_dims: FontDims,
-    opt_render_ext: ?common.ExtensionInfo,
+    opt_render_ext: ?x11.ext.ExtensionInfo,
 ) !void {
     {
         var msg: [x11.poly_fill_rectangle.getLen(1)]u8 = undefined;
@@ -768,7 +767,7 @@ fn render(
         }, &[_]x11.Rectangle{
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     {
         var msg: [x11.clear_area.len]u8 = undefined;
@@ -778,7 +777,7 @@ fn render(
             .width = 100,
             .height = 100,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0xffaadd, depth));
@@ -795,7 +794,7 @@ fn render(
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     {
         const text_literal: []const u8 = "PolyText8";
@@ -812,7 +811,7 @@ fn render(
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent + font_dims.height + 1,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0x00ff00, depth));
@@ -826,7 +825,7 @@ fn render(
             .drawable_id = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
         }, &rectangles);
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0x0000ff, depth));
     {
@@ -839,7 +838,7 @@ fn render(
             .drawable_id = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
         }, &rectangles);
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     const test_image_scanline_len = blk: {
@@ -874,7 +873,7 @@ fn render(
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
+        try x11.ext.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
 
         // test a pixmap
         {
@@ -886,7 +885,7 @@ fn render(
                 .width = test_image.width,
                 .height = test_image.height,
             });
-            try common.sendOne(sock, sequence, &msg);
+            try x11.ext.sendOne(sock, sequence, &msg);
         }
         x11.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
             .format = .z_pixmap,
@@ -899,7 +898,7 @@ fn render(
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
+        try x11.ext.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
 
         {
             var msg: [x11.copy_area.len]u8 = undefined;
@@ -914,13 +913,13 @@ fn render(
                 .width = test_image.width,
                 .height = test_image.height,
             });
-            try common.sendOne(sock, sequence, &msg);
+            try x11.ext.sendOne(sock, sequence, &msg);
         }
 
         {
             var msg: [x11.free_pixmap.len]u8 = undefined;
             x11.free_pixmap.serialize(&msg, ids.pixmap());
-            try common.sendOne(sock, sequence, &msg);
+            try x11.ext.sendOne(sock, sequence, &msg);
         }
     }
 
@@ -943,7 +942,7 @@ fn render(
                 .width = 100,
                 .height = 100,
             });
-            try common.sendOne(sock, sequence, &msg);
+            try x11.ext.sendOne(sock, sequence, &msg);
         }
     }
 }
@@ -953,7 +952,7 @@ fn changeGcColor(sock: std.posix.socket_t, sequence: *u16, gc_id: x11.GraphicsCo
     const len = x11.change_gc.serialize(&msg_buf, gc_id, .{
         .foreground = color,
     });
-    try common.sendOne(sock, sequence, msg_buf[0..len]);
+    try x11.ext.sendOne(sock, sequence, msg_buf[0..len]);
 }
 
 fn getTestImagePixel(row: usize) u24 {

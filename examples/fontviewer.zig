@@ -1,6 +1,5 @@
 const std = @import("std");
 const x11 = @import("x11");
-const common = @import("common.zig");
 
 pub const log_level = std.log.Level.info;
 
@@ -29,7 +28,7 @@ const Ids = struct {
 
 pub fn main() !u8 {
     try x11.wsaStartup();
-    const conn = try common.connect(allocator);
+    const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     var sequence: u16 = 0;
@@ -76,8 +75,8 @@ pub fn main() !u8 {
 
     const fonts = blk: {
         const msg_bytes = try x11.readOneMsgAlloc(allocator, reader.interface());
-        expectSequence(sequence, try common.asReply(x11.ServerMsg.Reply, msg_bytes));
-        const msg = try common.asReply(x11.ServerMsg.ListFonts, msg_bytes);
+        expectSequence(sequence, try x11.ext.asReply(x11.ServerMsg.Reply, msg_bytes));
+        const msg = try x11.ext.asReply(x11.ServerMsg.ListFonts, msg_bytes);
         const fonts = try allocator.alloc(x11.Slice(u8, [*]const u8), msg.string_count);
         var it = msg.iterator();
         var i: usize = 0;
@@ -289,7 +288,7 @@ const State = struct {
             // TODO: do we need to remove it from the gc??
             var close_msg: [x11.close_font.len]u8 = undefined;
             x11.close_font.serialize(&close_msg, ids.font());
-            try common.sendOne(sock, sequence, &close_msg);
+            try x11.ext.sendOne(sock, sequence, &close_msg);
         }
         try openAndQueryFont(sock, sequence, ids.font(), fonts[self.desired_font_index]);
         self.exposed = .{ .yes = .{ .getting_font = .{
@@ -410,7 +409,7 @@ fn render(
         }, &[_]x11.Rectangle{
             .{ .x = 0, .y = 0, .width = window_width, .height = window_height },
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     {
@@ -418,7 +417,7 @@ fn render(
         const len = x11.change_gc.serialize(&msg_buf, ids.gcText(), .{
             .font = ids.font(),
         });
-        try common.sendOne(sock, sequence, msg_buf[0..len]);
+        try x11.ext.sendOne(sock, sequence, msg_buf[0..len]);
     }
 
     const font_height = font_info.font_ascent + font_info.font_descent;
@@ -444,7 +443,7 @@ fn renderNoFontInfo(sock: std.posix.socket_t, sequence: *u16, ids: Ids, fonts: [
         }, &[_]x11.Rectangle{
             .{ .x = 0, .y = 0, .width = window_width, .height = window_height },
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     //    {
@@ -452,7 +451,7 @@ fn renderNoFontInfo(sock: std.posix.socket_t, sequence: *u16, ids: Ids, fonts: [
     //        const len = x11.change_gc.serialize(&msg_buf, ids.gcText(), .{
     //            .font = ids.font(),
     //        });
-    //        try common.send(sock, msg_buf[0..len]);
+    //        try x11.ext.send(sock, msg_buf[0..len]);
     //    }
 
     //try renderText(sock, ids.window(), ids.gcText(), 10, 30, "font {}/{}", .{font_index+1, fonts.len});
@@ -485,7 +484,7 @@ fn renderText(
     });
     const final_len = (std.fmt.bufPrint((msg.ptr + x11.image_text8.text_offset)[0..str_len], fmt, args) catch unreachable).len;
     std.debug.assert(final_len == str_len);
-    try common.sendOne(sock, sequence, msg);
+    try x11.ext.sendOne(sock, sequence, msg);
 }
 
 fn openAndQueryFont(
@@ -500,12 +499,12 @@ fn openAndQueryFont(
         const msg = try allocator.alloc(u8, x11.open_font.getLen(font_name.len));
         defer allocator.free(msg);
         x11.open_font.serialize(msg.ptr, font_id, font_name.lenCast(u16));
-        try common.sendOne(sock, sequence, msg);
+        try x11.ext.sendOne(sock, sequence, msg);
     }
     {
         var msg: [x11.query_font.len]u8 = undefined;
         x11.query_font.serialize(&msg, font_id.fontable());
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 }
 

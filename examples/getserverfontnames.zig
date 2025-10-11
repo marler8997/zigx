@@ -1,6 +1,5 @@
 const std = @import("std");
 const x11 = @import("x11");
-const common = @import("common.zig");
 
 pub const log_level = std.log.Level.info;
 
@@ -11,7 +10,7 @@ const allocator = arena.allocator();
 
 pub fn main() !void {
     try x11.wsaStartup();
-    const conn = try common.connect(allocator);
+    const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     {
@@ -26,7 +25,7 @@ pub fn main() !void {
         var reader: x11.SocketReader = .init(conn.sock);
         const msg_bytes = try x11.readOneMsgAlloc(allocator, reader.interface());
         defer allocator.free(msg_bytes);
-        const msg = try common.asReply(x11.ServerMsg.ListFonts, msg_bytes);
+        const msg = try x11.ext.asReply(x11.ServerMsg.ListFonts, msg_bytes);
         var it = msg.iterator();
         var buffer: [4096]u8 = undefined;
         var stdout = if (zig_atleast_15) std.fs.File.stdout().writer(&buffer) else std.io.bufferedWriter(std.io.getStdOut().writer());

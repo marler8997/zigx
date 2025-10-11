@@ -1,6 +1,5 @@
 const std = @import("std");
 const x11 = @import("x11");
-const common = @import("common.zig");
 
 pub const log_level = std.log.Level.info;
 
@@ -23,7 +22,7 @@ pub fn main() !u8 {
     const font_name = cmd_args[0];
 
     try x11.wsaStartup();
-    const conn = try common.connect(allocator);
+    const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     const font_id = conn.setup.fixed().resource_id_base.add(0).font();
@@ -51,7 +50,7 @@ pub fn main() !u8 {
         var reader: x11.SocketReader = .init(conn.sock);
         const msg_bytes = try x11.readOneMsgAlloc(allocator, reader.interface());
         defer allocator.free(msg_bytes);
-        const msg = try common.asReply(x11.ServerMsg.QueryFont, msg_bytes);
+        const msg = try x11.ext.asReply(x11.ServerMsg.QueryFont, msg_bytes);
         try writer.print("{}\n", .{msg});
         std.debug.assert(sequence == msg.sequence);
         const lists = msg.lists();
