@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const x = @import("x.zig");
+const x11 = @import("x.zig");
 
 pub const ExtOpcode = enum(u8) {
     get_version = 0,
@@ -23,43 +23,46 @@ pub const PositionType = enum(u8) {
     relative = 1,
 };
 
-pub const get_version = struct {
-    pub const len =
+pub fn GetVersion(
+    sink: *x11.RequestSink,
+    named: struct {
+        ext_opcode: u8,
+        wanted_major_version: u8,
+        wanted_minor_version: u16,
+    },
+) x11.Writer.Error!void {
+    const msg_len =
         2 // extension and command opcodes
         + 2 // request length
         + 1 // wanted major version
         + 1 // unused
         + 2 // wanted minor version
     ;
-    pub const Args = struct {
-        ext_opcode: u8,
-        wanted_major_version: u8,
-        wanted_minor_version: u16,
-    };
-    pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = args.ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.get_version);
-        comptime {
-            std.debug.assert(len & 0x3 == 0);
-        }
-        x.writeIntNative(u16, buf + 2, len >> 2);
-        buf[4] = args.wanted_major_version;
-        buf[5] = 0; // unused
-        x.writeIntNative(u16, buf + 6, args.wanted_minor_version);
-    }
-
-    comptime {
-        std.debug.assert(@sizeOf(Reply) == 32);
-    }
-    pub const Reply = extern struct {
-        response_type: x.ReplyKind,
-        major_version: u8,
-        sequence: u16,
-        word_len: u32, // length in 4-byte words
-        minor_version: u16,
-        unused_pad: [22]u8,
-    };
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        named.ext_opcode,
+        @intFromEnum(ExtOpcode.get_version),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        named.wanted_major_version,
+        0, // unused
+    });
+    try x11.writeInt(sink.writer, &offset, u16, named.wanted_minor_version);
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+pub const GetVersionReply = extern struct {
+    response_type: x11.ReplyKind,
+    major_version: u8,
+    sequence: u16,
+    word_len: u32, // length in 4-byte words
+    minor_version: u16,
+    unused_pad: [22]u8,
 };
+comptime {
+    std.debug.assert(@sizeOf(GetVersionReply) == 32);
+}
 
 /// Simulate input events (key presses, button presses, mouse motion).
 /// Can also simulate raw device events if `device_id` is specified.
@@ -113,42 +116,42 @@ pub const fake_input = struct {
     pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) void {
         buf[0] = ext_opcode;
         buf[1] = @intFromEnum(ExtOpcode.fake_input);
-        x.writeIntNative(u16, buf + 2, len >> 2);
+        x11.writeIntNative(u16, buf + 2, len >> 2);
 
         switch (args) {
             .key_press, .button_press => |args_value| {
                 buf[4] = @intFromEnum(args_value.event_type);
                 buf[5] = args_value.detail;
                 // unused
-                x.writeIntNative(u16, buf + 6, 0);
-                x.writeIntNative(u32, buf + 8, args_value.delay_ms);
+                x11.writeIntNative(u16, buf + 6, 0);
+                x11.writeIntNative(u32, buf + 8, args_value.delay_ms);
                 // unused root window ID
-                x.writeIntNative(u32, buf + 12, 0);
+                x11.writeIntNative(u32, buf + 12, 0);
                 // unused
-                x.writeIntNative(u64, buf + 16, 0);
+                x11.writeIntNative(u64, buf + 16, 0);
                 // unused x position
-                x.writeIntNative(i16, buf + 24, 0);
+                x11.writeIntNative(i16, buf + 24, 0);
                 // unused y position
-                x.writeIntNative(i16, buf + 26, 0);
+                x11.writeIntNative(i16, buf + 26, 0);
                 buf[28] = args_value.device_id orelse 0;
                 // unused
-                x.writeIntNative(u56, buf + 29, 0);
+                x11.writeIntNative(u56, buf + 29, 0);
             },
             .mouse_notify => |args_value| {
                 buf[4] = @intFromEnum(args_value.event_type);
                 buf[5] = @intFromEnum(args_value.detail);
                 // unused
-                x.writeIntNative(u16, buf + 6, 0);
-                x.writeIntNative(u32, buf + 8, args_value.delay_ms);
-                x.writeIntNative(u32, buf + 12, args_value.root_window_id);
+                x11.writeIntNative(u16, buf + 6, 0);
+                x11.writeIntNative(u32, buf + 8, args_value.delay_ms);
+                x11.writeIntNative(u32, buf + 12, args_value.root_window_id);
                 // unused
-                x.writeIntNative(u64, buf + 16, 0);
-                x.writeIntNative(i16, buf + 24, args_value.x_position);
-                x.writeIntNative(i16, buf + 26, args_value.y_position);
+                x11.writeIntNative(u64, buf + 16, 0);
+                x11.writeIntNative(i16, buf + 24, args_value.x_position);
+                x11.writeIntNative(i16, buf + 26, args_value.y_position);
                 // device ID is not supported yet
                 buf[28] = 0;
                 // unused
-                x.writeIntNative(u56, buf + 29, 0);
+                x11.writeIntNative(u56, buf + 29, 0);
             },
         }
     }

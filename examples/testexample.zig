@@ -72,7 +72,7 @@ fn getImageFormat(
 
 fn expectSequence(expected_sequence: u16, reply: *const x11.ServerMsg.Reply) void {
     if (expected_sequence != reply.sequence) std.debug.panic(
-        "expected reply sequence {} but got {}",
+        "expected reply sequence {} but got {f}",
         .{ expected_sequence, reply },
     );
 }
@@ -106,7 +106,10 @@ pub fn main() !u8 {
     try x11.wsaStartup();
     const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
-    var sequence: u16 = 0;
+
+    var write_buf: [4096]u8 = undefined;
+    var socket_writer = x11.socketWriter(conn.sock, &write_buf);
+    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
 
     const conn_setup_result = blk: {
         const fixed = conn.setup.fixed();
@@ -150,47 +153,44 @@ pub fn main() !u8 {
     // TODO: maybe need to call conn.setup.verify or something?
 
     const ids = Ids{ .base = conn.setup.fixed().resource_id_base };
-    {
-        var msg_buf: [x11.create_window.max_len]u8 = undefined;
-        const len = x11.create_window.serialize(&msg_buf, .{
-            .window_id = ids.window(),
-            .parent_window_id = screen.root,
-            .depth = 0, // we don't care, just inherit from the parent
-            .x = 0,
-            .y = 0,
-            .width = window_width,
-            .height = window_height,
-            .border_width = 0, // TODO: what is this?
-            .class = .input_output,
-            .visual_id = screen.root_visual,
-        }, .{
-            // .bg_pixmap = .copy_from_parent,
-            .bg_pixel = x11.rgb24To(0xbbccdd, screen.root_depth),
-            // .border_pixmap =
-            // .border_pixel = 0x01fa8ec9,
-            // .bit_gravity = .north_west,
-            // .win_gravity = .east,
-            // .backing_store = .when_mapped,
-            // .backing_planes = 0x1234,
-            // .backing_pixel = 0xbbeeeeff,
-            // .override_redirect = true,
-            // .save_under = true,
-            .event_mask = .{
-                .key_press = 1,
-                .key_release = 1,
-                .button_press = 1,
-                .button_release = 1,
-                .enter_window = 1,
-                .leave_window = 1,
-                .pointer_motion = 1,
-                .keymap_state = 1,
-                .exposure = 1,
-                .structure_notify = 1,
-            },
-            // .dont_propagate = 1,
-        });
-        try conn.sendOne(&sequence, msg_buf[0..len]);
-    }
+
+    try sink.CreateWindow(.{
+        .window_id = ids.window(),
+        .parent_window_id = screen.root,
+        .depth = 0, // we don't care, just inherit from the parent
+        .x = 0,
+        .y = 0,
+        .width = window_width,
+        .height = window_height,
+        .border_width = 0, // TODO: what is this?
+        .class = .input_output,
+        .visual_id = screen.root_visual,
+    }, .{
+        // .bg_pixmap = .copy_from_parent,
+        .bg_pixel = x11.rgb24To(0xbbccdd, screen.root_depth),
+        // .border_pixmap =
+        // .border_pixel = 0x01fa8ec9,
+        // .bit_gravity = .north_west,
+        // .win_gravity = .east,
+        // .backing_store = .when_mapped,
+        // .backing_planes = 0x1234,
+        // .backing_pixel = 0xbbeeeeff,
+        // .override_redirect = true,
+        // .save_under = true,
+        .event_mask = .{
+            .key_press = 1,
+            .key_release = 1,
+            .button_press = 1,
+            .button_release = 1,
+            .enter_window = 1,
+            .leave_window = 1,
+            .pointer_motion = 1,
+            .keymap_state = 1,
+            .exposure = 1,
+            .structure_notify = 1,
+        },
+        // .dont_propagate = 1,
+    });
 
     const double_buf = try x11.DoubleBuffer.init(
         // 8000 is arbitrary but this needs to be big enough to hold the biggest reply
@@ -205,39 +205,32 @@ pub fn main() !u8 {
     const buffer_limit = buf.half_len;
 
     // Set the window name
-    {
-        const window_name = comptime x11.Slice(u16, [*]const u8).initComptime("zigx Test Example");
-        const change_property = x11.change_property.withFormat(u8);
-        var msg_buf: [change_property.getLen(window_name.len)]u8 = undefined;
-        change_property.serialize(&msg_buf, .{
-            .mode = .replace,
-            .window_id = ids.window(),
-            .property = x11.Atom.WM_NAME,
-            .type = x11.Atom.STRING,
-            .values = window_name,
-        });
-        try conn.sendOne(&sequence, msg_buf[0..]);
-    }
+    try sink.ChangeProperty(
+        .replace,
+        ids.window(),
+        .WM_NAME,
+        .STRING,
+        u8,
+        .initComptime("zigx Test Example"),
+    );
 
     // Test `get_property` by retrieving the property we just set
-    {
-        var msg_buf: [x11.get_property.len]u8 = undefined;
-        x11.get_property.serialize(&msg_buf, .{
-            .window_id = ids.window(),
-            .property = x11.Atom.WM_NAME,
-            .type = x11.Atom.STRING,
-            .offset = 0,
-            .len = 64,
-            .delete = false,
-        });
-        try conn.sendOne(&sequence, msg_buf[0..]);
-    }
+    try sink.GetProperty(ids.window(), .{
+        .property = .WM_NAME,
+        .type = .STRING,
+        .offset = 0,
+        .len = 64,
+        .delete = false,
+    });
+    const get_window_name_sequence = sink.sequence;
+    try sink.writer.flush();
 
     var reader: x11.SocketReader = .init(conn.sock);
+
     _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
     switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
         .reply => |msg_reply| {
-            expectSequence(sequence, msg_reply);
+            expectSequence(get_window_name_sequence, msg_reply);
             const msg: *x11.get_property.Reply = @ptrCast(msg_reply);
             std.log.debug("get_property responded with: {}", .{msg});
             const opt_window_name = try msg.getValueBytes();
@@ -248,22 +241,20 @@ pub fn main() !u8 {
             }
         },
         else => |msg| {
-            std.log.err("expected a reply for `x11.get_property` but got {}", .{msg});
+            std.log.err("expected a reply for GetProperty but got {f}", .{msg});
             return error.ExpectedReplyForGetProperty;
         },
     }
 
     // Test `query_tree` by finding our own window in the list of children of the root
     // window
-    {
-        var msg_buf: [x11.query_tree.len]u8 = undefined;
-        x11.query_tree.serialize(&msg_buf, screen.root);
-        try conn.sendOne(&sequence, msg_buf[0..]);
-    }
+    try sink.QueryTree(screen.root);
+    const query_tree_sequence = sink.sequence;
+    try sink.writer.flush();
     _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
     switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
         .reply => |msg_reply| {
-            expectSequence(sequence, msg_reply);
+            expectSequence(query_tree_sequence, msg_reply);
             const msg: *x11.query_tree.Reply = @ptrCast(msg_reply);
             std.log.debug("query_tree found {d} child windows", .{msg.num_windows});
 
@@ -278,69 +269,55 @@ pub fn main() !u8 {
             std.log.debug("Found our window in query_tree response? {}", .{found_window});
         },
         else => |msg| {
-            std.log.err("expected a reply for `x11.query_tree` but got {}", .{msg});
+            std.log.err("expected a reply for `x11.query_tree` but got {f}", .{msg});
             return error.ExpectedReplyForQueryTree;
         },
     }
 
     // test creating/freeing GCs
     for (0..3) |_| {
-        {
-            var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-            const len = x11.create_gc.serialize(&msg_buf, .{
-                .gc_id = ids.bg_gc(),
-                .drawable_id = ids.window().drawable(),
-            }, .{
-                .foreground = screen.black_pixel,
-            });
-            try conn.sendOne(&sequence, msg_buf[0..len]);
-        }
-        {
-            var msg: [x11.free_gc.len]u8 = undefined;
-            x11.free_gc.serialize(&msg, ids.bg_gc());
-            try conn.sendOne(&sequence, &msg);
-        }
+        try sink.CreateGc(
+            ids.bg_gc(),
+            ids.window().drawable(),
+            .{ .foreground = screen.black_pixel },
+        );
+        try sink.writer.flush();
+        try sink.FreeGc(ids.bg_gc());
+        try sink.writer.flush();
     }
 
-    {
-        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-        const len = x11.create_gc.serialize(&msg_buf, .{
-            .gc_id = ids.bg_gc(),
-            .drawable_id = ids.window().drawable(),
-        }, .{
-            .foreground = screen.black_pixel,
-        });
-        try conn.sendOne(&sequence, msg_buf[0..len]);
-    }
-    {
-        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-        const len = x11.create_gc.serialize(&msg_buf, .{
-            .gc_id = ids.fg_gc(),
-            .drawable_id = ids.window().drawable(),
-        }, .{
+    try sink.CreateGc(
+        ids.bg_gc(),
+        ids.window().drawable(),
+        .{ .foreground = screen.black_pixel },
+    );
+    try sink.CreateGc(
+        ids.fg_gc(),
+        ids.window().drawable(),
+        .{
             .background = screen.black_pixel,
             .foreground = x11.rgb24To(0xffaadd, screen.root_depth),
             // prevent NoExposure events when we send CopyArea
             .graphics_exposures = false,
-        });
-        try conn.sendOne(&sequence, msg_buf[0..len]);
-    }
+        },
+    );
 
     // get some font information
+
     {
         const text_literal = [_]u16{'m'};
         const text = x11.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
-        var msg: [x11.query_text_extents.getLen(text.len)]u8 = undefined;
-        x11.query_text_extents.serialize(&msg, ids.fg_gc().fontable(), text);
-        try conn.sendOne(&sequence, &msg);
+        try sink.QueryTextExtents(ids.fg_gc().fontable(), text);
     }
+    const query_text_sequence = sink.sequence;
 
     const font_dims: FontDims = blk: {
+        try sink.writer.flush();
         const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
-                expectSequence(sequence, msg_reply);
+                expectSequence(query_text_sequence, msg_reply);
                 const msg: *x11.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
                 break :blk .{
                     .width = @intCast(msg.overall_width),
@@ -350,23 +327,27 @@ pub fn main() !u8 {
                 };
             },
             else => |msg| {
-                std.log.err("expected a reply but got {}", .{msg});
+                std.log.err("expected a reply but got {f}", .{msg});
                 return 1;
             },
         }
     };
 
-    const opt_render_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, "RENDER");
+    const opt_render_ext = try x11.ext.getExtensionInfo(
+        conn.sock,
+        &sink,
+        &buf,
+        x11.render.name,
+    );
     if (opt_render_ext) |render_ext| {
         const expected_version: x11.ext.ExtensionVersion = .{ .major_version = 0, .minor_version = 10 };
-        {
-            var msg: [x11.render.query_version.len]u8 = undefined;
-            x11.render.query_version.serialize(&msg, render_ext.opcode, .{
-                .major_version = expected_version.major_version,
-                .minor_version = expected_version.minor_version,
-            });
-            try conn.sendOne(&sequence, &msg);
-        }
+        try x11.render.QueryVersion(&sink, .{
+            .ext_opcode = render_ext.opcode,
+            .major_version = expected_version.major_version,
+            .minor_version = expected_version.minor_version,
+        });
+        const sequence = sink.sequence;
+        try sink.writer.flush();
         {
             const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
             try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
@@ -374,7 +355,7 @@ pub fn main() !u8 {
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
-                const msg: *x11.render.query_version.Reply = @ptrCast(msg_reply);
+                const msg: *x11.render.QueryVersionReply = @ptrCast(msg_reply);
                 std.log.info("X RENDER extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
                     std.log.err("X RENDER extension major version is {} but we expect {}", .{
@@ -394,18 +375,15 @@ pub fn main() !u8 {
                 }
             },
             else => |msg| {
-                std.log.err("expected a reply but got {}", .{msg});
+                std.log.err("expected a reply but got {f}", .{msg});
                 return 1;
             },
         }
 
         // Find some compatible picture formats for use with the X Render extension. We want
         // to find a 24-bit depth format for use with the root and our window.
-        {
-            var msg: [x11.render.query_pict_formats.len]u8 = undefined;
-            x11.render.query_pict_formats.serialize(&msg, render_ext.opcode);
-            try conn.sendOne(&sequence, &msg);
-        }
+        try x11.render.QueryPictFormats(&sink, render_ext.opcode);
+        try sink.writer.flush();
         {
             const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
             try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
@@ -434,7 +412,7 @@ pub fn main() !u8 {
                     };
                 },
                 else => |msg| {
-                    std.log.err("expected a reply but got {}", .{msg});
+                    std.log.err("expected a reply but got {f}", .{msg});
                     return 1;
                 },
             }
@@ -446,53 +424,45 @@ pub fn main() !u8 {
         // =============================================================================
         //
         // Create a picture for the root window that we will copy from in this example
-        {
-            var msg: [x11.render.create_picture.max_len]u8 = undefined;
-            const len = x11.render.create_picture.serialize(&msg, render_ext.opcode, .{
-                .picture_id = ids.picture_root(),
-                .drawable_id = screen.root.drawable(),
-                .format_id = matching_picture_format.picture_format_id,
-                .options = .{
-                    // We want to include (`.include_inferiors`) and sub-windows when we
-                    // copy from the root window. Otherwise, by default, the root window
-                    // would be clipped (`.clip_by_children`) by any sub-window on top.
-                    .subwindow_mode = .include_inferiors,
-                },
-            });
-            try conn.sendOne(&sequence, msg[0..len]);
-        }
+        try x11.render.CreatePicture(
+            &sink,
+            render_ext.opcode,
+            ids.picture_root(),
+            screen.root.drawable(),
+            matching_picture_format.picture_format_id,
+            .{
+                // We want to include (`.include_inferiors`) and sub-windows when we
+                // copy from the root window. Otherwise, by default, the root window
+                // would be clipped (`.clip_by_children`) by any sub-window on top.
+                .subwindow_mode = .include_inferiors,
+            },
+        );
 
         // Create a picture for the our window that we can copy and composite things onto
-        {
-            var msg: [x11.render.create_picture.max_len]u8 = undefined;
-            const len = x11.render.create_picture.serialize(&msg, render_ext.opcode, .{
-                .picture_id = ids.picture_window(),
-                .drawable_id = ids.window().drawable(),
-                .format_id = matching_picture_format.picture_format_id,
-                .options = .{
-                    .subwindow_mode = .include_inferiors,
-                },
-            });
-            try conn.sendOne(&sequence, msg[0..len]);
-        }
+        try x11.render.CreatePicture(
+            &sink,
+            render_ext.opcode,
+            ids.picture_window(),
+            ids.window().drawable(),
+            matching_picture_format.picture_format_id,
+            .{ .subwindow_mode = .include_inferiors },
+        );
     }
 
-    const opt_shape_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, "SHAPE");
+    const opt_shape_ext = try x11.ext.getExtensionInfo(conn.sock, &sink, &buf, "SHAPE");
     if (opt_shape_ext) |shape_ext| {
         const expected_version: x11.ext.ExtensionVersion = .{ .major_version = 1, .minor_version = 1 };
 
-        {
-            var msg: [x11.shape.query_version.len]u8 = undefined;
-            x11.shape.query_version.serialize(&msg, shape_ext.opcode);
-            try conn.sendOne(&sequence, &msg);
-        }
+        try x11.shape.QueryVersion(&sink, shape_ext.opcode);
+        const sequence = sink.sequence;
+        try sink.writer.flush();
 
         const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
-                const msg: *x11.shape.query_version.Reply = @ptrCast(msg_reply);
+                const msg: *x11.shape.QueryVersionReply = @ptrCast(msg_reply);
                 std.log.info("X SHAPE extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
                     std.log.err("X SHAPE extension major version is {} but we expect {}", .{
@@ -512,29 +482,29 @@ pub fn main() !u8 {
                 }
             },
             else => |msg| {
-                std.log.err("expected a reply but got {}", .{msg});
+                std.log.err("expected a reply but got {f}", .{msg});
                 return 1;
             },
         }
     }
 
-    const opt_test_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, "XTEST");
+    const opt_test_ext = try x11.ext.getExtensionInfo(conn.sock, &sink, &buf, "XTEST");
     if (opt_test_ext) |test_ext| {
         const expected_version: x11.ext.ExtensionVersion = .{ .major_version = 2, .minor_version = 2 };
-        {
-            var msg: [x11.testext.get_version.len]u8 = undefined;
-            x11.testext.get_version.serialize(&msg, .{
-                .ext_opcode = test_ext.opcode,
-                .wanted_major_version = expected_version.major_version,
-                .wanted_minor_version = expected_version.minor_version,
-            });
-            try conn.sendOne(&sequence, &msg);
-        }
+
+        try x11.testext.GetVersion(&sink, .{
+            .ext_opcode = test_ext.opcode,
+            .wanted_major_version = expected_version.major_version,
+            .wanted_minor_version = expected_version.minor_version,
+        });
+        const sequence = sink.sequence;
+        try sink.writer.flush();
+
         _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
-                const msg: *x11.testext.get_version.Reply = @ptrCast(msg_reply);
+                const msg: *x11.testext.GetVersionReply = @ptrCast(msg_reply);
                 std.log.info("XTEST extension: version {}.{}", .{ msg.major_version, msg.minor_version });
                 if (msg.major_version != expected_version.major_version) {
                     std.log.err("XTEST extension major version is {} but we expect {}", .{
@@ -554,17 +524,13 @@ pub fn main() !u8 {
                 }
             },
             else => |msg| {
-                std.log.err("expected a reply but got {}", .{msg});
+                std.log.err("expected a reply but got {f}", .{msg});
                 return 1;
             },
         }
     }
 
-    {
-        var msg: [x11.map_window.len]u8 = undefined;
-        x11.map_window.serialize(&msg, ids.window());
-        try conn.sendOne(&sequence, &msg);
-    }
+    try sink.MapWindow(ids.window());
 
     // Send a fake mouse left-click event
     // if (opt_test_ext) |test_ext| {
@@ -595,22 +561,18 @@ pub fn main() !u8 {
     //     }
     // }
 
-    {
-        // This will probably happen by default when you `map_window` (I'm guessing it
-        // depends on your window manager) but we can be extra annoying and always bring
-        // the window to the front (just testing this request out).
-        var msg: [x11.configure_window.max_len]u8 = undefined;
-        const len = x11.configure_window.serialize(&msg, .{
-            .window_id = ids.window(),
-        }, .{
-            .stack_mode = .above,
-        });
-        try conn.sendOne(&sequence, msg[0..len]);
-    }
+    // This will probably happen by default when you `map_window` (I'm guessing it
+    // depends on your window manager) but we can be extra annoying and always bring
+    // the window to the front (just testing this request out).
+    try sink.ConfigureWindow(ids.window(), .{
+        .stack_mode = .above,
+    });
 
     var maybe_get_img_sequence: ?u16 = null;
 
     while (true) {
+        try sink.writer.flush();
+
         {
             const recv_buf = buf.nextReadBuffer();
             if (recv_buf.len == 0) {
@@ -635,7 +597,7 @@ pub fn main() !u8 {
             //buf.resetIfEmpty();
             switch (x11.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
-                    std.log.err("Received X error: {}", .{msg});
+                    std.log.err("Received X error: {f}", .{msg});
                     return 1;
                 },
                 .reply => |msg| {
@@ -649,7 +611,7 @@ pub fn main() !u8 {
                     }
 
                     if (!handled) {
-                        std.debug.panic("unexpected reply {}", .{msg});
+                        std.debug.panic("unexpected reply {f}", .{msg});
                     }
                 },
                 .generic_extension_event => |msg| {
@@ -685,8 +647,7 @@ pub fn main() !u8 {
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
                     try render(
-                        conn.sock,
-                        &sequence,
+                        &sink,
                         screen.root_depth,
                         conn_setup_result.image_format,
                         ids,
@@ -696,10 +657,9 @@ pub fn main() !u8 {
                     );
 
                     if (maybe_get_img_sequence == null) {
-                        var get_image_msg: [x11.get_image.len]u8 = undefined;
-                        x11.get_image.serialize(&get_image_msg, .{
+                        try sink.GetImage(.{
                             .format = .z_pixmap,
-                            .drawable_id = ids.window().drawable(),
+                            .drawable = ids.window().drawable(),
                             // Coords match where we drew the test image
                             .x = 100,
                             .y = 20,
@@ -707,8 +667,7 @@ pub fn main() !u8 {
                             .height = test_image.height,
                             .plane_mask = 0xffffffff,
                         });
-                        try conn.sendOne(&sequence, &get_image_msg);
-                        maybe_get_img_sequence = sequence;
+                        maybe_get_img_sequence = sink.sequence;
                     }
                 },
                 .mapping_notify => |msg| {
@@ -751,96 +710,82 @@ const FontDims = struct {
 };
 
 fn render(
-    sock: std.posix.socket_t,
-    sequence: *u16,
+    sink: *x11.RequestSink,
     depth: u8,
     image_format: ImageFormat,
     ids: Ids,
     font_dims: FontDims,
     opt_render_ext: ?x11.ext.ExtensionInfo,
 ) !void {
-    {
-        var msg: [x11.poly_fill_rectangle.getLen(1)]u8 = undefined;
-        x11.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = ids.window().drawable(),
-            .gc_id = ids.bg_gc(),
-        }, &[_]x11.Rectangle{
+    try sink.PolyFillRectangle(
+        ids.window().drawable(),
+        ids.bg_gc(),
+        .initComptime(&[_]x11.Rectangle{
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
-        });
-        try x11.ext.sendOne(sock, sequence, &msg);
-    }
+        }),
+    );
+    try sink.ClearArea(ids.window(), .{
+        .x = 150,
+        .y = 150,
+        .width = 100,
+        .height = 100,
+    }, .{ .exposures = false });
+    try sink.ChangeGc(ids.fg_gc(), .{
+        .foreground = x11.rgb24To(0xffaadd, depth),
+    });
+
     {
-        var msg: [x11.clear_area.len]u8 = undefined;
-        x11.clear_area.serialize(&msg, false, ids.window(), .{
-            .x = 150,
-            .y = 150,
-            .width = 100,
-            .height = 100,
-        });
-        try x11.ext.sendOne(sock, sequence, &msg);
-    }
-
-    try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0xffaadd, depth));
-    {
-        const text_literal: []const u8 = "ImageText8";
-        const text: x11.Slice(u8, [*]const u8) = comptime .initComptime(text_literal);
-        var msg: [x11.image_text8.getLen(text.len)]u8 = undefined;
-
-        const text_width = font_dims.width * text_literal.len;
-
-        x11.image_text8.serialize(&msg, text, .{
-            .drawable_id = ids.window().drawable(),
-            .gc_id = ids.fg_gc(),
-            .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
-            .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
-        });
-        try x11.ext.sendOne(sock, sequence, &msg);
-    }
-    {
-        const text_literal: []const u8 = "PolyText8";
-        const items = comptime [_]x11.TextItem8{
-            .{ .text_element = .{ .delta = 0, .string = .initComptime(text_literal) } },
-        };
-        var msg: [x11.poly_text8.getLen(&items)]u8 = undefined;
-
-        const text_width = font_dims.width * text_literal.len;
-
-        x11.poly_text8.serialize(&msg, &items, .{
-            .drawable_id = ids.window().drawable(),
-            .gc_id = ids.fg_gc(),
-            .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
-            .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent + font_dims.height + 1,
-        });
-        try x11.ext.sendOne(sock, sequence, &msg);
+        const text = "ImageText8";
+        const text_width = font_dims.width * text.len;
+        try sink.ImageText8(
+            ids.window().drawable(),
+            ids.fg_gc(),
+            .{
+                .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
+                .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
+            },
+            .initComptime(text),
+        );
     }
 
-    try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0x00ff00, depth));
     {
-        const rectangles = [_]x11.Rectangle{
+        const text: []const u8 = "PolyText8";
+        const text_width = font_dims.width * text.len;
+        try sink.PolyText8(
+            ids.window().drawable(),
+            ids.fg_gc(),
+            .{
+                .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
+                .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent + font_dims.height + 1,
+            },
+            &[_]x11.TextItem8{
+                .{ .text_element = .{ .delta = 0, .string = .initComptime(text) } },
+            },
+        );
+    }
+    try sink.ChangeGc(ids.fg_gc(), .{
+        .foreground = x11.rgb24To(0x00ff00, depth),
+    });
+    try sink.PolyFillRectangle(
+        ids.window().drawable(),
+        ids.fg_gc(),
+        .initComptime(&[_]x11.Rectangle{
             .{ .x = 20, .y = 20, .width = 15, .height = 15 },
             .{ .x = 40, .y = 20, .width = 15, .height = 15 },
-        };
-        var msg: [x11.poly_fill_rectangle.getLen(rectangles.len)]u8 = undefined;
-        x11.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = ids.window().drawable(),
-            .gc_id = ids.fg_gc(),
-        }, &rectangles);
-        try x11.ext.sendOne(sock, sequence, &msg);
-    }
-    try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0x0000ff, depth));
-    {
-        const rectangles = [_]x11.Rectangle{
+        }),
+    );
+    try sink.ChangeGc(ids.fg_gc(), .{
+        .foreground = x11.rgb24To(0x0000ff, depth),
+    });
+    try sink.PolyRectangle(
+        ids.window().drawable(),
+        ids.fg_gc(),
+        .initComptime(&[_]x11.Rectangle{
             .{ .x = 60, .y = 20, .width = 15, .height = 15 },
             .{ .x = 80, .y = 20, .width = 15, .height = 15 },
-        };
-        var msg: [x11.poly_rectangle.getLen(rectangles.len)]u8 = undefined;
-        x11.poly_rectangle.serialize(&msg, .{
-            .drawable_id = ids.window().drawable(),
-            .gc_id = ids.fg_gc(),
-        }, &rectangles);
-        try x11.ext.sendOne(sock, sequence, &msg);
-    }
-
+        }),
+    );
+    try sink.writer.flush();
     const test_image_scanline_len = blk: {
         const bytes_per_pixel = image_format.bits_per_pixel / 8;
         std.debug.assert(bytes_per_pixel <= test_image.max_bytes_per_pixel);
@@ -854,17 +799,9 @@ fn render(
     std.debug.assert(test_image_data_len <= test_image.max_data_len);
 
     {
-        var put_image_msg: [x11.put_image.getLen(test_image.max_data_len)]u8 = undefined;
-        populateTestImage(
-            image_format,
-            test_image.width,
-            test_image.height,
-            test_image_scanline_len,
-            put_image_msg[x11.put_image.data_offset..],
-        );
-        x11.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
+        var offset = try sink.PutImageStart(.{
             .format = .z_pixmap,
-            .drawable_id = ids.window().drawable(),
+            .drawable = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
             .width = test_image.width,
             .height = test_image.height,
@@ -872,24 +809,29 @@ fn render(
             .y = 20,
             .left_pad = 0,
             .depth = image_format.depth,
-        });
-        try x11.ext.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
+        }, test_image_data_len);
+        try writeTestImage(
+            image_format,
+            test_image.width,
+            test_image.height,
+            test_image_scanline_len,
+            sink.writer,
+        );
+        offset += @as(usize, test_image.height) * @as(usize, test_image_scanline_len);
+        try sink.PutImageFinish(test_image_data_len, offset);
+    }
 
-        // test a pixmap
-        {
-            var msg: [x11.create_pixmap.len]u8 = undefined;
-            x11.create_pixmap.serialize(&msg, .{
-                .id = ids.pixmap(),
-                .drawable_id = ids.window().drawable(),
-                .depth = image_format.depth,
-                .width = test_image.width,
-                .height = test_image.height,
-            });
-            try x11.ext.sendOne(sock, sequence, &msg);
-        }
-        x11.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
+    // test a pixmap
+    try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
+        .depth = image_format.depth,
+        .width = test_image.width,
+        .height = test_image.height,
+    });
+
+    {
+        var offset = try sink.PutImageStart(.{
             .format = .z_pixmap,
-            .drawable_id = ids.pixmap().drawable(),
+            .drawable = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
             .width = test_image.width,
             .height = test_image.height,
@@ -897,62 +839,50 @@ fn render(
             .y = 0,
             .left_pad = 0,
             .depth = image_format.depth,
-        });
-        try x11.ext.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
-
-        {
-            var msg: [x11.copy_area.len]u8 = undefined;
-            x11.copy_area.serialize(&msg, .{
-                .src_drawable_id = ids.pixmap().drawable(),
-                .dst_drawable_id = ids.window().drawable(),
-                .gc_id = ids.fg_gc(),
-                .src_x = 0,
-                .src_y = 0,
-                .dst_x = 120,
-                .dst_y = 20,
-                .width = test_image.width,
-                .height = test_image.height,
-            });
-            try x11.ext.sendOne(sock, sequence, &msg);
-        }
-
-        {
-            var msg: [x11.free_pixmap.len]u8 = undefined;
-            x11.free_pixmap.serialize(&msg, ids.pixmap());
-            try x11.ext.sendOne(sock, sequence, &msg);
-        }
+        }, test_image_data_len);
+        try writeTestImage(
+            image_format,
+            test_image.width,
+            test_image.height,
+            test_image_scanline_len,
+            sink.writer,
+        );
+        offset += @as(usize, test_image.height) * @as(usize, test_image_scanline_len);
+        try sink.PutImageFinish(test_image_data_len, offset);
     }
+
+    try sink.CopyArea(.{
+        .src_drawable = ids.pixmap().drawable(),
+        .dst_drawable = ids.window().drawable(),
+        .gc = ids.fg_gc(),
+        .src_x = 0,
+        .src_y = 0,
+        .dst_x = 120,
+        .dst_y = 20,
+        .width = test_image.width,
+        .height = test_image.height,
+    });
+
+    try sink.FreePixmap(ids.pixmap());
 
     if (opt_render_ext) |render_ext| {
         // Capture a small 100x100 screenshot of the top-left of the root window and
         // composite it onto our window.
-        {
-            var msg: [x11.render.composite.len]u8 = undefined;
-            x11.render.composite.serialize(&msg, render_ext.opcode, .{
-                .picture_operation = .over,
-                .src_picture_id = ids.picture_root(),
-                .mask_picture_id = x11.render.Picture.none,
-                .dst_picture_id = ids.picture_window(),
-                .src_x = 0,
-                .src_y = 0,
-                .mask_x = 0,
-                .mask_y = 0,
-                .dst_x = 50,
-                .dst_y = 50,
-                .width = 100,
-                .height = 100,
-            });
-            try x11.ext.sendOne(sock, sequence, &msg);
-        }
+        try x11.render.Composite(sink, render_ext.opcode, .{
+            .picture_operation = .over,
+            .src_picture = ids.picture_root(),
+            .mask_picture = x11.render.Picture.none,
+            .dst_picture = ids.picture_window(),
+            .src_x = 0,
+            .src_y = 0,
+            .mask_x = 0,
+            .mask_y = 0,
+            .dst_x = 50,
+            .dst_y = 50,
+            .width = 100,
+            .height = 100,
+        });
     }
-}
-
-fn changeGcColor(sock: std.posix.socket_t, sequence: *u16, gc_id: x11.GraphicsContext, color: u32) !void {
-    var msg_buf: [x11.change_gc.max_len]u8 = undefined;
-    const len = x11.change_gc.serialize(&msg_buf, gc_id, .{
-        .foreground = color,
-    });
-    try x11.ext.sendOne(sock, sequence, msg_buf[0..len]);
 }
 
 fn getTestImagePixel(row: usize) u24 {
@@ -961,44 +891,50 @@ fn getTestImagePixel(row: usize) u24 {
     return 0xff;
 }
 
-fn populateTestImage(
+fn writeTestImage(
     image_format: ImageFormat,
     width: u16,
     height: u16,
     stride: usize,
-    data: []u8,
-) void {
+    writer: *x11.Writer,
+) x11.Writer.Error!void {
+    if ((image_format.bits_per_pixel % 8) != 0) @panic("todo");
+    const row_pixel_size = @divExact(image_format.bits_per_pixel, 8) * width;
+    std.debug.assert(stride >= row_pixel_size);
+    const row_padding = stride - row_pixel_size;
+
+    const pixel_padding_size = (image_format.bits_per_pixel - image_format.depth) / 8;
+
     var row: usize = 0;
     while (row < height) : (row += 1) {
-        var data_off: usize = row * stride;
-
         const color: u24 = getTestImagePixel(row);
 
         var col: usize = 0;
         while (col < width) : (col += 1) {
             switch (image_format.depth) {
-                16 => std.mem.writeInt(
+                // currently assumes bpp is 16
+                16 => try writer.writeInt(
                     u16,
-                    data[data_off..][0..2],
                     x11.rgb24To16(color),
                     image_format.endian,
                 ),
-                24 => std.mem.writeInt(
+                // currently assumes bpp is 24
+                24 => try writer.writeInt(
                     u24,
-                    data[data_off..][0..3],
                     color,
                     image_format.endian,
                 ),
-                32 => std.mem.writeInt(
+                // currently assumes bpp is 32
+                32 => try writer.writeInt(
                     u32,
-                    data[data_off..][0..4],
                     x11.rgb24To(color, 32),
                     image_format.endian,
                 ),
                 else => std.debug.panic("TODO: implement image depth {}", .{image_format.depth}),
             }
-            data_off += (image_format.bits_per_pixel / 8);
+            try writer.splatByteAll(0, pixel_padding_size);
         }
+        try writer.splatByteAll(0, row_padding);
     }
 }
 

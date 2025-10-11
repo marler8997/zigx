@@ -21,51 +21,38 @@ pub const Reply = struct {
         allocator.free(self.syms);
     }
 };
-// TODO: use a generic X connection rather than sock
 // request the keymap from the server.
 // this function sends a messages and expects a reply to that message so this must
 // be done before registering for any asynchronouse events from the server.
 pub fn request(
     allocator: std.mem.Allocator,
-    sock: posix.socket_t,
-    sequence: *u16,
+    sink: *x11.RequestSink,
+    reader: *x11.Reader,
     fixed: *const x11.ConnectSetup.Fixed,
 ) !Reply {
     const keycode_count: u8 = fixed.max_keycode - fixed.min_keycode + 1;
 
-    {
-        var msg: [x11.get_keyboard_mapping.len]u8 = undefined;
-        x11.get_keyboard_mapping.serialize(&msg, fixed.min_keycode, keycode_count);
-        try sendOne(sock, sequence, &msg);
-    }
+    try sink.GetKeyboardMapping(fixed.min_keycode, keycode_count);
+    const sequence = sink.sequence;
+    try sink.writer.flush();
 
-    var header: [32]u8 align(4) = undefined;
-    var reader: x11.SocketReader = .init(sock);
-    try x11.readFull(reader.interface(), &header);
-
-    {
-        const generic: *x11.ServerMsg.Generic = @ptrCast(&header);
-        if (generic.kind != .reply) {
-            std.log.err("GetKeyboardMapping failed, expected 'reply' but got '{}': {}", .{
-                generic.kind,
-                generic,
-            });
-            return error.UnexpectedXServerReply;
-        }
-    }
-
-    const reply: *x11.ServerMsg.GetKeyboardMapping = @ptrCast(&header);
-    const syms_len = x11.readIntNative(u32, header[4..]);
-    std.debug.assert(@as(usize, reply.syms_per_code) * @as(usize, keycode_count) == syms_len);
-
-    const syms = try allocator.alloc(u32, syms_len);
+    const msg1 = try x11.read1(reader);
+    if (msg1.kind != .Reply) std.debug.panic(
+        "expected Reply but got {f}",
+        .{msg1.readFmt(reader)},
+    );
+    const reply = try msg1.read2(.Reply, reader);
+    if (reply.sequence != sequence) std.debug.panic(
+        "expected sequence {} but got {f}",
+        .{ sequence, reply.readFmt(reader) },
+    );
+    try reader.discardAll(24);
+    const syms = try allocator.alloc(u32, reply.word_count);
     errdefer allocator.free(syms);
-
-    try x11.readFull(reader.interface(), @as([*]u8, @ptrCast(syms.ptr))[0 .. syms_len * 4]);
-
-    return Reply{
+    try reader.readSliceAll(@as([*]u8, @ptrCast(syms.ptr))[0 .. syms.len * 4]);
+    return .{
         .keycode_count = keycode_count,
-        .syms_per_code = reply.syms_per_code,
+        .syms_per_code = reply.flexible,
         .syms = syms,
     };
 }

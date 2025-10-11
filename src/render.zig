@@ -3,6 +3,8 @@ const std = @import("std");
 
 const x11 = @import("x.zig");
 
+pub const name = "RENDER";
+
 pub const Picture = enum(u32) {
     none = 0,
     _,
@@ -157,38 +159,38 @@ pub const PictureOperation = enum(u8) {
     hsl_luminosity = 62,
 };
 
-pub const query_version = struct {
-    pub const len =
-        2 // extension and command opcodes
-        + 2 // request length
-        + 4 // client major version
-        + 4 // client minor version
-    ;
-    pub const Args = struct {
+pub fn QueryVersion(
+    sink: *x11.RequestSink,
+    named: struct {
+        ext_opcode: u8,
         major_version: u32,
         minor_version: u32,
-    };
-    pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) void {
-        buf[0] = ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.query_version);
-        std.debug.assert(len & 0x3 == 0);
-        x11.writeIntNative(u16, buf + 2, len >> 2);
-        x11.writeIntNative(u32, buf + 4, args.major_version);
-        x11.writeIntNative(u32, buf + 8, args.minor_version);
-    }
-    pub const Reply = extern struct {
-        response_type: x11.ReplyKind,
-        unused_pad: u8,
-        sequence: u16,
-        word_len: u32,
-        major_version: u32,
-        minor_version: u32,
-        reserved: [15]u8,
-    };
-    comptime {
-        std.debug.assert(@sizeOf(Reply) == 32);
-    }
+    },
+) x11.Writer.Error!void {
+    const msg_len = 12;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        named.ext_opcode,
+        @intFromEnum(ExtOpcode.query_version),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x11.writeInt(sink.writer, &offset, u32, named.major_version);
+    try x11.writeInt(sink.writer, &offset, u32, named.minor_version);
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+pub const QueryVersionReply = extern struct {
+    response_type: x11.ReplyKind,
+    unused_pad: u8,
+    sequence: u16,
+    word_len: u32,
+    major_version: u32,
+    minor_version: u32,
+    reserved: [15]u8,
 };
+comptime {
+    std.debug.assert(@sizeOf(QueryVersionReply) == 32);
+}
 
 pub const PictureType = enum(u8) {
     indexed = 0,
@@ -219,16 +221,6 @@ comptime {
 }
 
 pub const query_pict_formats = struct {
-    pub const len =
-        2 // extension and command opcodes
-        + 2 // request length
-    ;
-    pub fn serialize(buf: [*]u8, ext_opcode: u8) void {
-        buf[0] = ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.query_pict_formats);
-        x11.writeIntNative(u16, buf + 2, len >> 2);
-    }
-
     pub const Reply = extern struct {
         response_type: x11.ReplyKind,
         unused_pad: u8,
@@ -254,6 +246,57 @@ pub const query_pict_formats = struct {
     }
 };
 
+pub fn CreatePicture(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    picture_id: Picture,
+    drawable_id: x11.Drawable,
+    format_id: PictureFormat,
+    options: create_picture.Options,
+) x11.Writer.Error!void {
+    const msg = inspectCreatePicture(&options);
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.create_picture),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(picture_id));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(drawable_id));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(format_id));
+    try x11.writeInt(sink.writer, &offset, u32, msg.option_mask);
+    inline for (std.meta.fields(create_picture.Options)) |field| {
+        if (!x11.isDefaultValue(&options, field)) {
+            try x11.writeInt(sink.writer, &offset, u32, x11.optionToU32(@field(options, field.name)));
+        }
+    }
+    std.debug.assert(msg.len == offset);
+    sink.sequence +%= 1;
+}
+
+fn inspectCreatePicture(options: *const create_picture.Options) struct {
+    len: u18,
+    option_mask: u32,
+} {
+    const non_option_len =
+        2 // extension and command opcodes
+        + 2 // request length
+        + 4 // picture ID
+        + 4 // drawable ID
+        + 4 // format ID
+        + 4 // option mask
+    ;
+    var len: u18 = non_option_len;
+    var option_mask: u32 = 0;
+    inline for (std.meta.fields(create_picture.Options)) |field| {
+        if (!x11.isDefaultValue(options, field)) {
+            option_mask |= @field(create_picture.option_flag, field.name);
+            len += 4;
+        }
+    }
+    return .{ .len = len, .option_mask = option_mask };
+}
+
 pub const create_picture = struct {
     pub const Repeat = enum(u32) {
         none,
@@ -266,8 +309,8 @@ pub const create_picture = struct {
 
     pub const PolyMode = enum(u32) { precise, imprecise };
 
-    pub const create_picture_option_count = 13;
-    pub const create_picture_option_flag = struct {
+    pub const option_count = 13;
+    pub const option_flag = struct {
         pub const repeat: u32 = (1 << 0);
         pub const alpha_map: u32 = (1 << 1);
         pub const alpha_x_origin: u32 = (1 << 2);
@@ -283,7 +326,7 @@ pub const create_picture = struct {
         pub const component_alpha: u32 = (1 << 12);
     };
 
-    const CreatePictureOptions = struct {
+    const Options = struct {
         repeat: Repeat = .none,
         alpha_map: u32 = 0, // optional
         alpha_x_origin: i16 = 0,
@@ -298,52 +341,27 @@ pub const create_picture = struct {
         dither: x11.Atom = @enumFromInt(0), // optional
         component_alpha: bool = false,
     };
-
-    pub const non_option_len =
-        2 // extension and command opcodes
-        + 2 // request length
-        + 4 // picture ID
-        + 4 // drawable ID
-        + 4 // format ID
-        + 4 // option mask
-    ;
-    pub const max_len = non_option_len + (create_picture_option_count * 4);
-    pub const Args = struct {
-        picture_id: Picture,
-        drawable_id: x11.Drawable,
-        format_id: PictureFormat,
-        options: CreatePictureOptions,
-    };
-    pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) u16 {
-        buf[0] = ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.create_picture);
-        // buf[2-3] is the len, set at the end of the function
-        x11.writeIntNative(u32, buf + 4, @intFromEnum(args.picture_id));
-        x11.writeIntNative(u32, buf + 8, @intFromEnum(args.drawable_id));
-        x11.writeIntNative(u32, buf + 12, @intFromEnum(args.format_id));
-
-        var option_mask: u32 = 0;
-        var request_len: u16 = non_option_len;
-
-        inline for (std.meta.fields(CreatePictureOptions)) |field| {
-            if (!x11.isDefaultValue(args.options, field)) {
-                x11.writeIntNative(u32, buf + request_len, x11.optionToU32(@field(args.options, field.name)));
-                option_mask |= @field(create_picture_option_flag, field.name);
-                request_len += 4;
-            }
-        }
-        x11.writeIntNative(u32, buf + non_option_len - 4, option_mask);
-        x11.writeIntNative(u16, buf + 2, request_len >> 2);
-        return request_len;
-    }
 };
 
 /// Combine the src and destination pictures with the specified operation.
 ///
 /// For example, if you want to copy the src picture to the destination picture, you
 /// would use `PictureOperation.over`.
-pub const composite = struct {
-    pub const len =
+pub fn Composite(sink: *x11.RequestSink, ext_opcode: u8, named: struct {
+    picture_operation: PictureOperation,
+    src_picture: Picture,
+    mask_picture: Picture,
+    dst_picture: Picture,
+    src_x: i16,
+    src_y: i16,
+    mask_x: i16,
+    mask_y: i16,
+    dst_x: i16,
+    dst_y: i16,
+    width: u16,
+    height: u16,
+}) x11.Writer.Error!void {
+    const msg_len =
         2 // extension and command opcodes
         + 2 // request length
         + 1 // picture operation
@@ -360,36 +378,47 @@ pub const composite = struct {
         + 2 // width
         + 2 // height
     ;
-    pub const Args = struct {
-        picture_operation: PictureOperation,
-        src_picture_id: Picture,
-        mask_picture_id: Picture,
-        dst_picture_id: Picture,
-        src_x: i16,
-        src_y: i16,
-        mask_x: i16,
-        mask_y: i16,
-        dst_x: i16,
-        dst_y: i16,
-        width: u16,
-        height: u16,
-    };
-    pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) void {
-        buf[0] = ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.composite);
-        x11.writeIntNative(u16, buf + 2, len >> 2);
-        buf[4] = @intFromEnum(args.picture_operation);
-        // 3 bytes of padding
-        x11.writeIntNative(u32, buf + 8, @intFromEnum(args.src_picture_id));
-        x11.writeIntNative(u32, buf + 12, @intFromEnum(args.mask_picture_id));
-        x11.writeIntNative(u32, buf + 16, @intFromEnum(args.dst_picture_id));
-        x11.writeIntNative(i16, buf + 20, args.src_x);
-        x11.writeIntNative(i16, buf + 22, args.src_y);
-        x11.writeIntNative(i16, buf + 24, args.mask_x);
-        x11.writeIntNative(i16, buf + 26, args.mask_y);
-        x11.writeIntNative(i16, buf + 28, args.dst_x);
-        x11.writeIntNative(i16, buf + 30, args.dst_y);
-        x11.writeIntNative(u16, buf + 32, args.width);
-        x11.writeIntNative(u16, buf + 34, args.height);
-    }
-};
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.composite),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        @intFromEnum(named.picture_operation),
+        0, // padding
+        0, // padding
+        0, // padding
+    });
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.src_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.mask_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.dst_picture));
+    try x11.writeInt(sink.writer, &offset, i16, named.src_x);
+    try x11.writeInt(sink.writer, &offset, i16, named.src_y);
+    try x11.writeInt(sink.writer, &offset, i16, named.mask_x);
+    try x11.writeInt(sink.writer, &offset, i16, named.mask_y);
+    try x11.writeInt(sink.writer, &offset, i16, named.dst_x);
+    try x11.writeInt(sink.writer, &offset, i16, named.dst_y);
+    try x11.writeInt(sink.writer, &offset, u16, named.width);
+    try x11.writeInt(sink.writer, &offset, u16, named.height);
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+
+pub fn QueryPictFormats(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+) x11.Writer.Error!void {
+    const msg_len =
+        2 // extension and command opcodes
+        + 2 // request length
+    ;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.query_pict_formats),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}

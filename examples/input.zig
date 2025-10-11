@@ -42,7 +42,9 @@ pub fn main() !u8 {
     const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
-    var sequence: u16 = 0;
+    var write_buf: [4096]u8 = undefined;
+    var socket_writer = x11.socketWriter(conn.sock, &write_buf);
+    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
 
     var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
     {
@@ -56,7 +58,7 @@ pub fn main() !u8 {
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_c), Key.c);
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_l), Key.l);
 
-        const keymap = try x11.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed());
+        const keymap = try x11.keymap.request(allocator, conn.sock, &sink, conn.setup.fixed());
         defer keymap.deinit(allocator);
         std.log.info("Keymap: syms_per_code={} total_syms={}", .{ keymap.syms_per_code, keymap.syms.len });
         {
@@ -100,76 +102,62 @@ pub fn main() !u8 {
     // TODO: maybe need to call conn.setup.verify or something?
     const ids: Ids = .{ .base = conn.setup.fixed().resource_id_base };
 
-    {
-        var msg_buf: [x11.create_window.max_len]u8 = undefined;
-        const len = x11.create_window.serialize(&msg_buf, .{
-            .window_id = ids.window(),
-            .parent_window_id = screen.root,
-            .depth = 0, // dont care, inherit from parent
-            .x = 0,
-            .y = 0,
-            .width = window_width,
-            .height = window_height,
-            .border_width = 0, // TODO: what is this?
-            .class = .input_output,
-            .visual_id = screen.root_visual,
-        }, .{
-            // .bg_pixmap = .copy_from_parent,
-            .bg_pixel = bg_color,
-            // .border_pixmap =
-            // .border_pixel = 0x01fa8ec9,
-            // .bit_gravity = .north_west,
-            // .win_gravity = .east,
-            // .backing_store = .when_mapped,
-            // .backing_planes = 0x1234,
-            // .backing_pixel = 0xbbeeeeff,
-            // .override_redirect = true,
-            // .save_under = true,
-            .event_mask = .{
-                .key_press = 1,
-                .key_release = 1,
-                .button_press = 1,
-                .button_release = 1,
-                .enter_window = 1,
-                .leave_window = 1,
-                .pointer_motion = 1,
-                .keymap_state = 1,
-                .exposure = 1,
-            },
-            // .dont_propagate = 1,
-        });
-        try x11.ext.sendOne(conn.sock, &sequence, msg_buf[0..len]);
-    }
+    try sink.CreateWindow(.{
+        .window_id = ids.window(),
+        .parent_window_id = screen.root,
+        .depth = 0, // dont care, inherit from parent
+        .x = 0,
+        .y = 0,
+        .width = window_width,
+        .height = window_height,
+        .border_width = 0, // TODO: what is this?
+        .class = .input_output,
+        .visual_id = screen.root_visual,
+    }, .{
+        // .bg_pixmap = .copy_from_parent,
+        .bg_pixel = bg_color,
+        // .border_pixmap =
+        // .border_pixel = 0x01fa8ec9,
+        // .bit_gravity = .north_west,
+        // .win_gravity = .east,
+        // .backing_store = .when_mapped,
+        // .backing_planes = 0x1234,
+        // .backing_pixel = 0xbbeeeeff,
+        // .override_redirect = true,
+        // .save_under = true,
+        .event_mask = .{
+            .key_press = 1,
+            .key_release = 1,
+            .button_press = 1,
+            .button_release = 1,
+            .enter_window = 1,
+            .leave_window = 1,
+            .pointer_motion = 1,
+            .keymap_state = 1,
+            .exposure = 1,
+        },
+        // .dont_propagate = 1,
+    });
 
-    {
-        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-        const len = x11.create_gc.serialize(&msg_buf, .{
-            .gc_id = ids.bg(),
-            .drawable_id = ids.window().drawable(),
-        }, .{
-            .foreground = fg_color,
-        });
-        try x11.ext.sendOne(conn.sock, &sequence, msg_buf[0..len]);
-    }
-    {
-        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-        const len = x11.create_gc.serialize(&msg_buf, .{
-            .gc_id = ids.fg(),
-            .drawable_id = ids.window().drawable(),
-        }, .{
+    try sink.CreateGc(
+        ids.bg(),
+        ids.window().drawable(),
+        .{ .foreground = fg_color },
+    );
+    try sink.CreateGc(
+        ids.fg(),
+        ids.window().drawable(),
+        .{
             .background = bg_color,
             .foreground = fg_color,
-        });
-        try x11.ext.sendOne(conn.sock, &sequence, msg_buf[0..len]);
-    }
+        },
+    );
 
     // get some font information
     {
         const text_literal = [_]u16{'m'};
         const text = x11.Slice(u16, [*]const u16){ .ptr = &text_literal, .len = text_literal.len };
-        var msg: [x11.query_text_extents.getLen(text.len)]u8 = undefined;
-        x11.query_text_extents.serialize(&msg, ids.fg().fontable(), text);
-        try x11.ext.sendOne(conn.sock, &sequence, &msg);
+        try sink.QueryTextExtents(ids.fg().fontable(), text);
     }
 
     const double_buf = try x11.DoubleBuffer.init(
@@ -183,6 +171,7 @@ pub fn main() !u8 {
     var reader: x11.SocketReader = .init(conn.sock);
 
     const font_dims: FontDims = blk: {
+        try sink.writer.flush();
         _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
@@ -195,30 +184,24 @@ pub fn main() !u8 {
                 };
             },
             else => |msg| {
-                std.log.err("expected a reply but got {}", .{msg});
+                std.log.err("expected a reply but got {f}", .{msg});
                 return 1;
             },
         }
     };
 
-    {
-        var msg: [x11.map_window.len]u8 = undefined;
-        x11.map_window.serialize(&msg, ids.window());
-        try x11.ext.sendOne(conn.sock, &sequence, &msg);
-    }
+    try sink.MapWindow(ids.window());
+
     var state = State{};
 
-    {
-        const name = comptime x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
-        var msg: [x11.query_extension.getLen(name.len)]u8 = undefined;
-        x11.query_extension.serialize(&msg, name);
-        try x11.ext.sendOne(conn.sock, &sequence, &msg);
-        state.xinput = .{ .sent_extension_query = .{
-            .sequence = sequence,
-        } };
-    }
+    try sink.QueryExtension(.initComptime("XInputExtension"));
+    state.xinput = .{ .sent_extension_query = .{
+        .sequence = sink.sequence,
+    } };
 
     while (true) {
+        try sink.writer.flush();
+
         {
             const recv_buf = buf.nextReadBuffer();
             if (recv_buf.len == 0) {
@@ -243,13 +226,12 @@ pub fn main() !u8 {
             //buf.resetIfEmpty();
             switch (x11.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
-                    std.log.err("Received X error: {}", .{msg});
+                    std.log.err("X11Error: {f}", .{msg});
                     return 1;
                 },
                 .reply => |msg| {
                     const handled = try handleReply(
-                        conn.sock,
-                        &sequence,
+                        &sink,
                         &state,
                         msg,
                         screen.root,
@@ -259,11 +241,11 @@ pub fn main() !u8 {
                         font_dims,
                     );
                     if (!handled) {
-                        std.log.info("unexpected reply message {}", .{msg});
+                        std.log.info("unexpected X11 reply: {f}", .{msg});
                         std.process.exit(0xff);
                     }
                     // just always do another render, it's *probably* needed
-                    try render(conn.sock, &sequence, ids.window(), ids.bg(), ids.fg(), font_dims, state);
+                    try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
                 },
                 .generic_extension_event => |msg| {
                     if (state.xinput == .enabled and msg.ext_opcode == state.xinput.enabled.input_extension_info.opcode) {
@@ -282,27 +264,25 @@ pub fn main() !u8 {
                     var do_render = true;
                     if (keycode_map.get(msg.keycode)) |key| switch (key) {
                         .g => {
-                            //try state.toggleGrab(conn.sock, screen.root);
-                            try state.toggleGrab(conn.sock, &sequence, ids.window());
+                            //try state.toggleGrab(&sink, screen.root);
+                            try state.toggleGrab(&sink, ids.window());
                         },
-                        .w => {
-                            try warpPointer(conn.sock, &sequence);
-                        },
+                        .w => try warpPointer(&sink),
                         .c => {
                             state.confine_grab = !state.confine_grab;
                         },
                         .i => if (state.window_created) {
-                            try destroyWindow(conn.sock, &sequence, ids.childWindow());
+                            try sink.DestroyWindow(ids.childWindow());
                             state.window_created = false;
                         } else {
-                            try createWindow(conn.sock, &sequence, screen.root, ids.childWindow());
+                            try createWindow(&sink, screen.root, ids.childWindow());
                             state.window_created = true;
                         },
                         .d => {
-                            try disableInputDevice(conn.sock, &sequence, &state);
+                            try disableInputDevice(&sink, &state);
                         },
                         .l => {
-                            try listenToRawEvents(conn.sock, &sequence, &state, screen.root);
+                            try listenToRawEvents(&sink, &state, screen.root);
                         },
                         .escape => {
                             std.log.info("ESC pressed, exiting loop...", .{});
@@ -313,7 +293,7 @@ pub fn main() !u8 {
                         do_render = false;
                     }
                     if (do_render) {
-                        try render(conn.sock, &sequence, ids.window(), ids.bg(), ids.fg(), font_dims, state);
+                        try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
                     }
                 },
                 .key_release => |msg| {
@@ -338,14 +318,14 @@ pub fn main() !u8 {
                     state.pointer_root_pos.y = msg.root_y;
                     state.pointer_event_pos.x = msg.event_x;
                     state.pointer_event_pos.y = msg.event_y;
-                    try render(conn.sock, &sequence, ids.window(), ids.bg(), ids.fg(), font_dims, state);
+                    try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
                 },
                 .keymap_notify => |msg| {
                     std.log.info("keymap_state: {}", .{msg});
                 },
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
-                    try render(conn.sock, &sequence, ids.window(), ids.bg(), ids.fg(), font_dims, state);
+                    try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
                 },
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
@@ -367,8 +347,7 @@ pub fn main() !u8 {
 }
 
 fn handleReply(
-    sock: std.posix.socket_t,
-    sequence: *u16,
+    sink: *x11.RequestSink,
     state: *State,
     msg: *const x11.ServerMsg.Reply,
     root_window_id: x11.Window,
@@ -396,7 +375,7 @@ fn handleReply(
                 std.log.info("grab failed with '{s}' ({})", .{ error_msg, status });
                 state.grab = .disabled;
             }
-            try render(sock, sequence, window_id, bg_gc_id, fg_gc_id, font_dims, state.*);
+            try render(sink, window_id, bg_gc_id, fg_gc_id, font_dims, state.*);
             return true; // handled
         },
         .enabled => {},
@@ -411,9 +390,7 @@ fn handleReply(
             } else {
                 std.debug.assert(msg_ext.present == 1);
                 const name = comptime x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
-                var get_version_msg: [x11.inputext.get_extension_version.getLen(name.len)]u8 = undefined;
-                x11.inputext.get_extension_version.serialize(&get_version_msg, msg_ext.major_opcode, name);
-                try x11.ext.sendOne(sock, sequence, &get_version_msg);
+                try x11.inputext.GetExtensionVersion(sink, msg_ext.major_opcode, name);
 
                 // Useful for debugging
                 std.log.info("{f} extension: opcode={} base_error_code={}", .{
@@ -423,7 +400,7 @@ fn handleReply(
                 });
 
                 state.xinput = .{ .get_version = .{
-                    .sequence = sequence.*,
+                    .sequence = sink.sequence,
                     .input_extension_info = .{
                         .extension_name = "XInputExtension",
                         .opcode = msg_ext.major_opcode,
@@ -435,7 +412,7 @@ fn handleReply(
         },
         .get_version => |info| if (msg.sequence == info.sequence) {
             const opcode = msg.flexible;
-            const msg_ext: *const x11.inputext.get_extension_version.Reply = @ptrCast(msg);
+            const msg_ext: *const x11.inputext.GetExtensionVersionReply = @ptrCast(msg);
             std.log.debug("get_extension_version returned {}", .{msg_ext});
             if (opcode != @intFromEnum(x11.inputext.ExtOpcode.get_extension_version))
                 std.debug.panic("invalid opcode in reply {}, expected {}", .{ opcode, @intFromEnum(x11.inputext.ExtOpcode.get_extension_version) });
@@ -454,10 +431,10 @@ fn handleReply(
             // resume any operations that someone requested while we were waiting for the
             // extension to be available.
             if (state.disable_input_device == .extension_not_available_yet) {
-                try disableInputDevice(sock, sequence, state);
+                try disableInputDevice(sink, state);
             }
             if (state.listen_to_raw_events == .extension_not_available_yet) {
-                try listenToRawEvents(sock, sequence, state, root_window_id);
+                try listenToRawEvents(sink, state, root_window_id);
             }
 
             return true; // handled
@@ -490,14 +467,12 @@ fn handleReply(
 
             if (selected_pointer_id) |pointer_id| {
                 const name = comptime x11.Slice(u16, [*]const u8).initComptime("Device Enabled");
-                var intern_atom_msg: [x11.intern_atom.getLen(name.len)]u8 = undefined;
-                x11.intern_atom.serialize(&intern_atom_msg, .{
+                try sink.InternAtom(.{
                     .only_if_exists = false,
                     .name = name,
                 });
-                try x11.ext.sendOne(sock, sequence, &intern_atom_msg);
                 state.disable_input_device = .{ .intern_atom = .{
-                    .sequence = sequence.*,
+                    .sequence = sink.sequence,
                     .ext_opcode = state_info.ext_opcode,
                     .pointer_id = pointer_id,
                 } };
@@ -508,8 +483,7 @@ fn handleReply(
         },
         .intern_atom => |info| if (msg.sequence == info.sequence) {
             const atom = x11.readIntNative(u32, msg.reserve_min[0..]);
-            var get_prop_msg: [x11.inputext.get_property.len]u8 = undefined;
-            x11.inputext.get_property.serialize(&get_prop_msg, info.ext_opcode, .{
+            try x11.inputext.GetProperty(sink, info.ext_opcode, .{
                 .device_id = info.pointer_id,
                 .property = atom,
                 .type = 0,
@@ -517,9 +491,8 @@ fn handleReply(
                 .len = 0,
                 .delete = false,
             });
-            try x11.ext.sendOne(sock, sequence, &get_prop_msg);
             state.disable_input_device = .{ .get_prop = .{
-                .sequence = sequence.*,
+                .sequence = sink.sequence,
                 .ext_opcode = info.ext_opcode,
                 .pointer_id = info.pointer_id,
                 .atom = atom,
@@ -530,16 +503,13 @@ fn handleReply(
             const reply: *const x11.inputext.get_property.Reply = @ptrCast(msg);
             std.log.info("get_property returned {}", .{reply});
 
-            const change_prop_u8 = x11.inputext.change_property.withFormat(u8);
-            var change_prop_msg: [change_prop_u8.getLen(1)]u8 = undefined;
-            change_prop_u8.serialize(&change_prop_msg, info.ext_opcode, .{
+            try x11.inputext.ChangeProperty(sink, info.ext_opcode, u8, .{
                 .device_id = info.pointer_id,
                 .mode = .replace,
                 .property = info.atom,
                 .type = @intFromEnum(x11.Atom.INTEGER),
                 .values = x11.Slice(u16, [*]const u8).initComptime(&[_]u8{0}),
             });
-            try x11.ext.sendOne(sock, sequence, &change_prop_msg);
             state.disable_input_device = .{ .disabled = .{
                 .ext_opcode = info.ext_opcode,
                 .pointer_id = info.pointer_id,
@@ -552,10 +522,9 @@ fn handleReply(
     return false; // not handled
 }
 
-fn warpPointer(sock: std.posix.socket_t, sequence: *u16) !void {
+fn warpPointer(sink: *x11.RequestSink) !void {
     std.log.info("warping pointer 20 x 10...", .{});
-    var msg: [x11.warp_pointer.len]u8 = undefined;
-    x11.warp_pointer.serialize(&msg, .{
+    try sink.WarpPointer(.{
         .src_window = .none,
         .dst_window = .none,
         .src_x = 0,
@@ -565,66 +534,57 @@ fn warpPointer(sock: std.posix.socket_t, sequence: *u16) !void {
         .dst_x = 20,
         .dst_y = 10,
     });
-    try x11.ext.sendOne(sock, sequence, &msg);
 }
 
-fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.Window, window_id: x11.Window) !void {
-    {
-        var msg_buf: [x11.create_window.max_len]u8 = undefined;
-        const len = x11.create_window.serialize(&msg_buf, .{
-            .window_id = window_id,
-            .parent_window_id = parent_window_id,
-            .depth = 0, // dont care, inherit from parent
-            .x = 0,
-            .y = 0,
-            .width = 500,
-            .height = 500,
-            .border_width = 0, // TODO: what is this?
-            .class = .input_output,
-            //.class = .input_only,
-            .visual_id = .copy_from_parent,
-        }, .{
-            //            .bg_pixmap = .copy_from_parent,
-            //            .bg_pixel = bg_color,
-            //            //.border_pixmap =
-            //            .border_pixel = 0x01fa8ec9,
-            //            .bit_gravity = .north_west,
-            //            .win_gravity = .east,
-            //            .backing_store = .when_mapped,
-            //            .backing_planes = 0x1234,
-            //            .backing_pixel = 0xbbeeeeff,
-            //            .override_redirect = true,
-            //            .save_under = true,
-            //            .event_mask =
-            //                  x11.event.key_press
-            //                | x11.event.key_release
-            //                | x11.event.button_press
-            //                | x11.event.button_release
-            //                | x11.event.enter_window
-            //                | x11.event.leave_window
-            //                | x11.event.pointer_motion
-            ////                | x11.event.pointer_motion_hint WHAT THIS DO?
-            ////                | x11.event.button1_motion  WHAT THIS DO?
-            ////                | x11.event.button2_motion  WHAT THIS DO?
-            ////                | x11.event.button3_motion  WHAT THIS DO?
-            ////                | x11.event.button4_motion  WHAT THIS DO?
-            ////                | x11.event.button5_motion  WHAT THIS DO?
-            ////                | x11.event.button_motion  WHAT THIS DO?
-            //                | x11.event.keymap_state
-            //                | x11.event.exposure
-            //                ,
-            ////            .dont_propagate = 1,
-        });
-        try x11.ext.sendOne(sock, sequence, msg_buf[0..len]);
-    }
-    {
-        var msg: [x11.map_window.len]u8 = undefined;
-        x11.map_window.serialize(&msg, window_id);
-        try x11.ext.sendOne(sock, sequence, &msg);
-    }
+fn createWindow(sink: *x11.RequestSink, parent_window_id: x11.Window, window_id: x11.Window) !void {
+    try sink.CreateWindow(.{
+        .window_id = window_id,
+        .parent_window_id = parent_window_id,
+        .depth = 0, // dont care, inherit from parent
+        .x = 0,
+        .y = 0,
+        .width = 500,
+        .height = 500,
+        .border_width = 0, // TODO: what is this?
+        .class = .input_output,
+        //.class = .input_only,
+        .visual_id = .copy_from_parent,
+    }, .{
+        // .bg_pixmap = .copy_from_parent,
+        // .bg_pixel = bg_color,
+        // //.border_pixmap =
+        // .border_pixel = 0x01fa8ec9,
+        // .bit_gravity = .north_west,
+        // .win_gravity = .east,
+        // .backing_store = .when_mapped,
+        // .backing_planes = 0x1234,
+        // .backing_pixel = 0xbbeeeeff,
+        // .override_redirect = true,
+        // .save_under = true,
+        // .event_mask =
+        //     x11.event.key_press
+        //     | x11.event.key_release
+        //     | x11.event.button_press
+        //     | x11.event.button_release
+        //     | x11.event.enter_window
+        //     | x11.event.leave_window
+        //     | x11.event.pointer_motion
+        //     | x11.event.pointer_motion_hint WHAT THIS DO?
+        //     | x11.event.button1_motion  WHAT THIS DO?
+        //     | x11.event.button2_motion  WHAT THIS DO?
+        //     | x11.event.button3_motion  WHAT THIS DO?
+        //     | x11.event.button4_motion  WHAT THIS DO?
+        //     | x11.event.button5_motion  WHAT THIS DO?
+        //     | x11.event.button_motion  WHAT THIS DO?
+        //     | x11.event.keymap_state
+        //     | x11.event.exposure
+        //     ,
+        // .dont_propagate = 1,
+    });
+    try sink.MapWindow(window_id);
 }
 
-fn listenToRawEvents(sock: std.posix.socket_t, sequence: *u16, state: *State, root_window_id: x11.Window) !void {
+fn listenToRawEvents(sink: *x11.RequestSink, state: *State, root_window_id: x11.Window) !void {
     const extension_missing_fmt = "unable to listen to raw events, XInputExtension is missing";
     switch (state.listen_to_raw_events) {
         .initial, .extension_not_available_yet => {
@@ -646,12 +606,7 @@ fn listenToRawEvents(sock: std.posix.socket_t, sequence: *u16, state: *State, ro
             }};
 
             const input_ext_opcode = state.xinput.enabled.input_extension_info.opcode;
-            var message_buffer: [x11.inputext.select_events.getLen(@as(u16, @intCast(event_masks.len)))]u8 = undefined;
-            const len = x11.inputext.select_events.serialize(&message_buffer, input_ext_opcode, .{
-                .window_id = root_window_id,
-                .masks = event_masks[0..],
-            });
-            try x11.ext.sendOne(sock, sequence, message_buffer[0..len]);
+            try x11.inputext.SelectEvents(sink, input_ext_opcode, root_window_id, event_masks[0..]);
 
             state.listen_to_raw_events = .enabled;
         },
@@ -660,13 +615,7 @@ fn listenToRawEvents(sock: std.posix.socket_t, sequence: *u16, state: *State, ro
     }
 }
 
-fn destroyWindow(sock: std.posix.socket_t, sequence: *u16, window_id: x11.Window) !void {
-    var msg: [x11.destroy_window.len]u8 = undefined;
-    x11.destroy_window.serialize(&msg, window_id);
-    try x11.ext.sendOne(sock, sequence, &msg);
-}
-
-fn disableInputDevice(sock: std.posix.socket_t, sequence: *u16, state: *State) !void {
+fn disableInputDevice(sink: *x11.RequestSink, state: *State) !void {
     const already_fmt = "disable input device already requested, {s}...";
     const extension_missing_fmt = "can't disable input device, XInputExtension is missing";
     switch (state.disable_input_device) {
@@ -684,11 +633,9 @@ fn disableInputDevice(sock: std.posix.socket_t, sequence: *u16, state: *State) !
             }
 
             const input_ext_opcode = state.xinput.enabled.input_extension_info.opcode;
-            var list_devices_msg: [x11.inputext.list_input_devices.len]u8 = undefined;
-            x11.inputext.list_input_devices.serialize(&list_devices_msg, input_ext_opcode);
-            try x11.ext.sendOne(sock, sequence, &list_devices_msg);
+            try x11.inputext.ListInputDevices(sink, input_ext_opcode);
             state.disable_input_device = .{ .list_devices = .{
-                .sequence = sequence.*,
+                .sequence = sink.sequence,
                 .ext_opcode = input_ext_opcode,
             } };
         },
@@ -775,12 +722,11 @@ const State = struct {
     } = .initial,
     window_created: bool = false,
 
-    fn toggleGrab(self: *State, sock: std.posix.socket_t, sequence: *u16, grab_window: x11.Window) !void {
+    fn toggleGrab(self: *State, sink: *x11.RequestSink, grab_window: x11.Window) !void {
         switch (self.grab) {
             .disabled => {
                 std.log.info("requesting grab...", .{});
-                var msg: [x11.grab_pointer.len]u8 = undefined;
-                x11.grab_pointer.serialize(&msg, .{
+                try sink.GrabPointer(.{
                     //.owner_events = true,
                     .owner_events = false,
                     .grab_window = grab_window,
@@ -791,10 +737,9 @@ const State = struct {
                     .cursor = .none,
                     .time = .current_time,
                 });
-                try x11.ext.sendOne(sock, sequence, &msg);
                 self.grab = .{ .requested = .{
                     .confined = self.confine_grab,
-                    .sequence = sequence.*,
+                    .sequence = sink.sequence,
                 } };
             },
             .requested => {
@@ -802,11 +747,7 @@ const State = struct {
             },
             .enabled => {
                 std.log.info("ungrabbing", .{});
-                var msg: [x11.ungrab_pointer.len]u8 = undefined;
-                x11.ungrab_pointer.serialize(&msg, .{
-                    .time = .current_time,
-                });
-                try x11.ext.sendOne(sock, sequence, &msg);
+                try sink.UngrabPointer(.current_time);
                 self.grab = .disabled;
             },
         }
@@ -814,30 +755,21 @@ const State = struct {
 };
 
 fn renderString(
-    sock: std.posix.socket_t,
-    sequence: *u16,
-    drawable_id: x11.Drawable,
-    fg_gc_id: x11.GraphicsContext,
-    pos_x: i16,
-    pos_y: i16,
+    sink: *x11.RequestSink,
+    drawable: x11.Drawable,
+    gc: x11.GraphicsContext,
+    pos: x11.XY(i16),
     comptime fmt: []const u8,
     args: anytype,
 ) !void {
-    var msg: [x11.image_text8.max_len]u8 = undefined;
-    const text_buf = msg[x11.image_text8.text_offset .. x11.image_text8.text_offset + 0xff];
-    const text_len: u8 = @intCast((std.fmt.bufPrint(text_buf, fmt, args) catch @panic("string too long")).len);
-    x11.image_text8.serializeNoTextCopy(&msg, text_len, .{
-        .drawable_id = drawable_id,
-        .gc_id = fg_gc_id,
-        .x = pos_x,
-        .y = pos_y,
-    });
-    try x11.ext.sendOne(sock, sequence, msg[0..x11.image_text8.getLen(text_len)]);
+    sink.printImageText8(drawable, gc, pos, fmt, args) catch |err| switch (err) {
+        error.TextTooLong => @panic("todo: handle render long text"),
+        error.WriteFailed => return error.WriteFailed,
+    };
 }
 
 fn render(
-    sock: std.posix.socket_t,
-    sequence: *u16,
+    sink: *x11.RequestSink,
     window_id: x11.Window,
     bg_gc_id: x11.GraphicsContext,
     fg_gc_id: x11.GraphicsContext,
@@ -845,23 +777,24 @@ fn render(
     state: State,
 ) !void {
     _ = bg_gc_id;
-    {
-        var msg: [x11.clear_area.len]u8 = undefined;
-        x11.clear_area.serialize(&msg, false, window_id, .{
+    try sink.ClearArea(
+        window_id,
+        .{
             .x = 0,
             .y = 0,
             .width = window_width,
             .height = window_height,
-        });
-        try x11.ext.sendOne(sock, sequence, &msg);
-    }
+        },
+        .{ .exposures = false },
+    );
     try renderString(
-        sock,
-        sequence,
+        sink,
         window_id.drawable(),
         fg_gc_id,
-        font_dims.font_left,
-        font_dims.font_ascent + (0 * font_dims.height),
+        .{
+            .x = font_dims.font_left,
+            .y = font_dims.font_ascent + (0 * font_dims.height),
+        },
         "root: {} x {}",
         .{
             state.pointer_root_pos.x,
@@ -869,12 +802,13 @@ fn render(
         },
     );
     try renderString(
-        sock,
-        sequence,
+        sink,
         window_id.drawable(),
         fg_gc_id,
-        font_dims.font_left,
-        font_dims.font_ascent + (1 * font_dims.height),
+        .{
+            .x = font_dims.font_left,
+            .y = font_dims.font_ascent + (1 * font_dims.height),
+        },
         "event: {} x {}",
         .{
             state.pointer_event_pos.x,
@@ -887,42 +821,46 @@ fn render(
         .enabled => |c| if (c.confined) " confined=true" else " confined=false",
     };
     try renderString(
-        sock,
-        sequence,
+        sink,
         window_id.drawable(),
         fg_gc_id,
-        font_dims.font_left,
-        font_dims.font_ascent + (2 * font_dims.height),
+        .{
+            .x = font_dims.font_left,
+            .y = font_dims.font_ascent + (2 * font_dims.height),
+        },
         "(G)rab: {s}{s}",
         .{ @tagName(state.grab), grab_suffix },
     );
     try renderString(
-        sock,
-        sequence,
+        sink,
         window_id.drawable(),
         fg_gc_id,
-        font_dims.font_left,
-        font_dims.font_ascent + (3 * font_dims.height),
+        .{
+            .x = font_dims.font_left,
+            .y = font_dims.font_ascent + (3 * font_dims.height),
+        },
         "(C)onfine Grab: {}",
         .{state.confine_grab},
     );
     try renderString(
-        sock,
-        sequence,
+        sink,
         window_id.drawable(),
         fg_gc_id,
-        font_dims.font_left,
-        font_dims.font_ascent + (4 * font_dims.height),
+        .{
+            .x = font_dims.font_left,
+            .y = font_dims.font_ascent + (4 * font_dims.height),
+        },
         "(W)arp",
         .{},
     );
     try renderString(
-        sock,
-        sequence,
+        sink,
         window_id.drawable(),
         fg_gc_id,
-        font_dims.font_left,
-        font_dims.font_ascent + (5 * font_dims.height),
+        .{
+            .x = font_dims.font_left,
+            .y = font_dims.font_ascent + (5 * font_dims.height),
+        },
         "{s} W(i)ndow",
         .{if (state.window_created) "Destroy" else "Create"},
     );
@@ -938,12 +876,13 @@ fn render(
             .disabled => " (disabled)",
         };
         try renderString(
-            sock,
-            sequence,
+            sink,
             window_id.drawable(),
             fg_gc_id,
-            font_dims.font_left,
-            font_dims.font_ascent + (6 * font_dims.height),
+            .{
+                .x = font_dims.font_left,
+                .y = font_dims.font_ascent + (6 * font_dims.height),
+            },
             "(D)isable Input Device{s}",
             .{suffix},
         );
@@ -956,12 +895,13 @@ fn render(
             .enabled => " (enabled)",
         };
         try renderString(
-            sock,
-            sequence,
+            sink,
             window_id.drawable(),
             fg_gc_id,
-            font_dims.font_left,
-            font_dims.font_ascent + (7 * font_dims.height),
+            .{
+                .x = font_dims.font_left,
+                .y = font_dims.font_ascent + (7 * font_dims.height),
+            },
             "(L)isten to raw events{s}",
             .{suffix},
         );

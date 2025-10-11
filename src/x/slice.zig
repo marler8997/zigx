@@ -28,6 +28,14 @@ pub fn Slice(comptime LenType: type, comptime Ptr: type) type {
             return self.ptr[0..self.len];
         }
 
+        pub fn init(ptr: Ptr, len: LenType) @This() {
+            return .{ .ptr = ptr, .len = len };
+        }
+
+        pub fn initAssume(slice: NativeSlice) @This() {
+            return .{ .ptr = slice.ptr, .len = @intCast(slice.len) };
+        }
+
         pub fn initComptime(comptime ct_slice: NativeSlice) @This() {
             return .{ .ptr = ct_slice.ptr, .len = @intCast(ct_slice.len) };
         }

@@ -116,51 +116,24 @@ pub fn genericExtensionEventTaggedUnion(msg_ptr: [*]align(4) u8) GenericExtensio
     }
 }
 
-pub const get_extension_version = struct {
-    pub const non_list_len =
-        2 // extension and command opcodes
-        + 2 // request length
-        + 2 // name length
-        + 2 // unused
-    ;
-    pub fn getLen(name_len: u16) u16 {
-        return non_list_len + std.mem.alignForward(u16, name_len, 4);
-    }
-    pub const max_len = non_list_len + 0xffff;
-    pub const name_offset = 8;
-    pub fn serialize(buf: [*]u8, input_ext_opcode: u8, name: x.Slice(u16, [*]const u8)) void {
-        serializeNoNameCopy(buf, input_ext_opcode, name);
-        @memcpy(buf[name_offset..][0..name.len], name.nativeSlice());
-    }
-    pub fn serializeNoNameCopy(buf: [*]u8, input_ext_opcode: u8, name: x.Slice(u16, [*]const u8)) void {
-        buf[0] = input_ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.get_extension_version);
-        const request_len = getLen(name.len);
-        std.debug.assert(request_len & 0x3 == 0);
-        x.writeIntNative(u16, buf + 2, request_len >> 2);
-        x.writeIntNative(u32, buf + 4, name.len);
-        buf[6] = 0; // unused
-        buf[7] = 0; // unused
-    }
-    pub const Reply = extern struct {
-        response_type: x.ReplyKind,
-        unused_pad: u8,
-        sequence: u16,
-        word_len: u32,
-        // The `xi_reply_type` field is listed in the XCB XML protocol definitions but I
-        // don't see it in actual scenarios. It's also not part of the `libxi` ->
-        // `xGetExtensionVersionReply` definition.
-        //
-        //xi_reply_type: u8,
-        major_version: u16,
-        minor_version: u16,
-        present: bool,
-        reserved: [19]u8,
-    };
-    comptime {
-        std.debug.assert(@sizeOf(Reply) == 32);
-    }
+pub const GetExtensionVersionReply = extern struct {
+    response_type: x.ReplyKind,
+    unused_pad: u8,
+    sequence: u16,
+    word_len: u32,
+    // The `xi_reply_type` field is listed in the XCB XML protocol definitions but I
+    // don't see it in actual scenarios. It's also not part of the `libxi` ->
+    // `xGetExtensionVersionReply` definition.
+    //
+    //xi_reply_type: u8,
+    major_version: u16,
+    minor_version: u16,
+    present: bool,
+    reserved: [19]u8,
 };
+comptime {
+    std.debug.assert(@sizeOf(GetExtensionVersionReply) == 32);
+}
 
 pub const query_version = struct {
     pub const len =
@@ -562,61 +535,144 @@ pub const EventMask = struct {
     mask: u32,
 };
 
-/// Specify which X Input events this window is interested in.
-pub const select_events = struct {
-    const size_of_event_mask_over_the_wire =
-        2 // device_id
-        + 2 // mask_len
-        + 4 // mask
+pub fn GetExtensionVersion(
+    sink: *x.RequestSink,
+    ext_opcode: u8,
+    name: x.Slice(u16, [*]const u8),
+) x.Writer.Error!void {
+    const non_list_len =
+        2 // extension and command opcodes
+        + 2 // request length
+        + 2 // name length
+        + 2 // unused
     ;
-    comptime {
-        std.debug.assert(size_of_event_mask_over_the_wire == 8);
-    }
+    const msg_len = non_list_len + std.mem.alignForward(u16, name.len, 4);
+    var offset: usize = 0;
+    try x.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.get_extension_version),
+    });
+    try x.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x.writeInt(sink.writer, &offset, u32, name.len);
+    try x.writeAll(sink.writer, &offset, name.nativeSlice());
+    try x.writePad4(sink.writer, &offset);
+    std.debug.assert(msg_len == offset);
+    sink.sequence +%= 1;
+}
 
-    pub const non_option_len =
+pub fn ListInputDevices(
+    sink: *x.RequestSink,
+    ext_opcode: u8,
+) x.Writer.Error!void {
+    const msg_len = list_input_devices.len;
+    var offset: usize = 0;
+    try x.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.list_input_devices),
+    });
+    try x.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+
+pub fn GetProperty(
+    sink: *x.RequestSink,
+    ext_opcode: u8,
+    args: get_property.Args,
+) x.Writer.Error!void {
+    const msg_len = get_property.len;
+    var offset: usize = 0;
+    try x.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.get_property),
+    });
+    try x.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x.writeInt(sink.writer, &offset, u16, args.device_id);
+    try x.writeAll(sink.writer, &offset, &[_]u8{
+        @intFromBool(args.delete),
+        0, // unused pad
+    });
+    try x.writeInt(sink.writer, &offset, u32, args.property);
+    try x.writeInt(sink.writer, &offset, u32, args.type);
+    try x.writeInt(sink.writer, &offset, u32, args.offset);
+    try x.writeInt(sink.writer, &offset, u32, args.len);
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+
+pub fn ChangeProperty(
+    sink: *x.RequestSink,
+    ext_opcode: u8,
+    comptime T: type,
+    args: change_property.withFormat(T).Args,
+) x.Writer.Error!void {
+    const change_prop = change_property.withFormat(T);
+    const msg_len = change_prop.getLen(args.values.len);
+    var offset: usize = 0;
+    try x.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.change_property),
+    });
+    try x.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x.writeInt(sink.writer, &offset, u16, args.device_id);
+    try x.writeAll(sink.writer, &offset, &[_]u8{
+        @intFromEnum(args.mode),
+        @sizeOf(T) * 8,
+    });
+    try x.writeInt(sink.writer, &offset, u32, args.property);
+    try x.writeInt(sink.writer, &offset, u32, args.type);
+    try x.writeInt(sink.writer, &offset, u32, args.values.len);
+    for (args.values.nativeSlice()) |value| {
+        try x.writeInt(sink.writer, &offset, T, value);
+    }
+    try x.writePad4(sink.writer, &offset);
+    std.debug.assert(msg_len == offset);
+    sink.sequence +%= 1;
+}
+
+/// Specify which X Input events this window is interested in.
+pub fn SelectEvents(
+    sink: *x.RequestSink,
+    ext_opcode: u8,
+    window: x.Window,
+    masks: []EventMask,
+) x.Writer.Error!void {
+    const non_option_len =
         2 // extension and command opcodes
         + 2 // request length
         + 4 // window_id
         + 2 // num_mask
         + 2 // padding
     ;
+    const size_of_event_mask_over_the_wire =
+        2 // device_id
+        + 2 // mask_len
+        + 4 // mask
+    ;
     comptime {
         std.debug.assert(non_option_len == 12);
+        std.debug.assert(size_of_event_mask_over_the_wire == 8);
+    }
+    const msg_len: u18 = @intCast(non_option_len +
+        (size_of_event_mask_over_the_wire * masks.len));
+    var offset: usize = 0;
+    try x.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(ExtOpcode.select_events),
+    });
+    try x.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
+    try x.writeInt(sink.writer, &offset, u32, @intFromEnum(window));
+    try x.writeInt(sink.writer, &offset, u16, @intCast(masks.len));
+    try x.writeAll(sink.writer, &offset, &[_]u8{ 0, 0 }); // unused
+
+    for (masks) |mask| {
+        try x.writeInt(sink.writer, &offset, u16, @intFromEnum(mask.device_id));
+        const mask_len: u16 = @sizeOf(u32) / 4; // Length of mask in 4 byte units
+        try x.writeInt(sink.writer, &offset, u16, mask_len);
+        try x.writeInt(sink.writer, &offset, u32, mask.mask);
     }
 
-    pub fn getLen(num_masks: u16) u16 {
-        return non_option_len +
-            (size_of_event_mask_over_the_wire * num_masks);
-    }
-
-    pub const Args = struct {
-        window_id: x.Window,
-        masks: []EventMask,
-    };
-    pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) u16 {
-        buf[0] = ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.select_events);
-        const calculated_length = getLen(@as(u16, @intCast(args.masks.len)));
-        x.writeIntNative(u16, buf + 2, calculated_length >> 2);
-        x.writeIntNative(u32, buf + 4, @intFromEnum(args.window_id));
-        x.writeIntNative(u16, buf + 8, @as(u16, @intCast(args.masks.len)));
-        // 2 bytes of padding
-
-        var current_request_len: u16 = non_option_len;
-
-        // Length of mask in 4 byte units. Since our masks are always u32, this is always 1.
-        const mask_len: u16 = @sizeOf(u32) / 4;
-        for (args.masks) |mask| {
-            x.writeIntNative(u16, buf + current_request_len, @intFromEnum(mask.device_id));
-            x.writeIntNative(u16, buf + current_request_len + 2, mask_len);
-            x.writeIntNative(u32, buf + current_request_len + 4, mask.mask);
-
-            current_request_len += size_of_event_mask_over_the_wire;
-        }
-
-        // Quick sanity check that are assembled length is the same as the length we calculated.
-        std.debug.assert(current_request_len == calculated_length);
-
-        return current_request_len;
-    }
-};
+    std.debug.assert((offset & 0x3) == 0);
+    std.debug.assert(msg_len == offset);
+    sink.sequence +%= 1;
+}

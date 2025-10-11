@@ -32,7 +32,9 @@ pub fn main() !u8 {
     const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
-    var sequence: u16 = 0;
+    var write_buf: [4096]u8 = undefined;
+    var socket_writer = x11.socketWriter(conn.sock, &write_buf);
+    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
 
     var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
     {
@@ -44,7 +46,7 @@ pub fn main() !u8 {
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_S), Key.s);
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_d), Key.d);
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_D), Key.d);
-        const keymap = try x11.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed());
+        const keymap = try x11.keymap.request(allocator, conn.sock, &sink, conn.setup.fixed());
         defer keymap.deinit(allocator);
         {
             var i: usize = 0;
@@ -87,47 +89,41 @@ pub fn main() !u8 {
 
     const ids: Ids = .{ .base = conn.setup.fixed().resource_id_base };
 
-    {
-        var msg_buf: [x11.create_window.max_len]u8 = undefined;
-        const len = x11.create_window.serialize(&msg_buf, .{
-            .window_id = ids.window(),
-            .parent_window_id = screen.root,
-            .depth = 0, // we don't care, just inherit from the parent
-            .x = 0,
-            .y = 0,
-            .width = window_width,
-            .height = window_height,
-            .border_width = 0, // TODO: what is this?
-            .class = .input_output,
-            .visual_id = screen.root_visual,
-        }, .{
-            .bg_pixel = 0x332211,
-            .event_mask = .{
-                .key_press = 1,
-                .key_release = 0,
-                .button_press = 0,
-                .button_release = 0,
-                .enter_window = 1,
-                .leave_window = 1,
-                .pointer_motion = 1,
-                .keymap_state = 1,
-                .exposure = 1,
-            },
-        });
-        try conn.sendOne(&sequence, msg_buf[0..len]);
-    }
+    try sink.CreateWindow(.{
+        .window_id = ids.window(),
+        .parent_window_id = screen.root,
+        .depth = 0, // we don't care, just inherit from the parent
+        .x = 0,
+        .y = 0,
+        .width = window_width,
+        .height = window_height,
+        .border_width = 0, // TODO: what is this?
+        .class = .input_output,
+        .visual_id = screen.root_visual,
+    }, .{
+        .bg_pixel = 0x332211,
+        .event_mask = .{
+            .key_press = 1,
+            .key_release = 0,
+            .button_press = 0,
+            .button_release = 0,
+            .enter_window = 1,
+            .leave_window = 1,
+            .pointer_motion = 1,
+            .keymap_state = 1,
+            .exposure = 1,
+        },
+    });
 
-    {
-        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-        const len = x11.create_gc.serialize(&msg_buf, .{
-            .gc_id = ids.gc(),
-            .drawable_id = ids.window().drawable(),
-        }, .{
+    try sink.CreateGc(
+        ids.gc(),
+        ids.window().drawable(),
+        .{
             .background = 0x332211,
             .foreground = 0xaabbff,
-        });
-        try conn.sendOne(&sequence, msg_buf[0..len]);
-    }
+        },
+    );
+    try sink.writer.flush();
 
     const double_buf = try x11.DoubleBuffer.init(
         std.mem.alignForward(usize, 1000, std.heap.pageSize()),
@@ -137,23 +133,21 @@ pub fn main() !u8 {
     std.log.info("read buffer capacity is {}", .{double_buf.half_len});
     var buf = double_buf.contiguousReadBuffer();
 
-    const maybe_dbe_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, x11.dbe.name.nativeSlice());
+    const maybe_dbe_ext = try x11.ext.getExtensionInfo(conn.sock, &sink, &buf, x11.dbe.name.nativeSlice());
     var dbe: Dbe = .unsupported;
     if (maybe_dbe_ext) |ext| {
-        try allocateBackBuffer(conn.sock, &sequence, ext.opcode, ids.window(), ids.backBuffer());
+        try x11.dbe.Allocate(&sink, ext.opcode, ids.window(), ids.backBuffer(), .background);
         dbe = .{ .enabled = .{ .opcode = ext.opcode, .back_buffer = ids.backBuffer() } };
     }
 
-    {
-        var msg: [x11.map_window.len]u8 = undefined;
-        x11.map_window.serialize(&msg, ids.window());
-        try conn.sendOne(&sequence, &msg);
-    }
+    try sink.MapWindow(ids.window());
 
     var animate: Animate = .{ .previous_time = try std.time.Instant.now() };
     var animate_frame_ms: i32 = 15;
 
     while (true) {
+        try sink.writer.flush();
+
         const action: enum { timeout, socket } = switch (try pollSocket(conn.sock, 0)) {
             .ready => .socket,
             .timeout => if (try getTimeout(animate.previous_time, animate_frame_ms)) |timeout_ms| switch (try pollSocket(conn.sock, timeout_ms)) {
@@ -165,8 +159,7 @@ pub fn main() !u8 {
         switch (action) {
             .timeout => {
                 try render(
-                    conn.sock,
-                    &sequence,
+                    &sink,
                     ids.window(),
                     ids.gc(),
                     dbe,
@@ -200,11 +193,11 @@ pub fn main() !u8 {
             //buf.resetIfEmpty();
             switch (x11.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
-                    std.log.err("{}", .{msg});
+                    std.log.err("X11 error: {f}", .{msg});
                     return 1;
                 },
                 .reply => |msg| {
-                    std.log.info("todo: handle a reply message {}", .{msg});
+                    std.log.info("todo: handle X11 reply: {f}", .{msg});
                     return error.TodoHandleReplyMessage;
                 },
                 .key_press => |msg| {
@@ -219,12 +212,12 @@ pub fn main() !u8 {
                         .d => switch (dbe) {
                             .unsupported => {},
                             .disabled => |disabled| {
-                                try allocateBackBuffer(
-                                    conn.sock,
-                                    &sequence,
+                                try x11.dbe.Allocate(
+                                    &sink,
                                     disabled.opcode,
                                     ids.window(),
                                     ids.backBuffer(),
+                                    .background,
                                 );
                                 dbe = .{ .enabled = .{
                                     .opcode = disabled.opcode,
@@ -232,9 +225,8 @@ pub fn main() !u8 {
                                 } };
                             },
                             .enabled => |enabled| {
-                                try deallocateBackBuffer(
-                                    conn.sock,
-                                    &sequence,
+                                try x11.dbe.Deallocate(
+                                    &sink,
                                     enabled.opcode,
                                     ids.backBuffer(),
                                 );
@@ -247,8 +239,7 @@ pub fn main() !u8 {
                     }
                     if (do_render) {
                         try render(
-                            conn.sock,
-                            &sequence,
+                            &sink,
                             ids.window(),
                             ids.gc(),
                             dbe,
@@ -277,8 +268,7 @@ pub fn main() !u8 {
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
                     try render(
-                        conn.sock,
-                        &sequence,
+                        &sink,
                         ids.window(),
                         ids.gc(),
                         dbe,
@@ -304,52 +294,6 @@ pub fn main() !u8 {
             }
         }
     }
-}
-
-fn allocateBackBuffer(
-    sock: std.posix.socket_t,
-    sequence: *u16,
-    dbe_ext_opcode: u8,
-    window: x11.Window,
-    back_buffer: x11.Drawable,
-) !void {
-    var msg: [x11.dbe.allocate.len]u8 = undefined;
-    x11.dbe.allocate.serialize(&msg, .{
-        .ext_opcode = dbe_ext_opcode,
-        .window = window,
-        .backbuffer = back_buffer,
-        .swapaction = .background,
-    });
-    try x11.ext.sendOne(sock, sequence, &msg);
-}
-
-fn deallocateBackBuffer(
-    sock: std.posix.socket_t,
-    sequence: *u16,
-    dbe_ext_opcode: u8,
-    back_buffer: x11.Drawable,
-) !void {
-    var msg: [x11.dbe.deallocate.len]u8 = undefined;
-    x11.dbe.deallocate.serialize(&msg, .{
-        .ext_opcode = dbe_ext_opcode,
-        .backbuffer = back_buffer,
-    });
-    try x11.ext.sendOne(sock, sequence, &msg);
-}
-
-fn swapBuffers(sock: std.posix.socket_t, sequence: *u16, dbe_ext_opcode: u8, window: x11.Window) !void {
-    const swap_infos = [_]x11.dbe.SwapInfo{
-        .{ .window = window, .action = .background },
-    };
-    var msg: [x11.dbe.swap.getLen(swap_infos.len)]u8 = undefined;
-    const swap_infos_x11: x11.Slice(u32, [*]const x11.dbe.SwapInfo) = .{
-        .ptr = &swap_infos,
-        .len = swap_infos.len,
-    };
-    x11.dbe.swap.serialize(&msg, swap_infos_x11, .{
-        .ext_opcode = dbe_ext_opcode,
-    });
-    try x11.ext.sendOne(sock, sequence, &msg);
 }
 
 fn pollSocket(sock: std.posix.socket_t, timeout_ms: i32) !enum { ready, timeout } {
@@ -397,8 +341,7 @@ const Dbe = union(enum) {
 };
 
 fn render(
-    sock: std.posix.socket_t,
-    sequence: *u16,
+    sink: *x11.RequestSink,
     window: x11.Window,
     gc_id: x11.GraphicsContext,
     dbe: Dbe,
@@ -418,67 +361,58 @@ fn render(
     animate.progress = @mod(animate.progress + progress_increment, 1.0);
 
     if (null == dbe.backBuffer()) {
-        var msg: [x11.clear_area.len]u8 = undefined;
-        x11.clear_area.serialize(&msg, false, window, .{
-            .x = 0,
-            .y = 0,
-            .width = window_width,
-            .height = window_height,
-        });
-        try x11.ext.sendOne(sock, sequence, &msg);
+        try sink.ClearArea(
+            window,
+            .{
+                .x = 0,
+                .y = 0,
+                .width = window_width,
+                .height = window_height,
+            },
+            .{ .exposures = false },
+        );
     }
 
     const target_drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
 
-    {
-        var msg: [x11.poly_fill_rectangle.getLen(1)]u8 = undefined;
-        x11.poly_fill_rectangle.serialize(&msg, .{
-            .drawable_id = target_drawable,
-            .gc_id = gc_id,
-        }, &.{.{
+    try sink.PolyFillRectangle(
+        target_drawable,
+        gc_id,
+        .initAssume(&.{.{
             .x = @intFromFloat(@round(@as(f32, window_width) * animate.progress)),
             .y = @intFromFloat(@round(@as(f32, window_width) * animate.progress)),
             .width = 10,
             .height = 10,
-        }});
-        try x11.ext.sendOne(sock, sequence, &msg);
-    }
+        }}),
+    );
 
     const fps: f32 = @as(f32, 1000.0) / @as(f32, @floatFromInt(animate_frame_ms));
     if (animate_frame_ms == 0) {
-        try renderString(sock, sequence, target_drawable, gc_id, 10, 10, "FPS: <no limit>", .{});
+        try renderString(sink, target_drawable, gc_id, .{ .x = 10, .y = 10 }, "FPS: <no limit>", .{});
     } else {
-        try renderString(sock, sequence, target_drawable, gc_id, 10, 10, "FPS: {d:.1}", .{fps});
+        try renderString(sink, target_drawable, gc_id, .{ .x = 10, .y = 10 }, "FPS: {d:.1}", .{fps});
     }
-    try renderString(sock, sequence, target_drawable, gc_id, 270, 10, "f: faster, s: slower", .{});
-    try renderString(sock, sequence, target_drawable, gc_id, 10, 30, "DoubleBuffering: {s}", .{@tagName(dbe)});
-    try renderString(sock, sequence, target_drawable, gc_id, 270, 30, "d: toggle", .{});
+    try renderString(sink, target_drawable, gc_id, .{ .x = 270, .y = 10 }, "f: faster, s: slower", .{});
+    try renderString(sink, target_drawable, gc_id, .{ .x = 10, .y = 30 }, "DoubleBuffering: {s}", .{@tagName(dbe)});
+    try renderString(sink, target_drawable, gc_id, .{ .x = 270, .y = 30 }, "d: toggle", .{});
     switch (dbe) {
         .unsupported, .disabled => {},
-        .enabled => |enabled| {
-            try swapBuffers(sock, sequence, enabled.opcode, window);
-        },
+        .enabled => |enabled| try x11.dbe.Swap(sink, enabled.opcode, .initAssume(&.{
+            .{ .window = window, .action = .background },
+        })),
     }
 }
 
 fn renderString(
-    sock: std.posix.socket_t,
-    sequence: *u16,
-    drawable_id: x11.Drawable,
-    gc_id: x11.GraphicsContext,
-    pos_x: i16,
-    pos_y: i16,
+    sink: *x11.RequestSink,
+    drawable: x11.Drawable,
+    gc: x11.GraphicsContext,
+    pos: x11.XY(i16),
     comptime fmt: []const u8,
     args: anytype,
 ) !void {
-    var msg: [x11.image_text8.max_len]u8 = undefined;
-    const text_buf = msg[x11.image_text8.text_offset .. x11.image_text8.text_offset + 0xff];
-    const text_len: u8 = @intCast((std.fmt.bufPrint(text_buf, fmt, args) catch @panic("string too long")).len);
-    x11.image_text8.serializeNoTextCopy(&msg, text_len, .{
-        .drawable_id = drawable_id,
-        .gc_id = gc_id,
-        .x = pos_x,
-        .y = pos_y,
-    });
-    try x11.ext.sendOne(sock, sequence, msg[0..x11.image_text8.getLen(text_len)]);
+    sink.printImageText8(drawable, gc, pos, fmt, args) catch |err| switch (err) {
+        error.TextTooLong => @panic("todo: handle render long text"),
+        error.WriteFailed => return error.WriteFailed,
+    };
 }
