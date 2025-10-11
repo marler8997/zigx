@@ -417,7 +417,7 @@ fn handleReply(
                 try common.sendOne(sock, sequence, &get_version_msg);
 
                 // Useful for debugging
-                std.log.info("{s} extension: opcode={} base_error_code={}", .{
+                std.log.info("{f} extension: opcode={} base_error_code={}", .{
                     name,
                     msg_ext.major_opcode,
                     msg_ext.first_error,
