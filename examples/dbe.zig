@@ -1,7 +1,6 @@
 //! An example of using the "Double Buffer Extension" (DBE)
 const std = @import("std");
 const x11 = @import("x11");
-const common = @import("common.zig");
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
@@ -30,7 +29,7 @@ const Ids = struct {
 
 pub fn main() !u8 {
     try x11.wsaStartup();
-    const conn = try common.connect(allocator);
+    const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     var sequence: u16 = 0;
@@ -138,7 +137,7 @@ pub fn main() !u8 {
     std.log.info("read buffer capacity is {}", .{double_buf.half_len});
     var buf = double_buf.contiguousReadBuffer();
 
-    const maybe_dbe_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, x11.dbe.name.nativeSlice());
+    const maybe_dbe_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, x11.dbe.name.nativeSlice());
     var dbe: Dbe = .unsupported;
     if (maybe_dbe_ext) |ext| {
         try allocateBackBuffer(conn.sock, &sequence, ext.opcode, ids.window(), ids.backBuffer());
@@ -300,6 +299,7 @@ pub fn main() !u8 {
                 .map_notify,
                 .reparent_notify,
                 .configure_notify,
+                .generic_extension_event,
                 => unreachable, // did not register for these
             }
         }
@@ -320,7 +320,7 @@ fn allocateBackBuffer(
         .backbuffer = back_buffer,
         .swapaction = .background,
     });
-    try common.sendOne(sock, sequence, &msg);
+    try x11.ext.sendOne(sock, sequence, &msg);
 }
 
 fn deallocateBackBuffer(
@@ -334,7 +334,7 @@ fn deallocateBackBuffer(
         .ext_opcode = dbe_ext_opcode,
         .backbuffer = back_buffer,
     });
-    try common.sendOne(sock, sequence, &msg);
+    try x11.ext.sendOne(sock, sequence, &msg);
 }
 
 fn swapBuffers(sock: std.posix.socket_t, sequence: *u16, dbe_ext_opcode: u8, window: x11.Window) !void {
@@ -349,7 +349,7 @@ fn swapBuffers(sock: std.posix.socket_t, sequence: *u16, dbe_ext_opcode: u8, win
     x11.dbe.swap.serialize(&msg, swap_infos_x11, .{
         .ext_opcode = dbe_ext_opcode,
     });
-    try common.sendOne(sock, sequence, &msg);
+    try x11.ext.sendOne(sock, sequence, &msg);
 }
 
 fn pollSocket(sock: std.posix.socket_t, timeout_ms: i32) !enum { ready, timeout } {
@@ -425,7 +425,7 @@ fn render(
             .width = window_width,
             .height = window_height,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     const target_drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
@@ -441,7 +441,7 @@ fn render(
             .width = 10,
             .height = 10,
         }});
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     const fps: f32 = @as(f32, 1000.0) / @as(f32, @floatFromInt(animate_frame_ms));
@@ -480,5 +480,5 @@ fn renderString(
         .x = pos_x,
         .y = pos_y,
     });
-    try common.sendOne(sock, sequence, msg[0..x11.image_text8.getLen(text_len)]);
+    try x11.ext.sendOne(sock, sequence, msg[0..x11.image_text8.getLen(text_len)]);
 }

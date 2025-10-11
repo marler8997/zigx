@@ -13,11 +13,21 @@ static void on_error(void *ctx, const char *msg)
     errorf("error: %s\n", msg);
 }
 
+static int on_io_error(Display* display)
+{
+    logf("X11 IO Error: exiting with code 0...");
+    // there doesn't seem to be a straightforward way to distinguish
+    // between graceful disconnections and socket IO errors.
+    exit (0);
+}
+
 int main(int argc, char *argv[])
 {
 #ifdef ZIGX_EXTENSIONS
     ZigXSetErrorHandler(on_error, NULL);
 #endif
+
+    XSetIOErrorHandler(on_io_error);
 
     logf("Calling XOpenDisplay...");
     Display *display = XOpenDisplay(NULL);

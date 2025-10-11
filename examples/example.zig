@@ -1,6 +1,5 @@
 const std = @import("std");
 const x11 = @import("x11");
-const common = @import("common.zig");
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
@@ -23,7 +22,7 @@ const Ids = struct {
 
 pub fn main() !u8 {
     try x11.wsaStartup();
-    const conn = try common.connect(allocator);
+    const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     const screen = blk: {
@@ -132,7 +131,8 @@ pub fn main() !u8 {
     var buf = double_buf.contiguousReadBuffer();
 
     const font_dims: FontDims = blk: {
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        var reader: x11.SocketReader = .init(conn.sock);
+        _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 const msg: *x11.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
@@ -231,6 +231,7 @@ pub fn main() !u8 {
                 .map_notify,
                 .reparent_notify,
                 .configure_notify,
+                .generic_extension_event,
                 => unreachable, // did not register for these
             }
         }
@@ -260,7 +261,7 @@ fn render(
         }, &[_]x11.Rectangle{
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     {
         var msg: [x11.clear_area.len]u8 = undefined;
@@ -270,7 +271,7 @@ fn render(
             .width = 100,
             .height = 100,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     {
         const text_literal: []const u8 = "Hello X!";
@@ -285,6 +286,6 @@ fn render(
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 }

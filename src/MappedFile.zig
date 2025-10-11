@@ -103,7 +103,7 @@ const win32 = struct {
         dwMaximumSizeHigh: u32,
         dwMaximumSizeLow: u32,
         lpName: ?[*:0]const u8,
-    ) callconv(std.os.windows.WINAPI) ?HANDLE;
+    ) callconv(.winapi) ?HANDLE;
 
     pub const FILE_MAP_WRITE = 2;
     pub const FILE_MAP_READ = 4;
@@ -113,8 +113,8 @@ const win32 = struct {
         dwFileOffsetHigh: u32,
         dwFileOffsetLow: u32,
         dwNumberOfBytesToMap: usize,
-    ) callconv(std.os.windows.WINAPI) ?*anyopaque;
+    ) callconv(.winapi) ?*anyopaque;
     pub extern "kernel32" fn UnmapViewOfFile(
         lpBaseAddress: ?*const anyopaque,
-    ) callconv(std.os.windows.WINAPI) BOOL;
+    ) callconv(.winapi) BOOL;
 };

@@ -6,6 +6,10 @@ const c = @cImport({
 const x11 = @import("x11");
 const c_allocator = std.heap.c_allocator;
 
+const global = struct {
+    var io_error_handler: ?*const fn (*c.Display) callconv(.c) c_int = null;
+};
+
 fn sendAll(sock: std.posix.socket_t, data: []const u8) !void {
     var total_sent: usize = 0;
     while (true) {
@@ -15,12 +19,8 @@ fn sendAll(sock: std.posix.socket_t, data: []const u8) !void {
         if (total_sent == data.len) return;
     }
 }
-pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocket);
-fn readSocket(sock: std.posix.socket_t, buffer: []u8) !usize {
-    return x11.readSock(sock, buffer, 0);
-}
 
-export fn ZigXSetErrorHandler(handler: *const fn (*anyopaque, [*:0]const u8) callconv(.C) void, ctx: *anyopaque) void {
+export fn ZigXSetErrorHandler(handler: *const fn (*anyopaque, [*:0]const u8) callconv(.c) void, ctx: *anyopaque) void {
     _ = handler;
     _ = ctx;
     std.log.err("TODO: set error handler!", .{});
@@ -75,17 +75,22 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
                 break :blk hdr;
         }
 
-        var msg: [x11.connect_setup.getLen(0, 0)]u8 = undefined;
-        x11.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
-        sendAll(sock, &msg) catch |err|
-            return reportError("send connect setup failed with {s}", .{@errorName(err)});
+        {
+            var buffer: [1000]u8 = undefined;
+            var socket_writer = x11.socketWriter(sock, &buffer);
+            const writer = &socket_writer.interface;
+            x11.writeConnectSetup(writer, .{
+                .auth_name = .empty,
+                .auth_data = .empty,
+            }) catch |err| return reportError("send connect setup failed with {s}", .{@errorName(err)});
+        }
 
-        const reader = SocketReader{ .context = sock };
-        const connect_setup_header = x11.readConnectSetupHeader(reader, .{}) catch |err|
+        var reader: x11.SocketReader = .init(sock);
+        const connect_setup_header = x11.readConnectSetupHeader(reader.interface(), .{}) catch |err|
             return reportError("failed to read connect setup with {s}", .{@errorName(err)});
         switch (connect_setup_header.status) {
             .failed => {
-                std.log.debug("no auth connect setup failed, version={}.{}, reason='{s}'", .{
+                std.log.debug("no auth connect setup failed, version={}.{}, reason='{f}'", .{
                     connect_setup_header.proto_major_ver,
                     connect_setup_header.proto_minor_ver,
                     connect_setup_header.readFailReason(reader),
@@ -108,8 +113,8 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
 
     const connect_setup = x11.ConnectSetup{ .buf = buf };
     std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
-    const reader = SocketReader{ .context = sock };
-    x11.readFull(reader, connect_setup.buf) catch |err|
+    var reader: x11.SocketReader = .init(sock);
+    x11.readFull(reader.interface(), connect_setup.buf) catch |err|
         return reportError("failed to read connect setup with {s}", .{@errorName(err)});
 
     const fixed = connect_setup.fixed();
@@ -192,7 +197,7 @@ fn connectSetupAuth(
         return null;
     }) |entry| {
         if (auth_filter.isFiltered(auth_mapped.mem, entry)) |reason| {
-            std.log.debug("ignoring auth because {s} does not match: {}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
+            std.log.debug("ignoring auth because {s} does not match: {f}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
             continue;
         }
         const name = entry.name(auth_mapped.mem);
@@ -206,19 +211,22 @@ fn connectSetupAuth(
             .len = @intCast(data.len),
         };
 
-        const msg_len = x11.connect_setup.getLen(name_x.len, data_x.len);
-        const msg = try c_allocator.alloc(u8, msg_len);
-        defer c_allocator.free(msg);
-        x11.connect_setup.serialize(msg.ptr, 11, 0, name_x, data_x);
-        sendAll(sock, msg) catch |err|
-            return reportError("send connect setup failed with {s}", .{@errorName(err)});
+        {
+            var write_buf: [2000]u8 = undefined;
+            var socket_writer = x11.socketWriter(sock, &write_buf);
+            const writer = &socket_writer.interface;
+            x11.writeConnectSetup(writer, .{
+                .auth_name = name_x,
+                .auth_data = data_x,
+            }) catch |err| return reportError("send connect setup failed with {s}", .{@errorName(err)});
+        }
 
-        const reader = SocketReader{ .context = sock };
-        const connect_setup_header = x11.readConnectSetupHeader(reader, .{}) catch |err|
+        var reader: x11.SocketReader = .init(sock);
+        const connect_setup_header = x11.readConnectSetupHeader(reader.interface(), .{}) catch |err|
             return reportError("failed to read connect setup with {s}", .{@errorName(err)});
         switch (connect_setup_header.status) {
             .failed => {
-                std.log.debug("connect setup failed, version={}.{}, reason='{s}'", .{
+                std.log.debug("connect setup failed, version={}.{}, reason='{f}'", .{
                     connect_setup_header.proto_major_ver,
                     connect_setup_header.proto_minor_ver,
                     connect_setup_header.readFailReason(reader),
@@ -226,7 +234,7 @@ fn connectSetupAuth(
                 // try the next?
             },
             .authenticate => {
-                std.log.debug("AUTHENTICATE with {} failed", .{entry.fmt(auth_mapped.mem)});
+                std.log.debug("AUTHENTICATE with {f} failed", .{entry.fmt(auth_mapped.mem)});
                 // try the next auth
             },
             .success => {
@@ -260,6 +268,14 @@ export fn XCloseDisplay(display_opt: ?*c.Display) c_int {
     //c_allocator.free(@ptrCast([*]u8, display.connect_setup)[0 .. display.connect_setup_len]);
     c_allocator.destroy(display);
     return 0;
+}
+
+export fn XSetIOErrorHandler(
+    handler: ?*const fn (*c.Display) callconv(.c) c_int,
+) usize {
+    const previous = global.io_error_handler;
+    global.io_error_handler = handler;
+    return @intFromPtr(previous);
 }
 
 export fn XCreateSimpleWindow(
@@ -351,7 +367,7 @@ export fn XMapRaised(display: *c.Display, window: c.Window) c_int {
     return 0;
 }
 
-fn handleReadError(err: anytype) noreturn {
+fn handleReadError(display: *c.Display, err: anytype) noreturn {
     switch (err) {
         error.ConnectionResetByPeer,
         error.EndOfStream,
@@ -360,6 +376,9 @@ fn handleReadError(err: anytype) noreturn {
             //@panic("TODO: report x connection closed and/or reset");
             // This seems to be similar to what libx11 does?
             std.io.getStdErr().writer().print("X connection broken\n", .{}) catch @panic("X connection broken");
+            if (global.io_error_handler) |handler| {
+                _ = handler(display);
+            }
             std.process.exit(1);
         },
         error.MessageTooBig => {
@@ -380,12 +399,13 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
     const display_full: *Display = @fieldParentPtr("public", display);
 
     //var header_buf: [32]u8 align(4) = undefined;
-    const len = x11.readOneMsg(SocketReader{ .context = display.fd }, display_full.read_buf) catch |err| handleReadError(err);
+    var reader: x11.SocketReader = .init(display.fd);
+    const len = x11.readOneMsg(reader.interface(), display_full.read_buf) catch |err| handleReadError(display, err);
 
     if (len > display_full.read_buf.len) {
         std.log.err("TODO: realloc read_buf len to be bigger", .{});
         //c_allocator.realloc();
-        x11.readOneMsgFinish(SocketReader{ .context = display.fd }, display_full.read_buf) catch |err| handleReadError(err);
+        x11.readOneMsgFinish(reader.interface(), display_full.read_buf) catch |err| handleReadError(display, err);
         @panic("todo");
     }
 
@@ -403,6 +423,27 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
                     .width = e.width,
                     .height = e.height,
                     .count = e.count,
+                },
+            };
+        },
+        .key_press => |k| {
+            event.* = .{
+                .xkey = .{
+                    .type = c.KeyPress,
+                    .serial = k.sequence,
+                    .send_event = @intFromBool((display_full.read_buf[0] & 0x80) != 0),
+                    .display = display,
+                    .window = @intFromEnum(k.event),
+                    .root = @intFromEnum(k.root),
+                    .subwindow = @intFromEnum(k.child),
+                    .time = @intFromEnum(k.time),
+                    .x = k.event_x,
+                    .y = k.event_y,
+                    .x_root = k.root_x,
+                    .y_root = k.root_y,
+                    .state = @as(u16, @bitCast(k.state)),
+                    .keycode = k.keycode,
+                    .same_screen = k.same_screen,
                 },
             };
         },

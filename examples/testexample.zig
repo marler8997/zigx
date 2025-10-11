@@ -1,7 +1,6 @@
 // A working example to test various parts of the API
 const std = @import("std");
 const x11 = @import("x11");
-const common = @import("common.zig");
 
 const Endian = std.builtin.Endian;
 
@@ -24,6 +23,13 @@ pub const Ids = struct {
     }
     pub fn pixmap(self: Ids) x11.Pixmap {
         return self.base.add(3).pixmap();
+    }
+    // For the X Render extension part of this example
+    pub fn picture_root(self: Ids) x11.render.Picture {
+        return self.base.add(4).picture();
+    }
+    pub fn picture_window(self: Ids) x11.render.Picture {
+        return self.base.add(5).picture();
     }
 };
 
@@ -71,9 +77,34 @@ fn expectSequence(expected_sequence: u16, reply: *const x11.ServerMsg.Reply) voi
     );
 }
 
+/// Sanity check that we're not running into data integrity (corruption) issues caused
+/// by overflowing and wrapping around to the front ofq the buffer.
+fn checkMessageLengthFitsInBuffer(message_length: usize, buffer_limit: usize) !void {
+    if (message_length > buffer_limit) {
+        std.debug.panic("Reply is bigger than our buffer (data corruption will ensue) {} > {}. " ++
+            "In order to fix, increase the buffer size.", .{
+            message_length,
+            buffer_limit,
+        });
+    }
+}
+
+/// Find a picture format that matches the desired attributes like depth.
+/// In the future, we might want to match against more things like which screen it came from, etc.
+pub fn findMatchingPictureFormat(
+    formats: []const x11.render.PictureFormatInfo,
+    desired_depth: u8,
+) !x11.render.PictureFormatInfo {
+    for (formats) |format| {
+        if (format.depth != desired_depth) continue;
+        return format;
+    }
+    return error.VisualTypeNotFound;
+}
+
 pub fn main() !u8 {
     try x11.wsaStartup();
-    const conn = try common.connect(allocator);
+    const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
     var sequence: u16 = 0;
 
@@ -162,12 +193,16 @@ pub fn main() !u8 {
     }
 
     const double_buf = try x11.DoubleBuffer.init(
-        std.mem.alignForward(usize, 1000, std.heap.pageSize()),
+        // 8000 is arbitrary but this needs to be big enough to hold the biggest reply
+        // we expect to receive. For example, the `query_pict_formats` reply is 4888
+        // bytes on my system.
+        std.mem.alignForward(usize, 8000, std.heap.pageSize()),
         .{ .memfd_name = "ZigX11DoubleBuffer" },
     );
     defer double_buf.deinit(); // not necessary but good to test
     std.log.info("read buffer capacity is {}", .{double_buf.half_len});
     var buf = double_buf.contiguousReadBuffer();
+    const buffer_limit = buf.half_len;
 
     // Set the window name
     {
@@ -197,7 +232,9 @@ pub fn main() !u8 {
         });
         try conn.sendOne(&sequence, msg_buf[0..]);
     }
-    _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+
+    var reader: x11.SocketReader = .init(conn.sock);
+    _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
     switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
         .reply => |msg_reply| {
             expectSequence(sequence, msg_reply);
@@ -223,7 +260,7 @@ pub fn main() !u8 {
         x11.query_tree.serialize(&msg_buf, screen.root);
         try conn.sendOne(&sequence, msg_buf[0..]);
     }
-    _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+    _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
     switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
         .reply => |msg_reply| {
             expectSequence(sequence, msg_reply);
@@ -299,7 +336,8 @@ pub fn main() !u8 {
     }
 
     const font_dims: FontDims = blk: {
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
+        try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
@@ -318,9 +356,9 @@ pub fn main() !u8 {
         }
     };
 
-    const opt_render_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, "RENDER");
+    const opt_render_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, "RENDER");
     if (opt_render_ext) |render_ext| {
-        const expected_version: common.ExtensionVersion = .{ .major_version = 0, .minor_version = 10 };
+        const expected_version: x11.ext.ExtensionVersion = .{ .major_version = 0, .minor_version = 10 };
         {
             var msg: [x11.render.query_version.len]u8 = undefined;
             x11.render.query_version.serialize(&msg, render_ext.opcode, .{
@@ -329,7 +367,10 @@ pub fn main() !u8 {
             });
             try conn.sendOne(&sequence, &msg);
         }
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        {
+            const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
+            try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
+        }
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
@@ -357,11 +398,88 @@ pub fn main() !u8 {
                 return 1;
             },
         }
+
+        // Find some compatible picture formats for use with the X Render extension. We want
+        // to find a 24-bit depth format for use with the root and our window.
+        {
+            var msg: [x11.render.query_pict_formats.len]u8 = undefined;
+            x11.render.query_pict_formats.serialize(&msg, render_ext.opcode);
+            try conn.sendOne(&sequence, &msg);
+        }
+        {
+            const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
+            try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
+        }
+        const pict_formats_data: ?struct { matching_picture_format: x11.render.PictureFormatInfo } = blk: {
+            switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
+                .reply => |msg_reply| {
+                    const msg: *x11.render.query_pict_formats.Reply = @ptrCast(msg_reply);
+                    std.log.info("RENDER extension: pict formats num_formats={}, num_screens={}, num_depths={}, num_visuals={}", .{
+                        msg.num_formats,
+                        msg.num_screens,
+                        msg.num_depths,
+                        msg.num_visuals,
+                    });
+                    for (msg.getPictureFormats(), 0..) |format, i| {
+                        std.log.info("RENDER extension: pict format ({}) {any}", .{
+                            i,
+                            format,
+                        });
+                    }
+                    break :blk .{
+                        .matching_picture_format = try findMatchingPictureFormat(
+                            msg.getPictureFormats()[0..],
+                            screen.root_depth,
+                        ),
+                    };
+                },
+                else => |msg| {
+                    std.log.err("expected a reply but got {}", .{msg});
+                    return 1;
+                },
+            }
+        };
+        const matching_picture_format = pict_formats_data.?.matching_picture_format;
+
+        // We need to create a picture for every drawable that we want to use with the X
+        // Render extension
+        // =============================================================================
+        //
+        // Create a picture for the root window that we will copy from in this example
+        {
+            var msg: [x11.render.create_picture.max_len]u8 = undefined;
+            const len = x11.render.create_picture.serialize(&msg, render_ext.opcode, .{
+                .picture_id = ids.picture_root(),
+                .drawable_id = screen.root.drawable(),
+                .format_id = matching_picture_format.picture_format_id,
+                .options = .{
+                    // We want to include (`.include_inferiors`) and sub-windows when we
+                    // copy from the root window. Otherwise, by default, the root window
+                    // would be clipped (`.clip_by_children`) by any sub-window on top.
+                    .subwindow_mode = .include_inferiors,
+                },
+            });
+            try conn.sendOne(&sequence, msg[0..len]);
+        }
+
+        // Create a picture for the our window that we can copy and composite things onto
+        {
+            var msg: [x11.render.create_picture.max_len]u8 = undefined;
+            const len = x11.render.create_picture.serialize(&msg, render_ext.opcode, .{
+                .picture_id = ids.picture_window(),
+                .drawable_id = ids.window().drawable(),
+                .format_id = matching_picture_format.picture_format_id,
+                .options = .{
+                    .subwindow_mode = .include_inferiors,
+                },
+            });
+            try conn.sendOne(&sequence, msg[0..len]);
+        }
     }
 
-    const opt_shape_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, "SHAPE");
+    const opt_shape_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, "SHAPE");
     if (opt_shape_ext) |shape_ext| {
-        const expected_version: common.ExtensionVersion = .{ .major_version = 1, .minor_version = 1 };
+        const expected_version: x11.ext.ExtensionVersion = .{ .major_version = 1, .minor_version = 1 };
 
         {
             var msg: [x11.shape.query_version.len]u8 = undefined;
@@ -369,7 +487,8 @@ pub fn main() !u8 {
             try conn.sendOne(&sequence, &msg);
         }
 
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        const message_length = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
+        try checkMessageLengthFitsInBuffer(message_length, buffer_limit);
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
@@ -399,9 +518,9 @@ pub fn main() !u8 {
         }
     }
 
-    const opt_test_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, "XTEST");
+    const opt_test_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, "XTEST");
     if (opt_test_ext) |test_ext| {
-        const expected_version: common.ExtensionVersion = .{ .major_version = 2, .minor_version = 2 };
+        const expected_version: x11.ext.ExtensionVersion = .{ .major_version = 2, .minor_version = 2 };
         {
             var msg: [x11.testext.get_version.len]u8 = undefined;
             x11.testext.get_version.serialize(&msg, .{
@@ -411,7 +530,7 @@ pub fn main() !u8 {
             });
             try conn.sendOne(&sequence, &msg);
         }
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 expectSequence(sequence, msg_reply);
@@ -516,7 +635,7 @@ pub fn main() !u8 {
             //buf.resetIfEmpty();
             switch (x11.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
-                    std.log.err("{}", .{msg});
+                    std.log.err("Received X error: {}", .{msg});
                     return 1;
                 },
                 .reply => |msg| {
@@ -532,6 +651,10 @@ pub fn main() !u8 {
                     if (!handled) {
                         std.debug.panic("unexpected reply {}", .{msg});
                     }
+                },
+                .generic_extension_event => |msg| {
+                    std.log.info("TODO: handle a generic extension event {}", .{msg});
+                    return error.TodoHandleGenericExtensionEvent;
                 },
                 .key_press => |msg| {
                     std.log.info("key_press: keycode={}", .{msg.keycode});
@@ -568,6 +691,8 @@ pub fn main() !u8 {
                         conn_setup_result.image_format,
                         ids,
                         font_dims,
+
+                        opt_render_ext,
                     );
 
                     if (maybe_get_img_sequence == null) {
@@ -632,6 +757,7 @@ fn render(
     image_format: ImageFormat,
     ids: Ids,
     font_dims: FontDims,
+    opt_render_ext: ?x11.ext.ExtensionInfo,
 ) !void {
     {
         var msg: [x11.poly_fill_rectangle.getLen(1)]u8 = undefined;
@@ -641,7 +767,7 @@ fn render(
         }, &[_]x11.Rectangle{
             .{ .x = 100, .y = 100, .width = 200, .height = 200 },
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     {
         var msg: [x11.clear_area.len]u8 = undefined;
@@ -651,7 +777,7 @@ fn render(
             .width = 100,
             .height = 100,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0xffaadd, depth));
@@ -668,7 +794,7 @@ fn render(
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     {
         const text_literal: []const u8 = "PolyText8";
@@ -685,7 +811,7 @@ fn render(
             .x = @divTrunc((window_width - @as(i16, @intCast(text_width))), 2) + font_dims.font_left,
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent + font_dims.height + 1,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0x00ff00, depth));
@@ -699,7 +825,7 @@ fn render(
             .drawable_id = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
         }, &rectangles);
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
     try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0x0000ff, depth));
     {
@@ -712,7 +838,7 @@ fn render(
             .drawable_id = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
         }, &rectangles);
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     const test_image_scanline_len = blk: {
@@ -747,7 +873,7 @@ fn render(
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
+        try x11.ext.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
 
         // test a pixmap
         {
@@ -759,7 +885,7 @@ fn render(
                 .width = test_image.width,
                 .height = test_image.height,
             });
-            try common.sendOne(sock, sequence, &msg);
+            try x11.ext.sendOne(sock, sequence, &msg);
         }
         x11.put_image.serializeNoDataCopy(&put_image_msg, test_image_data_len, .{
             .format = .z_pixmap,
@@ -772,7 +898,7 @@ fn render(
             .left_pad = 0,
             .depth = image_format.depth,
         });
-        try common.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
+        try x11.ext.sendOne(sock, sequence, put_image_msg[0..x11.put_image.getLen(test_image_data_len)]);
 
         {
             var msg: [x11.copy_area.len]u8 = undefined;
@@ -787,13 +913,36 @@ fn render(
                 .width = test_image.width,
                 .height = test_image.height,
             });
-            try common.sendOne(sock, sequence, &msg);
+            try x11.ext.sendOne(sock, sequence, &msg);
         }
 
         {
             var msg: [x11.free_pixmap.len]u8 = undefined;
             x11.free_pixmap.serialize(&msg, ids.pixmap());
-            try common.sendOne(sock, sequence, &msg);
+            try x11.ext.sendOne(sock, sequence, &msg);
+        }
+    }
+
+    if (opt_render_ext) |render_ext| {
+        // Capture a small 100x100 screenshot of the top-left of the root window and
+        // composite it onto our window.
+        {
+            var msg: [x11.render.composite.len]u8 = undefined;
+            x11.render.composite.serialize(&msg, render_ext.opcode, .{
+                .picture_operation = .over,
+                .src_picture_id = ids.picture_root(),
+                .mask_picture_id = x11.render.Picture.none,
+                .dst_picture_id = ids.picture_window(),
+                .src_x = 0,
+                .src_y = 0,
+                .mask_x = 0,
+                .mask_y = 0,
+                .dst_x = 50,
+                .dst_y = 50,
+                .width = 100,
+                .height = 100,
+            });
+            try x11.ext.sendOne(sock, sequence, &msg);
         }
     }
 }
@@ -803,7 +952,7 @@ fn changeGcColor(sock: std.posix.socket_t, sequence: *u16, gc_id: x11.GraphicsCo
     const len = x11.change_gc.serialize(&msg_buf, gc_id, .{
         .foreground = color,
     });
-    try common.sendOne(sock, sequence, msg_buf[0..len]);
+    try x11.ext.sendOne(sock, sequence, msg_buf[0..len]);
 }
 
 fn getTestImagePixel(row: usize) u24 {

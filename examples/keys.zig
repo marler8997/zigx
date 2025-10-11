@@ -20,7 +20,7 @@ pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const allocator = arena.allocator();
 
-    const conn = try common.connect(allocator);
+    const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     const screen = blk: {
@@ -105,7 +105,7 @@ pub fn main() !u8 {
     std.log.info("read buffer capacity is {}", .{double_buf.half_len});
     var buf = double_buf.contiguousReadBuffer();
 
-    const maybe_dbe_ext = try common.getExtensionInfo(conn.sock, &sequence, &buf, x11.dbe.name.nativeSlice());
+    const maybe_dbe_ext = try x11.ext.getExtensionInfo(conn.sock, &sequence, &buf, x11.dbe.name.nativeSlice());
     var dbe: Dbe = .unsupported;
     if (maybe_dbe_ext) |ext| {
         try allocateBackBuffer(conn.sock, &sequence, ext.opcode, ids.window(), ids.backBuffer());
@@ -121,8 +121,10 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, &msg);
     }
 
+    var reader: x11.SocketReader = .init(conn.sock);
+
     const font_dims: FontDims = blk: {
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        _ = try x11.readOneMsg(reader.interface(), @alignCast(buf.nextReadBuffer()));
         switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
                 const msg: *x11.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
@@ -146,7 +148,7 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, &msg);
     }
 
-    var key_log: std.BoundedArray(KeyEvent, 80) = .{ .len = 0, .buffer = undefined };
+    var key_log: x11.BoundedArray(KeyEvent, 80) = .{ .len = 0, .buffer = undefined };
     var key_log_next: usize = 0;
 
     while (true) {
@@ -253,6 +255,7 @@ pub fn main() !u8 {
                 .map_notify,
                 .reparent_notify,
                 .configure_notify,
+                .generic_extension_event,
                 => unreachable, // did not register for these
             }
         }
@@ -290,7 +293,7 @@ fn allocateBackBuffer(
         .backbuffer = back_buffer,
         .swapaction = .background,
     });
-    try common.sendOne(sock, sequence, &msg);
+    try x11.ext.sendOne(sock, sequence, &msg);
 }
 
 fn deallocateBackBuffer(
@@ -304,7 +307,7 @@ fn deallocateBackBuffer(
         .ext_opcode = dbe_ext_opcode,
         .backbuffer = back_buffer,
     });
-    try common.sendOne(sock, sequence, &msg);
+    try x11.ext.sendOne(sock, sequence, &msg);
 }
 
 fn swapBuffers(sock: std.posix.socket_t, sequence: *u16, dbe_ext_opcode: u8, window: x11.Window) !void {
@@ -319,7 +322,7 @@ fn swapBuffers(sock: std.posix.socket_t, sequence: *u16, dbe_ext_opcode: u8, win
     x11.dbe.swap.serialize(&msg, swap_infos_x11, .{
         .ext_opcode = dbe_ext_opcode,
     });
-    try common.sendOne(sock, sequence, &msg);
+    try x11.ext.sendOne(sock, sequence, &msg);
 }
 
 const FontDims = struct {
@@ -353,7 +356,7 @@ fn render(
             .width = window_width,
             .height = window_height,
         });
-        try common.sendOne(sock, sequence, &msg);
+        try x11.ext.sendOne(sock, sequence, &msg);
     }
 
     const target_drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
@@ -446,9 +449,8 @@ fn renderString(
         .y = pos.y,
     });
     const msg_len: usize = x11.poly_text8.getLen(&items);
-    try common.sendOne(sock, sequence, msg_buf[0..msg_len]);
+    try x11.ext.sendOne(sock, sequence, msg_buf[0..msg_len]);
 }
 
 const std = @import("std");
 const x11 = @import("x11");
-const common = @import("common.zig");

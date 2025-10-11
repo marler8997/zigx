@@ -32,13 +32,15 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const windows = std.os.windows;
 
+pub const ext = @import("x/ext.zig");
 pub const inputext = @import("xinputext.zig");
-pub const render = @import("xrender.zig");
+pub const render = @import("render.zig");
 pub const dbe = @import("xdbe.zig");
 pub const shape = @import("xshape.zig");
 pub const testext = @import("xtest.zig");
 
 // Expose some helpful stuff
+pub const BoundedArray = @import("bounded_array.zig").BoundedArray;
 pub const MappedFile = @import("MappedFile.zig");
 pub const charset = @import("charset.zig");
 pub const Charset = charset.Charset;
@@ -47,6 +49,15 @@ pub const ContiguousReadBuffer = @import("ContiguousReadBuffer.zig");
 pub const Slice = @import("x/slice.zig").Slice;
 pub const SliceWithMaxLen = @import("x/slice.zig").SliceWithMaxLen;
 pub const keymap = @import("keymap.zig");
+
+pub const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
+const socketwriter = @import("socketwriter.zig");
+pub const SocketWriter = socketwriter.SocketWriter;
+pub fn socketWriter(sock: std.posix.socket_t, buffer: []u8) SocketWriter {
+    if (zig_atleast_15) return (std.net.Stream{ .handle = sock }).writer(buffer);
+    return .init(.{ .handle = sock }, buffer);
+}
+pub const Writer = @import("writer.zig").Writer;
 
 const x_test = @import("test/x_test.zig");
 
@@ -63,6 +74,44 @@ pub const max_display_num = max_port - TcpBasePort;
 
 pub const BigEndian = 'B';
 pub const LittleEndian = 'l';
+
+pub fn Pad(comptime align_to: comptime_int) type {
+    return switch (align_to) {
+        4 => u2,
+        8 => u3,
+        else => @compileError("unsupported alignment"),
+    };
+}
+/// Returns the padding needed to align the given len.
+pub fn padLen(comptime align_to: comptime_int, len: Pad(align_to)) Pad(align_to) {
+    return (0 -% len) & (align_to - 1);
+}
+
+// Returns the padding needed to align the given content len to 4-bytes.
+// Note that it returns 0 for values already 4-byte aligned.
+pub fn pad4Len(len: u2) u2 {
+    return padLen(4, len);
+}
+
+test padLen {
+    try std.testing.expectEqual(0, pad4Len(0));
+    try std.testing.expectEqual(0, pad4Len(@truncate(4)));
+    try std.testing.expectEqual(0, pad4Len(@truncate(8)));
+    try std.testing.expectEqual(1, pad4Len(3)); // 7 -> 8
+    try std.testing.expectEqual(2, pad4Len(2)); // 6 -> 8
+    try std.testing.expectEqual(3, pad4Len(1)); // 1 -> 4
+    try std.testing.expectEqual(2, pad4Len(@truncate(14)));
+    try std.testing.expectEqual(3, pad4Len(@truncate(29)));
+
+    inline for (&.{ 4, 8 }) |align_to| {
+        for (0..10) |multiplier| {
+            try std.testing.expectEqual(0, padLen(align_to, @truncate(multiplier * align_to)));
+        }
+        for (1..align_to + 1) |i| {
+            try std.testing.expectEqual(align_to - i, padLen(align_to, @truncate(i)));
+        }
+    }
+}
 
 // TODO: is there another way to do this, is this somewhere in std?
 pub fn optEql(optLeft: anytype, optRight: anytype) bool {
@@ -266,7 +315,8 @@ pub const DisplayNum = enum(u16) {
         return TcpBasePort + @as(u16, @intFromEnum(self));
     }
 
-    pub fn format(
+    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
+    fn formatLegacy(
         self: DisplayNum,
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
@@ -274,6 +324,9 @@ pub const DisplayNum = enum(u16) {
     ) !void {
         _ = fmt;
         _ = options;
+        try writer.print("{}", .{@intFromEnum(self)});
+    }
+    fn formatNew(self: DisplayNum, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("{}", .{@intFromEnum(self)});
     }
 };
@@ -302,7 +355,7 @@ pub fn connectExplicit(optional_host: ?[]const u8, optional_protocol: ?Protocol,
         if (builtin.os.tag == .windows) {
             std.log.err(
                 "unsure how to connect to DISPLAY :{} on windows, how about specifing a hostname? i.e. localhost:{0}",
-                .{display_num},
+                .{@intFromEnum(display_num)},
             );
             std.process.exit(0xff);
         }
@@ -362,6 +415,31 @@ const TcpConnectError = error{
     SystemResources,
 };
 fn tcpConnect(addr: std.net.Address) TcpConnectError!posix.socket_t {
+    if (zig_atleast_15) return (std.net.tcpConnectToAddress(addr) catch |err| switch (err) {
+        error.ConnectionTimedOut,
+        error.ConnectionRefused,
+        error.NetworkUnreachable,
+        error.ConnectionPending,
+        error.ConnectionResetByPeer,
+        => return error.ConnectionRefused,
+        error.SystemResources,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        => return error.SystemResources,
+        error.AccessDenied,
+        error.PermissionDenied,
+        => return error.AccessDenied,
+        error.AddressInUse,
+        error.AddressNotAvailable,
+        error.WouldBlock,
+        error.Unexpected,
+        error.FileNotFound,
+        error.AddressFamilyNotSupported,
+        error.ProtocolFamilyNotAvailable,
+        error.ProtocolNotSupported,
+        error.SocketTypeNotSupported,
+        => |e| std.debug.panic("TCP connect to {f} failed with {s}", .{ addr, @errorName(e) }),
+    }).handle;
     return (std.net.tcpConnectToAddress(addr) catch |err| switch (err) {
         error.ConnectionTimedOut,
         error.ConnectionRefused,
@@ -397,8 +475,8 @@ pub fn connectUnixDisplayNum(display_num: DisplayNum) ConnectError!posix.socket_
     var addr = posix.sockaddr.un{ .family = posix.AF.UNIX, .path = undefined };
     const path = std.fmt.bufPrintZ(
         &addr.path,
-        "{s}{}",
-        .{ path_prefix, display_num },
+        "{s}{d}",
+        .{ path_prefix, @intFromEnum(display_num) },
     ) catch unreachable;
     return connectUnixAddr(&addr, path.len);
 }
@@ -414,7 +492,19 @@ pub fn connectUnixPath(socket_path: []const u8) ConnectError!posix.socket_t {
 }
 
 pub fn connectUnixAddr(addr: *const posix.sockaddr.un, path_len: usize) ConnectError!posix.socket_t {
-    const sock = posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| switch (err) {
+    const sock = if (zig_atleast_15) posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| switch (err) {
+        error.SystemResources => |e| return e,
+        error.AccessDenied => return error.AccessDenied,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        => return error.SystemResources,
+        error.AddressFamilyNotSupported,
+        error.ProtocolFamilyNotAvailable,
+        error.ProtocolNotSupported,
+        error.SocketTypeNotSupported,
+        error.Unexpected,
+        => |e| std.debug.panic("create socket failed with {s}", .{@errorName(e)}),
+    } else posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| switch (err) {
         error.SystemResources => |e| return e,
         error.PermissionDenied => return error.AccessDenied,
         error.ProcessFdQuotaExceeded,
@@ -576,7 +666,24 @@ pub fn getAuthFilename(allocator: std.mem.Allocator) AuthFilenameError!?AuthFile
 fn xauthFileExists(dir: std.fs.Dir, sub_path: [*:0]const u8) !bool {
     if (dir.accessZ(sub_path, .{})) {
         return true;
-    } else |err| switch (err) {
+    } else |err| if (zig_atleast_15) switch (err) {
+        error.InvalidUtf8,
+        error.NameTooLong,
+        error.InvalidWtf8,
+        error.BadPathName,
+        => return error.BadXauthEnv,
+        error.InputOutput,
+        error.SystemResources,
+        error.Unexpected,
+        error.SymLinkLoop,
+        error.FileBusy,
+        => |e| return e,
+        error.FileNotFound => return false,
+        error.PermissionDenied,
+        error.AccessDenied,
+        => return error.AccessDenied,
+        error.ReadOnlyFileSystem => unreachable,
+    } else switch (err) {
         error.InvalidUtf8,
         error.NameTooLong,
         error.InvalidWtf8,
@@ -621,7 +728,11 @@ pub const Addr = struct {
     family: AuthFamily,
     data: []const u8,
 
-    pub fn format(
+    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+        formatLegacy
+    else
+        formatNew;
+    fn formatLegacy(
         self: Addr,
         comptime fmt_spec: []const u8,
         options: std.fmt.FormatOptions,
@@ -643,6 +754,20 @@ pub const Addr = struct {
                 std.fmt.fmtSliceHexLower(d),
                 family,
             }),
+        }
+    }
+    fn formatNew(self: Addr, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        const d = self.data;
+        switch (self.family) {
+            .inet => if (d.len == 4) {
+                try writer.print("{}.{}.{}.{}", .{ d[0], d[1], d[2], d[3] });
+            } else {
+                // TODO: support ipv6?
+                try writer.print("{x}/inet", .{d});
+            },
+            .unix => try writer.print("{s}/unix", .{d}),
+            .wild => try writer.print("*", .{}),
+            else => |family| try writer.print("{x}/{}", .{ d, family }),
         }
     }
 };
@@ -718,7 +843,11 @@ pub const AuthIteratorEntry = struct {
     const Formatter = struct {
         mem: []const u8,
         entry: AuthIteratorEntry,
-        pub fn format(
+        pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+            formatLegacy
+        else
+            formatNew;
+        fn formatLegacy(
             self: Formatter,
             comptime fmt_spec: []const u8,
             options: std.fmt.FormatOptions,
@@ -737,6 +866,19 @@ pub const AuthIteratorEntry = struct {
                 std.zig.fmtEscapes(self.entry.name(self.mem)),
                 data_slice.len,
                 std.fmt.fmtSliceHexUpper(data_slice),
+            });
+        }
+        fn formatNew(self: Formatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            const data_slice = self.entry.data(self.mem);
+            try writer.print("address={f} display={?f} name='{f}' data {} bytes: {X}", .{
+                Addr{
+                    .family = self.entry.family,
+                    .data = self.entry.addr(self.mem),
+                },
+                self.entry.display_num,
+                std.zig.fmtString(self.entry.name(self.mem)),
+                data_slice.len,
+                data_slice,
             });
         }
     };
@@ -789,52 +931,34 @@ pub const AuthIterator = struct {
     }
 };
 
-pub const connect_setup = struct {
-    pub const max_auth_name_len = std.math.maxInt(u16);
-    pub const max_auth_data_len = std.math.maxInt(u16);
-    pub const max_len = getLen(max_auth_name_len, max_auth_data_len);
+const native_endian = builtin.target.cpu.arch.endian();
 
-    pub const auth_offset =
-        1 // byte-order
-        + 1 // unused
-        + 2 // proto_major_ver
-        + 2 // proto_minor_ver
-        + 2 // auth_name_len
-        + 2 // auth_data_len
-        + 2 // unused
-    ;
-    pub fn getLen(auth_name_len: u16, auth_data_len: u16) u32 {
-        return auth_offset
-        //+ auth_name_len
-        //+ pad4(u16, auth_name_len)
-        + std.mem.alignForward(u32, auth_name_len, 4)
-            //+ auth_data_len
-            //+ pad4(u16, auth_data_len)
-        + std.mem.alignForward(u32, auth_data_len, 4);
-    }
-
-    pub fn serialize(
-        buf: [*]u8,
-        proto_major_ver: u16,
-        proto_minor_ver: u16,
+pub fn writeConnectSetup(
+    writer: *Writer,
+    args: struct {
+        version_major: u16 = 11,
+        version_minor: u16 = 0,
         auth_name: Slice(u16, [*]const u8),
         auth_data: Slice(u16, [*]const u8),
-    ) void {
-        buf[0] = @as(u8, if (builtin.target.cpu.arch.endian() == .big) BigEndian else LittleEndian);
-        buf[1] = 0; // unused
-        writeIntNative(u16, buf + 2, proto_major_ver);
-        writeIntNative(u16, buf + 4, proto_minor_ver);
-        writeIntNative(u16, buf + 6, auth_name.len);
-        writeIntNative(u16, buf + 8, auth_data.len);
-        writeIntNative(u16, buf + 10, 0); // unused
-        @memcpy(buf[12..][0..auth_name.len], auth_name.nativeSlice());
-        //const off = 12 + pad4(u16, auth_name.len);
-        const off: u16 = 12 + std.mem.alignForward(u16, auth_name.len, 4);
-        @memcpy(buf[off..][0..auth_data.len], auth_data.nativeSlice());
-        std.debug.assert(getLen(auth_name.len, auth_data.len) ==
-            off + std.mem.alignForward(u16, auth_data.len, 4));
-    }
-};
+    },
+) Writer.Error!void {
+    // TODO: how can we test this function?
+    try writer.writeAll(&[_]u8{
+        @as(u8, if (native_endian == .big) BigEndian else LittleEndian),
+        0, // unused
+    });
+    try writer.writeInt(u16, args.version_major, native_endian);
+    try writer.writeInt(u16, args.version_minor, native_endian);
+    try writer.writeInt(u16, args.auth_name.len, native_endian);
+    try writer.writeInt(u16, args.auth_data.len, native_endian);
+    try writer.writeAll("\x00\x00"); // unused
+    try writer.writeAll(args.auth_name.nativeSlice());
+    const pad_buf = [_]u8{0} ** 4;
+    try writer.writeAll(pad_buf[0..pad4Len(@truncate(args.auth_name.len))]);
+    try writer.writeAll(args.auth_data.nativeSlice());
+    try writer.writeAll(pad_buf[0..pad4Len(@truncate(args.auth_data.len))]);
+    try writer.flush();
+}
 
 pub const ResourceBase = enum(u32) {
     _,
@@ -847,9 +971,16 @@ pub const ResourceBase = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub fn format(v: ResourceBase, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+        formatLegacy
+    else
+        formatNew;
+    fn formatLegacy(v: ResourceBase, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = opt;
+        try writer.print("ResourceBase({})", .{@intFromEnum(v)});
+    }
+    fn formatNew(v: ResourceBase, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("ResourceBase({})", .{@intFromEnum(v)});
     }
 };
@@ -882,9 +1013,24 @@ pub const Resource = enum(u32) {
         return @enumFromInt(@intFromEnum(r));
     }
 
-    pub fn format(v: Resource, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn picture(r: Resource) render.Picture {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
+    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+        formatLegacy
+    else
+        formatNew;
+    fn formatLegacy(v: Resource, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = opt;
+        if (v == .none) {
+            try writer.writeAll("Resource(<none>)");
+        } else {
+            try writer.print("Resource({})", .{@intFromEnum(v)});
+        }
+    }
+    fn formatNew(v: Resource, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (v == .none) {
             try writer.writeAll("Resource(<none>)");
         } else {
@@ -1192,7 +1338,7 @@ pub const WinGravity = enum(u4) {
     static = 10,
 };
 
-fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool {
+pub fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool {
     const default_value_ptr = @as(?*align(1) const field.type, @ptrCast(field.default_value_ptr)) orelse
         @compileError("isDefaultValue was called on field '" ++ field.name ++ "' which has no default value");
     switch (@typeInfo(field.type)) {
@@ -1206,7 +1352,7 @@ fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool
     }
 }
 
-fn optionToU32(value: anytype) u32 {
+pub fn optionToU32(value: anytype) u32 {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
         .bool => return @intFromBool(value),
@@ -1874,6 +2020,10 @@ pub const get_font_path = struct {
     }
 };
 
+pub const SubWindowMode = enum(u8) {
+    clip_by_children = 0,
+    include_inferiors = 1,
+};
 pub const gc_option_count = 23;
 pub const GcOptionMask = packed struct(u32) {
     function: u1 = 0,
@@ -1921,7 +2071,7 @@ pub const GcOptions = struct {
     // tile_stipple_y_origin 0
     font: ?Font = null,
     // font <server dependent>
-    // subwindow_mode clip_by_children
+    subwindow_mode: SubWindowMode = .clip_by_children,
     graphics_exposures: bool = true,
     // clip_x_origin 0
     // clip_y_origin 0
@@ -2079,6 +2229,9 @@ pub const clear_area = struct {
     }
 };
 
+/// The src and dest drawables must have the same root and depth. If you want to copy
+/// between two different drawables with different depths, use the X Render extension
+/// -> `composite`.
 pub const copy_area = struct {
     pub const len = 28;
     pub const Args = struct {
@@ -2478,6 +2631,30 @@ pub fn readIntNative(comptime T: type, buf: [*]const u8) T {
     return @as(*align(1) const T, @ptrCast(buf)).*;
 }
 
+const SocketReaderLegacy = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocketLegacy);
+pub fn readSocketLegacy(sock: std.posix.socket_t, buffer: []u8) !usize {
+    return readSock(sock, buffer, 0);
+}
+
+pub const SocketReader = struct {
+    pub const Error = if (zig_atleast_15) std.Io.Reader.Error else std.posix.RecvFromError;
+
+    context: if (zig_atleast_15) std.net.Stream.Reader else std.posix.socket_t,
+    pub fn init(sock: std.posix.socket_t) SocketReader {
+        return if (zig_atleast_15)
+            .{ .context = (std.net.Stream{ .handle = sock }).reader(&.{}) }
+        else
+            .{ .context = sock };
+    }
+    pub fn interface(self: *SocketReader) if (zig_atleast_15) *std.Io.Reader else SocketReaderLegacy {
+        return if (zig_atleast_15) self.context.interface() else .{ .context = self.context };
+    }
+    pub fn read(self: SocketReader, buf: []u8) !usize {
+        if (zig_atleast_15) return self.context.read(buf);
+        return readSock(self.context, buf, 0);
+    }
+};
+
 pub fn recvFull(sock: posix.socket_t, buf: []u8) !void {
     std.debug.assert(buf.len > 0);
     var total_received: usize = 0;
@@ -2629,6 +2806,8 @@ pub const EventCode = enum(u8) {
 
 pub const ErrorKind = enum(u8) { err = 0 };
 pub const ReplyKind = enum(u8) { reply = 1 };
+// From the X Generic Event Extension
+pub const GenericEventKind = enum(u8) { generic_extension_event = 35 };
 pub const ServerMsgKind = enum(u8) {
     err = @intFromEnum(ErrorKind.err),
     reply = @intFromEnum(ReplyKind.reply),
@@ -2665,6 +2844,7 @@ pub const ServerMsgKind = enum(u8) {
     colormap_notify = @intFromEnum(EventCode.colormap_notify),
     client_message = @intFromEnum(EventCode.client_message),
     mapping_notify = @intFromEnum(EventCode.mapping_notify),
+    generic_extension_event = @intFromEnum(GenericEventKind.generic_extension_event),
     _,
 };
 
@@ -2688,6 +2868,7 @@ pub const ServerMsgTaggedUnion = union(enum) {
     reparent_notify: *align(4) Event.ReparentNotify,
     configure_notify: *align(4) Event.ConfigureNotify,
     mapping_notify: *align(4) Event.MappingNotify,
+    generic_extension_event: *align(4) ServerMsg.GenericExtensionEvent,
 };
 pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
     switch (@as(ServerMsgKind, @enumFromInt(0x7f & msg_ptr[0]))) {
@@ -2709,6 +2890,7 @@ pub fn serverMsgTaggedUnion(msg_ptr: [*]align(4) u8) ServerMsgTaggedUnion {
         .reparent_notify => return .{ .reparent_notify = @ptrCast(msg_ptr) },
         .configure_notify => return .{ .configure_notify = @ptrCast(msg_ptr) },
         .mapping_notify => return .{ .mapping_notify = @ptrCast(msg_ptr) },
+        .generic_extension_event => return .{ .generic_extension_event = @ptrCast(msg_ptr) },
         else => return .{ .unhandled = @ptrCast(msg_ptr) },
     }
 }
@@ -2717,6 +2899,7 @@ pub const ServerMsg = extern union {
     generic: Generic,
     err: Error,
     reply: Reply,
+    generic_extension_event: GenericExtensionEvent,
     query_font: QueryFont,
     query_text_extents: QueryTextExtents,
     list_fonts: ListFonts,
@@ -2740,6 +2923,22 @@ pub const ServerMsg = extern union {
     };
     comptime {
         std.debug.assert(@sizeOf(Reply) == 32);
+    }
+
+    // From the X Generic Event Extension
+    pub const GenericExtensionEvent = extern struct {
+        response_type: GenericEventKind,
+        /// The major opcode of the extension.
+        ext_opcode: u8,
+        sequence: u16,
+        /// The length field specifies the number of 4-byte blocks after the
+        /// initial 32 bytes. If length is 0, the event is 32 bytes long.
+        word_len: u32, // length in 4-byte words
+        event_opcode: u16,
+        reserve_min: [22]u8,
+    };
+    comptime {
+        std.debug.assert(@sizeOf(GenericExtensionEvent) == 32);
     }
 
     comptime {
@@ -3235,12 +3434,25 @@ pub const StringListIterator = struct {
     }
 };
 
+/// Given the first 32 bytes of a given message coming across the wire,
+/// parse out the given type and return the number of bytes that should be in the message
 pub fn parseMsgLen(buf: [32]u8) u32 {
     switch (buf[0] & 0x7f) {
         @intFromEnum(ServerMsgKind.err) => return 32,
-        @intFromEnum(ServerMsgKind.reply) => return 32 + (4 * readIntNative(u32, buf[4..8])),
+        @intFromEnum(ServerMsgKind.reply), @intFromEnum(ServerMsgKind.generic_extension_event) => {
+            // Here is how those `4` and `8` magic numbers offsets are derived:
+            // const start_offset = @offsetOf(ServerMsg.Reply, "word_len");
+            // const end_offset = start_offset + @sizeOf(std.meta.FieldType(ServerMsg.Reply, .word_len));
+            //
+            // Or in the case of the generic extension event:
+            // const start_offset = @offsetOf(ServerMsg.GenericExtensionEvent, "word_len");
+            // const end_offset = start_offset + @sizeOf(std.meta.FieldType(ServerMsg.GenericExtensionEvent, .word_len));
+            //
+            const calculated_msg_length = 32 + (4 * readIntNative(u32, buf[4..8]));
+            return calculated_msg_length;
+        },
         2...34 => return 32,
-        else => |t| std.debug.panic("handle reply type {}", .{t}),
+        else => |t| std.debug.panic("We currently do not handle reply type {}", .{t}),
     }
 }
 
@@ -3346,7 +3558,31 @@ pub const VisualType = extern struct {
     unused: u32,
 };
 
-pub fn readFull(reader: anytype, buf: []u8) (@TypeOf(reader).Error || error{EndOfStream})!void {
+// const SocketReadError = if (zig_atleast_15) std.Io.Reader.Error else std.posix.RecvFromError;
+// pub fn readFullSock(sock: std.posix.socket_t, buf: []u8) SocketReadError!void {
+//     std.debug.assert(buf.len > 0);
+
+//     if (zig_atleast_15) {
+//         var reader = (std.net.Stream{ .handle = sock }).reader();
+//         return reader.readSliceAll(buf);
+//     }
+
+//     var total_received: usize = 0;
+//     while (true) {
+//         const last_received = try readSock(buf[total_received..]);
+//         if (last_received == 0)
+//             return error.EndOfStream;
+//         total_received += last_received;
+//         if (total_received == buf.len)
+//             break;
+//     }
+// }
+
+pub const readFull = if (zig_atleast_15) readFullNew else readFullLegacy;
+fn readFullNew(reader: *std.Io.Reader, buf: []u8) std.Io.Reader.Error!void {
+    return reader.readSliceAll(buf);
+}
+fn readFullLegacy(reader: anytype, buf: []u8) (@TypeOf(reader).Error || error{EndOfStream})!void {
     std.debug.assert(buf.len > 0);
     var total_received: usize = 0;
     while (true) {
@@ -3363,7 +3599,26 @@ pub const ReadConnectSetupHeaderOptions = struct {
     read_timeout_ms: i32 = -1,
 };
 
-pub fn readConnectSetupHeader(reader: anytype, options: ReadConnectSetupHeaderOptions) !ConnectSetup.Header {
+pub const readConnectSetupHeader = if (zig_atleast_15)
+    readConnectSetupHeaderNew
+else
+    readConnectSetupHeaderLegacy;
+
+fn readConnectSetupHeaderNew(
+    reader: *std.Io.Reader,
+    options: ReadConnectSetupHeaderOptions,
+) !ConnectSetup.Header {
+    var header: ConnectSetup.Header = undefined;
+    if (options.read_timeout_ms == -1) {
+        try readFull(reader, header.asBuf());
+        return header;
+    }
+    @panic("read timeout not implemented");
+}
+fn readConnectSetupHeaderLegacy(
+    reader: anytype,
+    options: ReadConnectSetupHeaderOptions,
+) !ConnectSetup.Header {
     var header: ConnectSetup.Header = undefined;
     if (options.read_timeout_ms == -1) {
         try readFull(reader, header.asBuf());
@@ -3375,7 +3630,11 @@ pub fn readConnectSetupHeader(reader: anytype, options: ReadConnectSetupHeaderOp
 pub const FailReason = struct {
     buf: [256]u8,
     len: u8,
-    pub fn format(
+    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
+    pub fn formatNew(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.writeAll(self.buf[0..self.len]);
+    }
+    pub fn formatLegacy(
         self: @This(),
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
@@ -3437,10 +3696,13 @@ pub const ConnectSetup = struct {
 
         pub fn readFailReason(self: @This(), reader: anytype) FailReason {
             var result: FailReason = undefined;
-            result.len = @intCast(reader.readAll(result.buf[0..self.status_opt]) catch |read_err|
-                (std.fmt.bufPrint(&result.buf, "failed to read failure reason: {s}", .{@errorName(read_err)}) catch |err| switch (err) {
+            if (readFull(reader, result.buf[0..self.status_opt])) {
+                result.len = self.status_opt;
+            } else |read_err| {
+                result.len = @intCast((std.fmt.bufPrint(&result.buf, "failed to read failure reason: {s}", .{@errorName(read_err)}) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 }).len);
+            }
             return result;
         }
     };
@@ -3485,7 +3747,7 @@ pub const ConnectSetup = struct {
         return format_list_offset + (@sizeOf(Format) * format_count);
     }
     pub fn getFormatListPtr(self: @This(), format_list_offset: u32) [*]align(4) Format {
-        return @alignCast(@ptrCast(self.buf.ptr + format_list_offset));
+        return @ptrCast(@alignCast(self.buf.ptr + format_list_offset));
     }
     pub fn getFormatList(self: @This(), format_list_offset: u32, format_list_limit: u32) ![]align(4) Format {
         if (format_list_limit > self.buf.len)
@@ -3494,10 +3756,10 @@ pub const ConnectSetup = struct {
     }
 
     pub fn getFirstScreenPtr(self: @This(), format_list_limit: u32) *align(4) Screen {
-        return @alignCast(@ptrCast(self.buf.ptr + format_list_limit));
+        return @ptrCast(@alignCast(self.buf.ptr + format_list_limit));
     }
     pub fn getScreensPtr(self: @This(), format_list_limit: u32) [*]align(4) Screen {
-        return @alignCast(@ptrCast(self.buf.ptr + format_list_limit));
+        return @ptrCast(@alignCast(self.buf.ptr + format_list_limit));
     }
     pub fn getScreens(self: @This(), allocator: std.mem.Allocator) ![]align(4) *Screen {
         const format_list_offset = ConnectSetup.getFormatListOffset(self.fixed().vendor_len);
@@ -3546,7 +3808,7 @@ pub fn rgb24To(color: u24, depth_bits: u8) u32 {
 }
 
 pub fn readOneMsgAlloc(allocator: std.mem.Allocator, reader: anytype) ![]align(4) u8 {
-    var buf = try allocator.allocWithOptions(u8, 32, 4, null);
+    var buf = try allocator.allocWithOptions(u8, 32, if (zig_atleast_15) .@"4" else 4, null);
     errdefer allocator.free(buf);
     const len = try readOneMsg(reader, buf);
     if (len > 32) {
@@ -3560,7 +3822,17 @@ pub fn readOneMsgAlloc(allocator: std.mem.Allocator, reader: anytype) ![]align(4
 /// If it is, then only the first 32-bytes have been read.  The caller can allocate a new
 /// buffer large enough to accomodate and finish reading the message by copying the first
 /// 32 bytes to the new buffer then calling `readOneMsgFinish`.
-pub fn readOneMsg(reader: anytype, buf: []align(4) u8) !u32 {
+pub const readOneMsg = if (zig_atleast_15) readOneMsgNew else readOneMsgLegacy;
+pub fn readOneMsgNew(reader: *std.Io.Reader, buf: []align(4) u8) std.Io.Reader.Error!u32 {
+    std.debug.assert(buf.len >= 32);
+    try readFull(reader, buf[0..32]);
+    const msg_len = parseMsgLen(buf[0..32].*);
+    if (msg_len > 32 and msg_len < buf.len) {
+        try readOneMsgFinish(reader, buf[0..msg_len]);
+    }
+    return msg_len;
+}
+pub fn readOneMsgLegacy(reader: anytype, buf: []align(4) u8) !u32 {
     std.debug.assert(buf.len >= 32);
     try readFull(reader, buf[0..32]);
     const msg_len = parseMsgLen(buf[0..32].*);
