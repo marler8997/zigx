@@ -15,6 +15,7 @@ const Key = enum {
     d,
     g,
     c,
+    l,
 };
 
 const bg_color = 0x231a20;
@@ -54,6 +55,7 @@ pub fn main() !u8 {
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_d), Key.d);
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_g), Key.g);
         try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_c), Key.c);
+        try sym_key_map.put(allocator, @intFromEnum(x11.charset.Combined.latin_l), Key.l);
 
         const keymap = try x11.keymap.request(allocator, conn.sock, &sequence, conn.setup.fixed());
         defer keymap.deinit(allocator);
@@ -207,6 +209,16 @@ pub fn main() !u8 {
     }
     var state = State{};
 
+    {
+        const name = comptime x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
+        var msg: [x11.query_extension.getLen(name.len)]u8 = undefined;
+        x11.query_extension.serialize(&msg, name);
+        try common.sendOne(conn.sock, &sequence, &msg);
+        state.xinput = .{ .sent_extension_query = .{
+            .sequence = sequence,
+        } };
+    }
+
     while (true) {
         {
             const recv_buf = buf.nextReadBuffer();
@@ -232,7 +244,7 @@ pub fn main() !u8 {
             //buf.resetIfEmpty();
             switch (x11.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
-                    std.log.err("{}", .{msg});
+                    std.log.err("Received X error: {}", .{msg});
                     return 1;
                 },
                 .reply => |msg| {
@@ -241,6 +253,7 @@ pub fn main() !u8 {
                         &sequence,
                         &state,
                         msg,
+                        screen.root,
                         ids.window(),
                         ids.bg(),
                         ids.fg(),
@@ -252,6 +265,19 @@ pub fn main() !u8 {
                     }
                     // just always do another render, it's *probably* needed
                     try render(conn.sock, &sequence, ids.window(), ids.bg(), ids.fg(), font_dims, state);
+                },
+                .generic_extension_event => |msg| {
+                    if (state.xinput == .enabled and msg.ext_opcode == state.xinput.enabled.input_extension_info.opcode) {
+                        switch (x11.inputext.genericExtensionEventTaggedUnion(@alignCast(data.ptr))) {
+                            .raw_button_press => |extension_msg| {
+                                std.log.info("received raw_button_press {}", .{extension_msg});
+                            },
+                            else => unreachable, // We did not register for these events so we should not see them
+                        }
+                    } else {
+                        std.log.info("TODO: handle a generic extension event {}", .{msg});
+                        return error.TodoHandleGenericExtensionEvent;
+                    }
                 },
                 .key_press => |msg| {
                     var do_render = true;
@@ -275,6 +301,9 @@ pub fn main() !u8 {
                         },
                         .d => {
                             try disableInputDevice(conn.sock, &sequence, &state);
+                        },
+                        .l => {
+                            try listenToRawEvents(conn.sock, &sequence, &state, screen.root);
                         },
                         .escape => {
                             std.log.info("ESC pressed, exiting loop...", .{});
@@ -332,7 +361,7 @@ pub fn main() !u8 {
                 .map_notify,
                 .reparent_notify,
                 .configure_notify,
-                => unreachable, // did not register for these
+                => unreachable, // We did not register for these events so we should not see them
             }
         }
     }
@@ -343,6 +372,7 @@ fn handleReply(
     sequence: *u16,
     state: *State,
     msg: *const x11.ServerMsg.Reply,
+    root_window_id: x11.Window,
     window_id: x11.Window,
     bg_gc_id: x11.GraphicsContext,
     fg_gc_id: x11.GraphicsContext,
@@ -373,48 +403,70 @@ fn handleReply(
         .enabled => {},
     }
 
-    switch (state.disable_input_device) {
-        .initial, .extension_missing, .no_pointer_to_disable, .disabled => {},
-        .query_extension => |query_sequence| if (msg.sequence == query_sequence) {
+    switch (state.xinput) {
+        .initial, .extension_missing, .enabled => {},
+        .sent_extension_query => |query| if (msg.sequence == query.sequence) {
             const msg_ext: *const x11.ServerMsg.QueryExtension = @ptrCast(msg);
             if (msg_ext.present == 0) {
-                state.disable_input_device = .extension_missing;
+                state.xinput = .extension_missing;
             } else {
                 std.debug.assert(msg_ext.present == 1);
                 const name = comptime x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
                 var get_version_msg: [x11.inputext.get_extension_version.getLen(name.len)]u8 = undefined;
                 x11.inputext.get_extension_version.serialize(&get_version_msg, msg_ext.major_opcode, name);
                 try common.sendOne(sock, sequence, &get_version_msg);
-                state.disable_input_device = .{ .get_version = .{
+
+                // Useful for debugging
+                std.log.info("{s} extension: opcode={} base_error_code={}", .{
+                    name,
+                    msg_ext.major_opcode,
+                    msg_ext.first_error,
+                });
+
+                state.xinput = .{ .get_version = .{
                     .sequence = sequence.*,
-                    .ext_opcode = msg_ext.major_opcode,
+                    .input_extension_info = .{
+                        .extension_name = "XInputExtension",
+                        .opcode = msg_ext.major_opcode,
+                        .base_error_code = msg_ext.first_error,
+                    },
                 } };
             }
             return true; // handled
         },
         .get_version => |info| if (msg.sequence == info.sequence) {
             const opcode = msg.flexible;
-            const ptr: [*]const u8 = &msg.reserve_min;
-            const major = x11.readIntNative(u16, ptr + 0);
-            const minor = x11.readIntNative(u16, ptr + 2);
-            const present = msg.reserve_min[4];
+            const msg_ext: *const x11.inputext.get_extension_version.Reply = @ptrCast(msg);
+            std.log.debug("get_extension_version returned {}", .{msg_ext});
             if (opcode != @intFromEnum(x11.inputext.ExtOpcode.get_extension_version))
                 std.debug.panic("invalid opcode in reply {}, expected {}", .{ opcode, @intFromEnum(x11.inputext.ExtOpcode.get_extension_version) });
-            if (present == 0)
+            if (!msg_ext.present)
                 std.debug.panic("XInputExtension is not present, but it was before?", .{});
-            if (major != 2)
-                std.debug.panic("XInputExtension major version is {} but need {}", .{ major, 2 });
-            if (minor < 3)
-                std.debug.panic("XInputExtension minor version is {} but I've only tested >= {}", .{ minor, 3 });
-            var list_devices_msg: [x11.inputext.list_input_devices.len]u8 = undefined;
-            x11.inputext.list_input_devices.serialize(&list_devices_msg, info.ext_opcode);
-            try common.sendOne(sock, sequence, &list_devices_msg);
-            state.disable_input_device = .{ .list_devices = .{
-                .sequence = sequence.*,
-                .ext_opcode = info.ext_opcode,
+            if (msg_ext.major_version != 2)
+                std.debug.panic("XInputExtension major version is {} but need {}", .{ msg_ext.major_version, 2 });
+            if (msg_ext.minor_version < 3)
+                std.debug.panic("XInputExtension minor version is {} but I've only tested >= {}", .{ msg_ext.minor_version, 3 });
+
+            state.xinput = .{ .enabled = .{
+                .input_extension_info = info.input_extension_info,
             } };
+
+            // Now that we see that the input extension is available and compatible, let's
+            // resume any operations that someone requested while we were waiting for the
+            // extension to be available.
+            if (state.disable_input_device == .extension_not_available_yet) {
+                try disableInputDevice(sock, sequence, state);
+            }
+            if (state.listen_to_raw_events == .extension_not_available_yet) {
+                try listenToRawEvents(sock, sequence, state, root_window_id);
+            }
+
             return true; // handled
         },
+    }
+
+    switch (state.disable_input_device) {
+        .initial, .no_pointer_to_disable, .extension_not_available_yet, .extension_missing, .disabled => {},
         .list_devices => |state_info| if (msg.sequence == state_info.sequence) {
             const devices_reply: *const x11.inputext.ListInputDevicesReply = @ptrCast(msg);
             var input_info_it = devices_reply.inputInfoIterator();
@@ -573,6 +625,42 @@ fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.
     }
 }
 
+fn listenToRawEvents(sock: std.posix.socket_t, sequence: *u16, state: *State, root_window_id: x11.Window) !void {
+    const extension_missing_fmt = "unable to listen to raw events, XInputExtension is missing";
+    switch (state.listen_to_raw_events) {
+        .initial, .extension_not_available_yet => {
+            if (state.xinput == .extension_missing) {
+                std.log.info(extension_missing_fmt, .{});
+                state.listen_to_raw_events = .extension_missing;
+                return;
+            } else if (state.xinput != .enabled) {
+                std.log.info("unable to listen to raw events at this moment, waiting for the XInputExtension before continuing.", .{});
+                state.listen_to_raw_events = .extension_not_available_yet;
+                return;
+            }
+
+            // Listen to all mouse clicks regardless of where they occurred
+            std.log.info("Setting up raw mouse click listener...", .{});
+            var event_masks = [_]x11.inputext.EventMask{.{
+                .device_id = .all_master,
+                .mask = x11.inputext.event.raw_button_press,
+            }};
+
+            const input_ext_opcode = state.xinput.enabled.input_extension_info.opcode;
+            var message_buffer: [x11.inputext.select_events.getLen(@as(u16, @intCast(event_masks.len)))]u8 = undefined;
+            const len = x11.inputext.select_events.serialize(&message_buffer, input_ext_opcode, .{
+                .window_id = root_window_id,
+                .masks = event_masks[0..],
+            });
+            try common.sendOne(sock, sequence, message_buffer[0..len]);
+
+            state.listen_to_raw_events = .enabled;
+        },
+        .extension_missing => std.log.info(extension_missing_fmt, .{}),
+        .enabled => std.log.info("listening to raw events already", .{}),
+    }
+}
+
 fn destroyWindow(sock: std.posix.socket_t, sequence: *u16, window_id: x11.Window) !void {
     var msg: [x11.destroy_window.len]u8 = undefined;
     x11.destroy_window.serialize(&msg, window_id);
@@ -581,17 +669,31 @@ fn destroyWindow(sock: std.posix.socket_t, sequence: *u16, window_id: x11.Window
 
 fn disableInputDevice(sock: std.posix.socket_t, sequence: *u16, state: *State) !void {
     const already_fmt = "disable input device already requested, {s}...";
+    const extension_missing_fmt = "can't disable input device, XInputExtension is missing";
     switch (state.disable_input_device) {
-        .initial, .no_pointer_to_disable => {
-            const name = comptime x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
-            var msg: [x11.query_extension.getLen(name.len)]u8 = undefined;
-            x11.query_extension.serialize(&msg, name);
-            try common.sendOne(sock, sequence, &msg);
-            state.disable_input_device = .{ .query_extension = sequence.* };
+        // Transition from initial or someone who previously failed to disable the
+        // pointer because they had no pointer at the time.
+        .initial, .no_pointer_to_disable, .extension_not_available_yet => {
+            if (state.xinput == .extension_missing) {
+                std.log.info(extension_missing_fmt, .{});
+                state.disable_input_device = .extension_missing;
+                return;
+            } else if (state.xinput != .enabled) {
+                std.log.info("can't disable input device at this moment, waiting for the XInputExtension before continuing.", .{});
+                state.disable_input_device = .extension_not_available_yet;
+                return;
+            }
+
+            const input_ext_opcode = state.xinput.enabled.input_extension_info.opcode;
+            var list_devices_msg: [x11.inputext.list_input_devices.len]u8 = undefined;
+            x11.inputext.list_input_devices.serialize(&list_devices_msg, input_ext_opcode);
+            try common.sendOne(sock, sequence, &list_devices_msg);
+            state.disable_input_device = .{ .list_devices = .{
+                .sequence = sequence.*,
+                .ext_opcode = input_ext_opcode,
+            } };
         },
-        .query_extension => std.log.info(already_fmt, .{"querying extension"}),
-        .extension_missing => std.log.info("can't disable input device, XInputExtension is missing", .{}),
-        .get_version => std.log.info(already_fmt, .{"getting extension version"}),
+        .extension_missing => std.log.info(extension_missing_fmt, .{}),
         .list_devices => std.log.info(already_fmt, .{"getting input devices"}),
         .intern_atom => std.log.info(already_fmt, .{"interning atom"}),
         .get_prop => std.log.info(already_fmt, .{"getting property"}),
@@ -623,14 +725,33 @@ const State = struct {
         enabled: struct { confined: bool },
     } = .disabled,
     confine_grab: bool = false,
-    disable_input_device: union(enum) {
+
+    xinput: union(enum) {
         initial: void,
-        query_extension: u16,
+        sent_extension_query: struct {
+            sequence: u16,
+        },
         extension_missing: void,
         get_version: struct {
             sequence: u16,
-            ext_opcode: u8,
+            input_extension_info: common.ExtensionInfo,
         },
+        enabled: struct {
+            input_extension_info: common.ExtensionInfo,
+        },
+    } = .initial,
+
+    listen_to_raw_events: union(enum) {
+        initial: void,
+        extension_not_available_yet: void,
+        extension_missing: void,
+        enabled: void,
+    } = .initial,
+
+    disable_input_device: union(enum) {
+        initial: void,
+        extension_not_available_yet: void,
+        extension_missing: void,
         list_devices: struct {
             sequence: u16,
             ext_opcode: u8,
@@ -809,9 +930,8 @@ fn render(
     {
         const suffix: []const u8 = switch (state.disable_input_device) {
             .initial => "",
-            .query_extension => " (query extension sent...)",
+            .extension_not_available_yet => " (waiting for XInputExtension...)",
             .extension_missing => " (XInputExtension is missing)",
-            .get_version => " (getting extension version...)",
             .list_devices => " (listing input devices...)",
             .no_pointer_to_disable => " (failed: no pointer to disable)",
             .intern_atom => " (interning atom...)",
@@ -826,6 +946,24 @@ fn render(
             font_dims.font_left,
             font_dims.font_ascent + (6 * font_dims.height),
             "(D)isable Input Device{s}",
+            .{suffix},
+        );
+    }
+    {
+        const suffix: []const u8 = switch (state.listen_to_raw_events) {
+            .initial => "",
+            .extension_not_available_yet => " (waiting for XInputExtension...)",
+            .extension_missing => " (XInputExtension is missing)",
+            .enabled => " (enabled)",
+        };
+        try renderString(
+            sock,
+            sequence,
+            window_id.drawable(),
+            fg_gc_id,
+            font_dims.font_left,
+            font_dims.font_ascent + (7 * font_dims.height),
+            "(L)isten to raw events{s}",
             .{suffix},
         );
     }

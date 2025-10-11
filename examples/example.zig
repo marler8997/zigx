@@ -232,6 +232,7 @@ pub fn main() !u8 {
                 .map_notify,
                 .reparent_notify,
                 .configure_notify,
+                .generic_extension_event,
                 => unreachable, // did not register for these
             }
         }

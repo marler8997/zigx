@@ -653,6 +653,10 @@ pub fn main() !u8 {
                         std.debug.panic("unexpected reply {}", .{msg});
                     }
                 },
+                .generic_extension_event => |msg| {
+                    std.log.info("TODO: handle a generic extension event {}", .{msg});
+                    return error.TodoHandleGenericExtensionEvent;
+                },
                 .key_press => |msg| {
                     std.log.info("key_press: keycode={}", .{msg.keycode});
                 },
