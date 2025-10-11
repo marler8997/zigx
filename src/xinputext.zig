@@ -506,10 +506,27 @@ pub const event = struct {
 pub const Device = enum(u16) {
     all = 0,
     all_master = 1,
+    _,
+
+    pub fn fromInt(i: u16) Device {
+        return @enumFromInt(i);
+    }
+
+    pub fn format(v: Device, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        if (v == .all) {
+            try writer.writeAll("Device(<all>)");
+        } else if (v == .all_master) {
+            try writer.writeAll("Device(<all_master>)");
+        } else {
+            try writer.print("Device({})", .{@intFromEnum(v)});
+        }
+    }
 };
 
 pub const EventMask = struct {
-    device_id: x.NonExhaustive(Device),
+    device_id: Device,
     /// Bit mask made up of `x.inputext.event.*` constants that you're interested in.
     /// ex. `x.inputext.event.raw_button_press | x.inputext.event.raw_key_release`
     mask: u32,
