@@ -40,29 +40,20 @@ pub const ConnectResult = struct {
     }
 };
 
-pub fn connectSetupMaxAuth(
-    sock: std.posix.socket_t,
-    comptime max_auth_len: usize,
-    auth_name: x11.Slice(u16, [*]const u8),
-    auth_data: x11.Slice(u16, [*]const u8),
-) !?u16 {
-    var buf: [x11.connect_setup.auth_offset + max_auth_len]u8 = undefined;
-    const len = x11.connect_setup.getLen(auth_name.len, auth_data.len);
-    if (len > max_auth_len)
-        return error.AuthTooBig;
-    return connectSetup(sock, buf[0..len], auth_name, auth_data);
-}
-
 pub fn connectSetup(
     sock: std.posix.socket_t,
-    msg: []u8,
     auth_name: x11.Slice(u16, [*]const u8),
     auth_data: x11.Slice(u16, [*]const u8),
 ) !?u16 {
-    std.debug.assert(msg.len == x11.connect_setup.getLen(auth_name.len, auth_data.len));
-
-    x11.connect_setup.serialize(msg.ptr, 11, 0, auth_name, auth_data);
-    try sendNoSequencing(sock, msg);
+    {
+        var write_buf: [2000]u8 = undefined;
+        var socket_writer = x11.socketWriter(sock, &write_buf);
+        const writer = &socket_writer.interface;
+        try x11.writeConnectSetup(writer, .{
+            .auth_name = auth_name,
+            .auth_data = auth_data,
+        });
+    }
 
     var reader_instance: x11.SocketReader = .init(sock);
     const reader = reader_instance.interface();
@@ -140,7 +131,7 @@ fn connectSetupAuth(
             .len = @intCast(data.len),
         };
         std.log.debug("trying auth {f}", .{entry.fmt(auth_mapped.mem)});
-        if (try connectSetupMaxAuth(sock, 1000, name_x, data_x)) |reply_len|
+        if (try connectSetup(sock, name_x, data_x)) |reply_len|
             return reply_len;
     }
 
@@ -169,13 +160,7 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
 
         // Try no authentication
         std.log.debug("trying no auth", .{});
-        var msg_buf: [x11.connect_setup.getLen(0, 0)]u8 = undefined;
-        if (try connectSetup(
-            sock,
-            &msg_buf,
-            .{ .ptr = undefined, .len = 0 },
-            .{ .ptr = undefined, .len = 0 },
-        )) |reply_len| {
+        if (try connectSetup(sock, .empty, .empty)) |reply_len| {
             break :blk reply_len;
         }
 

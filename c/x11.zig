@@ -71,10 +71,15 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
                 break :blk hdr;
         }
 
-        var msg: [x11.connect_setup.getLen(0, 0)]u8 = undefined;
-        x11.connect_setup.serialize(&msg, 11, 0, .{ .ptr = undefined, .len = 0 }, .{ .ptr = undefined, .len = 0 });
-        sendAll(sock, &msg) catch |err|
-            return reportError("send connect setup failed with {s}", .{@errorName(err)});
+        {
+            var buffer: [1000]u8 = undefined;
+            var socket_writer = x11.socketWriter(sock, &buffer);
+            const writer = &socket_writer.interface;
+            x11.writeConnectSetup(writer, .{
+                .auth_name = .empty,
+                .auth_data = .empty,
+            }) catch |err| return reportError("send connect setup failed with {s}", .{@errorName(err)});
+        }
 
         var reader: x11.SocketReader = .init(sock);
         const connect_setup_header = x11.readConnectSetupHeader(reader.interface(), .{}) catch |err|
@@ -202,12 +207,15 @@ fn connectSetupAuth(
             .len = @intCast(data.len),
         };
 
-        const msg_len = x11.connect_setup.getLen(name_x.len, data_x.len);
-        const msg = try c_allocator.alloc(u8, msg_len);
-        defer c_allocator.free(msg);
-        x11.connect_setup.serialize(msg.ptr, 11, 0, name_x, data_x);
-        sendAll(sock, msg) catch |err|
-            return reportError("send connect setup failed with {s}", .{@errorName(err)});
+        {
+            var write_buf: [2000]u8 = undefined;
+            var socket_writer = x11.socketWriter(sock, &write_buf);
+            const writer = &socket_writer.interface;
+            x11.writeConnectSetup(writer, .{
+                .auth_name = name_x,
+                .auth_data = data_x,
+            }) catch |err| return reportError("send connect setup failed with {s}", .{@errorName(err)});
+        }
 
         var reader: x11.SocketReader = .init(sock);
         const connect_setup_header = x11.readConnectSetupHeader(reader.interface(), .{}) catch |err|

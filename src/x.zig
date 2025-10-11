@@ -50,6 +50,13 @@ pub const SliceWithMaxLen = @import("x/slice.zig").SliceWithMaxLen;
 pub const keymap = @import("keymap.zig");
 
 pub const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
+const socketwriter = @import("socketwriter.zig");
+pub const SocketWriter = socketwriter.SocketWriter;
+pub fn socketWriter(sock: std.posix.socket_t, buffer: []u8) SocketWriter {
+    if (zig_atleast_15) return (std.net.Stream{ .handle = sock }).writer(buffer);
+    return .init(.{ .handle = sock }, buffer);
+}
+pub const Writer = @import("writer.zig").Writer;
 
 pub const TcpBasePort = 6000;
 
@@ -58,6 +65,44 @@ pub const max_display_num = max_port - TcpBasePort;
 
 pub const BigEndian = 'B';
 pub const LittleEndian = 'l';
+
+pub fn Pad(comptime align_to: comptime_int) type {
+    return switch (align_to) {
+        4 => u2,
+        8 => u3,
+        else => @compileError("unsupported alignment"),
+    };
+}
+/// Returns the padding needed to align the given len.
+pub fn padLen(comptime align_to: comptime_int, len: Pad(align_to)) Pad(align_to) {
+    return (0 -% len) & (align_to - 1);
+}
+
+// Returns the padding needed to align the given content len to 4-bytes.
+// Note that it returns 0 for values already 4-byte aligned.
+pub fn pad4Len(len: u2) u2 {
+    return padLen(4, len);
+}
+
+test padLen {
+    try std.testing.expectEqual(0, pad4Len(0));
+    try std.testing.expectEqual(0, pad4Len(@truncate(4)));
+    try std.testing.expectEqual(0, pad4Len(@truncate(8)));
+    try std.testing.expectEqual(1, pad4Len(3)); // 7 -> 8
+    try std.testing.expectEqual(2, pad4Len(2)); // 6 -> 8
+    try std.testing.expectEqual(3, pad4Len(1)); // 1 -> 4
+    try std.testing.expectEqual(2, pad4Len(@truncate(14)));
+    try std.testing.expectEqual(3, pad4Len(@truncate(29)));
+
+    inline for (&.{ 4, 8 }) |align_to| {
+        for (0..10) |multiplier| {
+            try std.testing.expectEqual(0, padLen(align_to, @truncate(multiplier * align_to)));
+        }
+        for (1..align_to + 1) |i| {
+            try std.testing.expectEqual(align_to - i, padLen(align_to, @truncate(i)));
+        }
+    }
+}
 
 // TODO: is there another way to do this, is this somewhere in std?
 pub fn optEql(optLeft: anytype, optRight: anytype) bool {
@@ -923,59 +968,33 @@ pub const AuthIterator = struct {
     }
 };
 
-pub const connect_setup = struct {
-    pub const max_auth_name_len = std.math.maxInt(u16);
-    pub const max_auth_data_len = std.math.maxInt(u16);
-    pub const max_len = getLen(max_auth_name_len, max_auth_data_len);
+const native_endian = builtin.target.cpu.arch.endian();
 
-    pub const auth_offset =
-        1 // byte-order
-        + 1 // unused
-        + 2 // proto_major_ver
-        + 2 // proto_minor_ver
-        + 2 // auth_name_len
-        + 2 // auth_data_len
-        + 2 // unused
-    ;
-    pub fn getLen(auth_name_len: u16, auth_data_len: u16) u32 {
-        return auth_offset
-        //+ auth_name_len
-        //+ pad4(u16, auth_name_len)
-        + std.mem.alignForward(u32, auth_name_len, 4)
-            //+ auth_data_len
-            //+ pad4(u16, auth_data_len)
-        + std.mem.alignForward(u32, auth_data_len, 4);
-    }
-
-    pub fn serialize(
-        buf: [*]u8,
-        proto_major_ver: u16,
-        proto_minor_ver: u16,
+pub fn writeConnectSetup(
+    writer: *Writer,
+    args: struct {
+        version_major: u16 = 11,
+        version_minor: u16 = 0,
         auth_name: Slice(u16, [*]const u8),
         auth_data: Slice(u16, [*]const u8),
-    ) void {
-        buf[0] = @as(u8, if (builtin.target.cpu.arch.endian() == .big) BigEndian else LittleEndian);
-        buf[1] = 0; // unused
-        writeIntNative(u16, buf + 2, proto_major_ver);
-        writeIntNative(u16, buf + 4, proto_minor_ver);
-        writeIntNative(u16, buf + 6, auth_name.len);
-        writeIntNative(u16, buf + 8, auth_data.len);
-        writeIntNative(u16, buf + 10, 0); // unused
-        @memcpy(buf[12..][0..auth_name.len], auth_name.nativeSlice());
-        //const off = 12 + pad4(u16, auth_name.len);
-        const off: u16 = 12 + std.mem.alignForward(u16, auth_name.len, 4);
-        @memcpy(buf[off..][0..auth_data.len], auth_data.nativeSlice());
-        std.debug.assert(getLen(auth_name.len, auth_data.len) ==
-            off + std.mem.alignForward(u16, auth_data.len, 4));
-    }
-};
-
-test "ConnectSetupMessage" {
-    const auth_name = comptime slice(u16, @as([]const u8, "hello"));
-    const auth_data = comptime slice(u16, @as([]const u8, "there"));
-    const len = comptime connect_setup.getLen(auth_name.len, auth_data.len);
-    var buf: [len]u8 = undefined;
-    connect_setup.serialize(&buf, 1, 1, auth_name, auth_data);
+    },
+) Writer.Error!void {
+    // TODO: how can we test this function?
+    try writer.writeAll(&[_]u8{
+        @as(u8, if (native_endian == .big) BigEndian else LittleEndian),
+        0, // unused
+    });
+    try writer.writeInt(u16, args.version_major, native_endian);
+    try writer.writeInt(u16, args.version_minor, native_endian);
+    try writer.writeInt(u16, args.auth_name.len, native_endian);
+    try writer.writeInt(u16, args.auth_data.len, native_endian);
+    try writer.writeAll("\x00\x00"); // unused
+    try writer.writeAll(args.auth_name.nativeSlice());
+    const pad_buf = [_]u8{0} ** 4;
+    try writer.writeAll(pad_buf[0..pad4Len(@truncate(args.auth_name.len))]);
+    try writer.writeAll(args.auth_data.nativeSlice());
+    try writer.writeAll(pad_buf[0..pad4Len(@truncate(args.auth_data.len))]);
+    try writer.flush();
 }
 
 pub const ResourceBase = enum(u32) {
@@ -2662,6 +2681,10 @@ pub const SocketReader = struct {
     }
     pub fn interface(self: *SocketReader) if (zig_atleast_15) *std.Io.Reader else SocketReaderLegacy {
         return if (zig_atleast_15) self.context.interface() else .{ .context = self.context };
+    }
+    pub fn read(self: SocketReader, buf: []u8) !usize {
+        if (zig_atleast_15) return self.context.read(buf);
+        return readSock(self.context, buf, 0);
     }
 };
 

@@ -22,6 +22,8 @@ pub fn Slice(comptime LenType: type, comptime Ptr: type) type {
         ptr: Ptr,
         len: LenType,
 
+        pub const empty: @This() = .{ .ptr = undefined, .len = 0 };
+
         pub fn nativeSlice(self: @This()) NativeSlice {
             return self.ptr[0..self.len];
         }
