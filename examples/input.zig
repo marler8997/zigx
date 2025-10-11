@@ -624,7 +624,6 @@ fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.
 }
 
 fn listenToRawEvents(sock: std.posix.socket_t, sequence: *u16, state: *State, root_window_id: x11.Window) !void {
-    //const already_fmt = "already working on adding the listener for raw events, {s}...";
     const extension_missing_fmt = "unable to listen to raw events, XInputExtension is missing";
     switch (state.listen_to_raw_events) {
         .initial, .extension_not_available_yet => {
