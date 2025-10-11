@@ -56,19 +56,6 @@ pub const max_display_num = max_port - TcpBasePort;
 pub const BigEndian = 'B';
 pub const LittleEndian = 'l';
 
-// TODO: is there another way to do this, is this somewhere in std?
-pub fn optEql(optLeft: anytype, optRight: anytype) bool {
-    if (optLeft) |left| {
-        if (optRight) |right| {
-            return left == right;
-        } else return false;
-    } else {
-        if (optRight) |_| {
-            return false;
-        } else return true;
-    }
-}
-
 pub const ParsedDisplay = struct {
     proto: ?Protocol,
     hostStart: u16,
@@ -84,7 +71,7 @@ pub const ParsedDisplay = struct {
         return ptr[self.hostStart..self.hostLimit];
     }
     pub fn equals(self: @This(), other: @This()) bool {
-        return self.protoLen == other.protoLen and self.hostLimit == other.hostLimit and self.display_num == other.display_num and optEql(self.preferredScreen, other.preferredScreen);
+        return self.protoLen == other.protoLen and self.hostLimit == other.hostLimit and self.display_num == other.display_num and std.meta.eql(self.preferredScreen, other.preferredScreen);
     }
 };
 
