@@ -46,6 +46,9 @@ pub fn main() !u8 {
     const ids: Ids = .{ .base = conn.setup.fixed().resource_id_base };
 
     var sequence: u16 = 0;
+    var write_buf: [4096]u8 = undefined;
+    var socket_writer = x11.socketWriter(conn.sock, &write_buf);
+    const writer = &socket_writer.interface;
 
     var keymap: x11.keymap.Full = .initVoid();
 
@@ -142,11 +145,9 @@ pub fn main() !u8 {
         }
     };
 
-    {
-        var msg: [x11.map_window.len]u8 = undefined;
-        x11.map_window.serialize(&msg, ids.window());
-        try conn.sendOne(&sequence, &msg);
-    }
+    try x11.writeMapWindow(writer, ids.window());
+    sequence +%= 1;
+    try writer.flush();
 
     var key_log: x11.BoundedArray(KeyEvent, 80) = .{ .len = 0, .buffer = undefined };
     var key_log_next: usize = 0;

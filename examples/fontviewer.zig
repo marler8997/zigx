@@ -32,6 +32,9 @@ pub fn main() !u8 {
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     var sequence: u16 = 0;
+    var write_buf: [4096]u8 = undefined;
+    var socket_writer = x11.socketWriter(conn.sock, &write_buf);
+    const writer = &socket_writer.interface;
 
     const Key = enum {
         left,
@@ -116,35 +119,30 @@ pub fn main() !u8 {
         try conn.sendOne(&sequence, msg_buf[0..len]);
     }
 
-    {
-        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-        const len = x11.create_gc.serialize(&msg_buf, .{
-            .gc_id = ids.gcBackground(),
-            .drawable_id = ids.window().drawable(),
-        }, .{
+    try x11.writeCreateGc(
+        writer,
+        ids.gcBackground(),
+        ids.window().drawable(),
+        .{
             .background = 0xffffff,
             .foreground = 0xffffff,
-        });
-        try conn.sendOne(&sequence, msg_buf[0..len]);
-    }
-
-    {
-        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-        const len = x11.create_gc.serialize(&msg_buf, .{
-            .gc_id = ids.gcText(),
-            .drawable_id = ids.window().drawable(),
-        }, .{
+        },
+    );
+    sequence +%= 1;
+    try x11.writeCreateGc(
+        writer,
+        ids.gcText(),
+        ids.window().drawable(),
+        .{
             .background = 0xffffff,
             .foreground = 0,
-        });
-        try conn.sendOne(&sequence, msg_buf[0..len]);
-    }
+        },
+    );
+    sequence +%= 1;
 
-    {
-        var msg: [x11.map_window.len]u8 = undefined;
-        x11.map_window.serialize(&msg, ids.window());
-        try conn.sendOne(&sequence, &msg);
-    }
+    try x11.writeMapWindow(writer, ids.window());
+    sequence +%= 1;
+    try writer.flush();
 
     var state = State{ .desired_font_index = 0, .exposed = .no };
 
@@ -209,7 +207,7 @@ pub fn main() !u8 {
                     }
                 },
                 .reply => |msg| {
-                    try state.onReply(msg, conn.sock, &sequence, ids, fonts);
+                    try state.onReply(msg, conn.sock, writer, &sequence, ids, fonts);
                 },
                 .key_press => |msg| {
                     std.log.info("key_press: {}", .{msg.keycode});
@@ -337,6 +335,7 @@ const State = struct {
         self: *State,
         reply_msg: *align(4) x11.ServerMsg.Reply,
         sock: std.posix.socket_t,
+        writer: *x11.Writer,
         sequence: *u16,
         ids: Ids,
         fonts: []x11.Slice(u8, [*]const u8),
@@ -350,7 +349,7 @@ const State = struct {
                 .getting_font => |info| {
                     expectSequence(info.query_sequence, @ptrCast(msg));
                     if (!info.still_open) @panic("unexpected");
-                    try render(sock, sequence, ids, fonts, info.font_index, msg);
+                    try render(sock, writer, sequence, ids, fonts, info.font_index, msg);
                     self.exposed = .{ .yes = .{ .idle = .{ .open_font_index = info.font_index } } };
                     try self.atIdleCheckDesiredFont(self.exposed.yes.idle, sock, sequence, ids, fonts);
                 },
@@ -392,6 +391,7 @@ const State = struct {
 
 fn render(
     sock: std.posix.socket_t,
+    writer: *x11.Writer,
     sequence: *u16,
     ids: Ids,
     fonts: []x11.Slice(u8, [*]const u8),
@@ -412,13 +412,15 @@ fn render(
         try x11.ext.sendOne(sock, sequence, &msg);
     }
 
-    {
-        var msg_buf: [x11.change_gc.max_len]u8 = undefined;
-        const len = x11.change_gc.serialize(&msg_buf, ids.gcText(), .{
+    try x11.writeChangeGc(
+        writer,
+        ids.gcText(),
+        .{
             .font = ids.font(),
-        });
-        try x11.ext.sendOne(sock, sequence, msg_buf[0..len]);
-    }
+        },
+    );
+    sequence.* +%= 1;
+    try writer.flush();
 
     const font_height = font_info.font_ascent + font_info.font_descent;
 

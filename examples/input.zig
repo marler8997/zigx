@@ -43,6 +43,9 @@ pub fn main() !u8 {
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     var sequence: u16 = 0;
+    var write_buf: [4096]u8 = undefined;
+    var socket_writer = x11.socketWriter(conn.sock, &write_buf);
+    const writer = &socket_writer.interface;
 
     var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
     {
@@ -201,11 +204,10 @@ pub fn main() !u8 {
         }
     };
 
-    {
-        var msg: [x11.map_window.len]u8 = undefined;
-        x11.map_window.serialize(&msg, ids.window());
-        try x11.ext.sendOne(conn.sock, &sequence, &msg);
-    }
+    try x11.writeMapWindow(writer, ids.window());
+    sequence +%= 1;
+    try writer.flush();
+
     var state = State{};
 
     {
@@ -295,7 +297,7 @@ pub fn main() !u8 {
                             try destroyWindow(conn.sock, &sequence, ids.childWindow());
                             state.window_created = false;
                         } else {
-                            try createWindow(conn.sock, &sequence, screen.root, ids.childWindow());
+                            try createWindow(conn.sock, writer, &sequence, screen.root, ids.childWindow());
                             state.window_created = true;
                         },
                         .d => {
@@ -568,7 +570,7 @@ fn warpPointer(sock: std.posix.socket_t, sequence: *u16) !void {
     try x11.ext.sendOne(sock, sequence, &msg);
 }
 
-fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.Window, window_id: x11.Window) !void {
+fn createWindow(sock: std.posix.socket_t, writer: *x11.Writer, sequence: *u16, parent_window_id: x11.Window, window_id: x11.Window) !void {
     {
         var msg_buf: [x11.create_window.max_len]u8 = undefined;
         const len = x11.create_window.serialize(&msg_buf, .{
@@ -617,11 +619,10 @@ fn createWindow(sock: std.posix.socket_t, sequence: *u16, parent_window_id: x11.
         });
         try x11.ext.sendOne(sock, sequence, msg_buf[0..len]);
     }
-    {
-        var msg: [x11.map_window.len]u8 = undefined;
-        x11.map_window.serialize(&msg, window_id);
-        try x11.ext.sendOne(sock, sequence, &msg);
-    }
+
+    try x11.writeMapWindow(writer, window_id);
+    sequence.* +%= 1;
+    try writer.flush();
 }
 
 fn listenToRawEvents(sock: std.posix.socket_t, sequence: *u16, state: *State, root_window_id: x11.Window) !void {

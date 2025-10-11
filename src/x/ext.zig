@@ -51,7 +51,7 @@ pub fn connectSetup(
         var write_buf: [2000]u8 = undefined;
         var socket_writer = x11.socketWriter(sock, &write_buf);
         const writer = &socket_writer.interface;
-        try x11.writeConnectSetup(writer, .{
+        try x11.flushConnectSetup(writer, .{
             .auth_name = auth_name,
             .auth_data = auth_data,
         });

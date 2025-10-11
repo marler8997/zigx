@@ -107,6 +107,9 @@ pub fn main() !u8 {
     const conn = try x11.ext.connect(allocator);
     defer std.posix.shutdown(conn.sock, .both) catch {};
     var sequence: u16 = 0;
+    var write_buf: [4096]u8 = undefined;
+    var socket_writer = x11.socketWriter(conn.sock, &write_buf);
+    const writer = &socket_writer.interface;
 
     const conn_setup_result = blk: {
         const fixed = conn.setup.fixed();
@@ -285,46 +288,43 @@ pub fn main() !u8 {
 
     // test creating/freeing GCs
     for (0..3) |_| {
-        {
-            var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-            const len = x11.create_gc.serialize(&msg_buf, .{
-                .gc_id = ids.bg_gc(),
-                .drawable_id = ids.window().drawable(),
-            }, .{
+        try x11.writeCreateGc(
+            writer,
+            ids.bg_gc(),
+            ids.window().drawable(),
+            .{
                 .foreground = screen.black_pixel,
-            });
-            try conn.sendOne(&sequence, msg_buf[0..len]);
-        }
-        {
-            var msg: [x11.free_gc.len]u8 = undefined;
-            x11.free_gc.serialize(&msg, ids.bg_gc());
-            try conn.sendOne(&sequence, &msg);
-        }
+            },
+        );
+        sequence +%= 1;
+        try writer.flush();
+        try x11.writeFreeGc(writer, ids.bg_gc());
+        sequence +%= 1;
+        try writer.flush();
     }
 
-    {
-        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-        const len = x11.create_gc.serialize(&msg_buf, .{
-            .gc_id = ids.bg_gc(),
-            .drawable_id = ids.window().drawable(),
-        }, .{
+    try x11.writeCreateGc(
+        writer,
+        ids.bg_gc(),
+        ids.window().drawable(),
+        .{
             .foreground = screen.black_pixel,
-        });
-        try conn.sendOne(&sequence, msg_buf[0..len]);
-    }
-    {
-        var msg_buf: [x11.create_gc.max_len]u8 = undefined;
-        const len = x11.create_gc.serialize(&msg_buf, .{
-            .gc_id = ids.fg_gc(),
-            .drawable_id = ids.window().drawable(),
-        }, .{
+        },
+    );
+    sequence +%= 1;
+    try x11.writeCreateGc(
+        writer,
+        ids.fg_gc(),
+        ids.window().drawable(),
+        .{
             .background = screen.black_pixel,
             .foreground = x11.rgb24To(0xffaadd, screen.root_depth),
             // prevent NoExposure events when we send CopyArea
             .graphics_exposures = false,
-        });
-        try conn.sendOne(&sequence, msg_buf[0..len]);
-    }
+        },
+    );
+    sequence +%= 1;
+    try writer.flush();
 
     // get some font information
     {
@@ -560,11 +560,9 @@ pub fn main() !u8 {
         }
     }
 
-    {
-        var msg: [x11.map_window.len]u8 = undefined;
-        x11.map_window.serialize(&msg, ids.window());
-        try conn.sendOne(&sequence, &msg);
-    }
+    try x11.writeMapWindow(writer, ids.window());
+    sequence +%= 1;
+    try writer.flush();
 
     // Send a fake mouse left-click event
     // if (opt_test_ext) |test_ext| {
@@ -686,6 +684,7 @@ pub fn main() !u8 {
                     std.log.info("expose: {}", .{msg});
                     try render(
                         conn.sock,
+                        writer,
                         &sequence,
                         screen.root_depth,
                         conn_setup_result.image_format,
@@ -752,6 +751,7 @@ const FontDims = struct {
 
 fn render(
     sock: std.posix.socket_t,
+    writer: *x11.Writer,
     sequence: *u16,
     depth: u8,
     image_format: ImageFormat,
@@ -780,7 +780,8 @@ fn render(
         try x11.ext.sendOne(sock, sequence, &msg);
     }
 
-    try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0xffaadd, depth));
+    try changeGcColor(writer, sequence, ids.fg_gc(), x11.rgb24To(0xffaadd, depth));
+
     {
         const text_literal: []const u8 = "ImageText8";
         const text: x11.Slice(u8, [*]const u8) = comptime .initComptime(text_literal);
@@ -814,7 +815,7 @@ fn render(
         try x11.ext.sendOne(sock, sequence, &msg);
     }
 
-    try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0x00ff00, depth));
+    try changeGcColor(writer, sequence, ids.fg_gc(), x11.rgb24To(0x00ff00, depth));
     {
         const rectangles = [_]x11.Rectangle{
             .{ .x = 20, .y = 20, .width = 15, .height = 15 },
@@ -827,7 +828,7 @@ fn render(
         }, &rectangles);
         try x11.ext.sendOne(sock, sequence, &msg);
     }
-    try changeGcColor(sock, sequence, ids.fg_gc(), x11.rgb24To(0x0000ff, depth));
+    try changeGcColor(writer, sequence, ids.fg_gc(), x11.rgb24To(0x0000ff, depth));
     {
         const rectangles = [_]x11.Rectangle{
             .{ .x = 60, .y = 20, .width = 15, .height = 15 },
@@ -947,12 +948,16 @@ fn render(
     }
 }
 
-fn changeGcColor(sock: std.posix.socket_t, sequence: *u16, gc_id: x11.GraphicsContext, color: u32) !void {
-    var msg_buf: [x11.change_gc.max_len]u8 = undefined;
-    const len = x11.change_gc.serialize(&msg_buf, gc_id, .{
-        .foreground = color,
-    });
-    try x11.ext.sendOne(sock, sequence, msg_buf[0..len]);
+fn changeGcColor(writer: *x11.Writer, sequence: *u16, gc_id: x11.GraphicsContext, color: u32) !void {
+    try x11.writeChangeGc(
+        writer,
+        gc_id,
+        .{ .foreground = color },
+    );
+    sequence.* +%= 1;
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // TODO: remove this flush when more of the render func is ported
+    try writer.flush();
 }
 
 fn getTestImagePixel(row: usize) u24 {

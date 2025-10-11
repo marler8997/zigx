@@ -973,7 +973,16 @@ pub const AuthIterator = struct {
 
 const native_endian = builtin.target.cpu.arch.endian();
 
-pub fn writeConnectSetup(
+fn writeAll(writer: *Writer, offset: *usize, buf: []const u8) Writer.Error!void {
+    try writer.writeAll(buf);
+    offset.* += buf.len;
+}
+fn writeInt(writer: *Writer, offset: *usize, comptime T: type, int: T) Writer.Error!void {
+    try writer.writeInt(T, int, native_endian);
+    offset.* += @sizeOf(T);
+}
+
+pub fn flushConnectSetup(
     writer: *Writer,
     args: struct {
         version_major: u16 = 11,
@@ -1611,15 +1620,17 @@ pub const destroy_window = struct {
     }
 };
 
-pub const map_window = struct {
-    pub const len = 8;
-    pub fn serialize(buf: [*]u8, window_id: Window) void {
-        buf[0] = @intFromEnum(Opcode.map_window);
-        buf[1] = 0; // unused
-        writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, @intFromEnum(window_id));
-    }
-};
+pub fn writeMapWindow(writer: *Writer, w: Window) Writer.Error!void {
+    const msg_len = 8;
+    var offset: usize = 0;
+    try writeAll(writer, &offset, &[_]u8{
+        @intFromEnum(Opcode.map_window),
+        0, // unused
+    });
+    try writeInt(writer, &offset, u16, msg_len >> 2);
+    try writeInt(writer, &offset, u32, @intFromEnum(w));
+    std.debug.assert(offset == msg_len);
+}
 
 pub const StackMode = enum(u8) {
     /// The window is placed at the top of the stack.
@@ -2120,40 +2131,6 @@ const GcVariant = union(enum) {
     create: Drawable,
     change: void,
 };
-pub fn createOrChangeGcSerialize(buf: [*]u8, gc_id: GraphicsContext, variant: GcVariant, options: GcOptions) u16 {
-    buf[0] = switch (variant) {
-        .create => @intFromEnum(Opcode.create_gc),
-        .change => @intFromEnum(Opcode.change_gc),
-    };
-    buf[1] = 0; // unused
-    // buf[2-3] is the len, set at the end of the function
-
-    writeIntNative(u32, buf + 4, @intFromEnum(gc_id));
-    const non_option_len: u16 = blk: {
-        switch (variant) {
-            .create => |drawable_id| {
-                writeIntNative(u32, buf + 8, @intFromEnum(drawable_id));
-                break :blk create_gc.non_option_len;
-            },
-            .change => break :blk change_gc.non_option_len,
-        }
-    };
-    var option_mask: GcOptionMask = .{};
-    var request_len: u16 = non_option_len;
-
-    inline for (std.meta.fields(GcOptions)) |field| {
-        if (!isDefaultValue(options, field)) {
-            writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
-            @field(option_mask, field.name) = 1;
-            request_len += 4;
-        }
-    }
-
-    writeIntNative(u32, buf + non_option_len - 4, @bitCast(option_mask));
-    std.debug.assert((request_len & 0x3) == 0);
-    writeIntNative(u16, buf + 2, request_len >> 2);
-    return request_len;
-}
 
 pub const create_pixmap = struct {
     pub const len = 16;
@@ -2213,43 +2190,94 @@ pub const free_colormap = struct {
     }
 };
 
-pub const create_gc = struct {
-    pub const non_option_len =
-        2 // opcode and unused
+pub fn writeCreateGc(
+    writer: *Writer,
+    gc_id: GraphicsContext,
+    drawable_id: Drawable,
+    opt: GcOptions,
+) Writer.Error!void {
+    try writeUpdateGc(writer, gc_id, .{ .create = drawable_id }, &opt);
+}
+pub fn writeChangeGc(
+    writer: *Writer,
+    gc_id: GraphicsContext,
+    opt: GcOptions,
+) Writer.Error!void {
+    try writeUpdateGc(writer, gc_id, .change, &opt);
+}
+
+fn writeUpdateGc(
+    writer: *Writer,
+    gc_id: GraphicsContext,
+    variant: GcVariant,
+    options: *const GcOptions,
+) Writer.Error!void {
+    const msg = inspectUpdateGc(variant, options);
+    var offset: usize = 0;
+    try writeAll(writer, &offset, &[_]u8{
+        switch (variant) {
+            .create => @intFromEnum(Opcode.create_gc),
+            .change => @intFromEnum(Opcode.change_gc),
+        },
+        0, // unused
+    });
+    try writeInt(writer, &offset, u16, @intCast(msg.len >> 2));
+    try writeInt(writer, &offset, u32, @intFromEnum(gc_id));
+    switch (variant) {
+        .create => |drawable_id| {
+            try writeInt(writer, &offset, u32, @intFromEnum(drawable_id));
+        },
+        .change => {},
+    }
+    try writeInt(writer, &offset, u32, @bitCast(msg.option_mask));
+    inline for (std.meta.fields(GcOptions)) |field| {
+        if (!isDefaultValue(options, field)) {
+            try writeInt(writer, &offset, u32, optionToU32(@field(options, field.name)));
+        }
+    }
+    std.debug.assert(msg.len == offset);
+}
+
+fn inspectUpdateGc(variant: std.meta.Tag(GcVariant), options: *const GcOptions) struct {
+    len: u18,
+    option_mask: GcOptionMask,
+} {
+    const non_option_len: u18 = switch (variant) {
+        .create => 2 // opcode and unused
         + 2 // request length
         + 4 // gc id
         + 4 // drawable id
         + 4 // option mask
-    ;
-    pub const max_len = non_option_len + (gc_option_count * 4);
-    pub fn serialize(buf: [*]u8, arg: struct { gc_id: GraphicsContext, drawable_id: Drawable }, options: GcOptions) u16 {
-        return createOrChangeGcSerialize(buf, arg.gc_id, .{ .create = arg.drawable_id }, options);
-    }
-};
-
-pub const change_gc = struct {
-    pub const non_option_len =
-        2 // opcode and unused
+        ,
+        .change => 2 // opcode and unused
         + 2 // request length
         + 4 // gc id
         + 4 // option mask
-    ;
-    pub const max_len = non_option_len + (gc_option_count * 4);
+        ,
+    };
 
-    pub fn serialize(buf: [*]u8, gc_id: GraphicsContext, options: GcOptions) u16 {
-        return createOrChangeGcSerialize(buf, gc_id, .change, options);
+    var len: u18 = non_option_len;
+    var option_mask: GcOptionMask = .{};
+    inline for (std.meta.fields(GcOptions)) |field| {
+        if (!isDefaultValue(options, field)) {
+            @field(option_mask, field.name) = 1;
+            len += 4;
+        }
     }
-};
+    return .{ .len = len, .option_mask = option_mask };
+}
 
-pub const free_gc = struct {
-    pub const len = 8;
-    pub fn serialize(buf: [*]u8, gc_id: GraphicsContext) void {
-        buf[0] = @intFromEnum(Opcode.free_gc);
-        buf[1] = 0;
-        writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, @intFromEnum(gc_id));
-    }
-};
+pub fn writeFreeGc(writer: *Writer, gc: GraphicsContext) Writer.Error!void {
+    const msg_len = 8;
+    var offset: usize = 0;
+    try writeAll(writer, &offset, &[_]u8{
+        @intFromEnum(Opcode.free_gc),
+        0, // unused
+    });
+    try writeInt(writer, &offset, u16, msg_len >> 2);
+    try writeInt(writer, &offset, u32, @intFromEnum(gc));
+    std.debug.assert(offset == msg_len);
+}
 
 pub const clear_area = struct {
     pub const len = 16;

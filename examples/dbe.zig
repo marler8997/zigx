@@ -33,6 +33,9 @@ pub fn main() !u8 {
     defer std.posix.shutdown(conn.sock, .both) catch {};
 
     var sequence: u16 = 0;
+    var write_buf: [4096]u8 = undefined;
+    var socket_writer = x11.socketWriter(conn.sock, &write_buf);
+    const writer = &socket_writer.interface;
 
     var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
     {
@@ -144,11 +147,9 @@ pub fn main() !u8 {
         dbe = .{ .enabled = .{ .opcode = ext.opcode, .back_buffer = ids.backBuffer() } };
     }
 
-    {
-        var msg: [x11.map_window.len]u8 = undefined;
-        x11.map_window.serialize(&msg, ids.window());
-        try conn.sendOne(&sequence, &msg);
-    }
+    try x11.writeMapWindow(writer, ids.window());
+    sequence +%= 1;
+    try writer.flush();
 
     var animate: Animate = .{ .previous_time = try std.time.Instant.now() };
     var animate_frame_ms: i32 = 15;

@@ -84,7 +84,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
             var buffer: [1000]u8 = undefined;
             var socket_writer = x11.socketWriter(sock, &buffer);
             const writer = &socket_writer.interface;
-            x11.writeConnectSetup(writer, .{
+            x11.flushConnectSetup(writer, .{
                 .auth_name = .empty,
                 .auth_data = .empty,
             }) catch |err| return reportError("send connect setup failed with {s}", .{@errorName(err)});
@@ -220,7 +220,7 @@ fn connectSetupAuth(
             var write_buf: [2000]u8 = undefined;
             var socket_writer = x11.socketWriter(sock, &write_buf);
             const writer = &socket_writer.interface;
-            x11.writeConnectSetup(writer, .{
+            x11.flushConnectSetup(writer, .{
                 .auth_name = name_x,
                 .auth_data = data_x,
             }) catch |err| return reportError("send connect setup failed with {s}", .{@errorName(err)});
@@ -363,12 +363,17 @@ export fn XMapRaised(display: *c.Display, window: c.Window) c_int {
     const display_full: *Display = @fieldParentPtr("public", display);
 
     std.log.info("TODO: send ConfigureWindow stack-mode=Above", .{});
-    var msg: [x11.map_window.len]u8 = undefined;
-    x11.map_window.serialize(&msg, .fromInt(window));
-    sendAll(display.fd, &msg) catch |err| {
-        reportErrorRaw("failed to send MapWindow message with {s}", .{@errorName(err)});
-        generateErrorEvent(display_full);
+
+    var write_buf: [100]u8 = undefined;
+    var socket_writer = x11.socketWriter(display.fd, &write_buf);
+    const writer = &socket_writer.interface;
+    const err = blk: {
+        x11.writeMapWindow(writer, .fromInt(window)) catch |err| break :blk err;
+        writer.flush() catch |err| break :blk err;
+        return 0;
     };
+    reportErrorRaw("failed to send MapWindow message with {s}", .{@errorName(err)});
+    generateErrorEvent(display_full);
     return 0;
 }
 
