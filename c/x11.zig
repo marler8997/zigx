@@ -6,6 +6,10 @@ const c = @cImport({
 const x11 = @import("x11");
 const c_allocator = std.heap.c_allocator;
 
+const global = struct {
+    var io_error_handler: ?*const fn (*c.Display) callconv(.c) c_int = null;
+};
+
 fn sendAll(sock: std.posix.socket_t, data: []const u8) !void {
     var total_sent: usize = 0;
     while (true) {
@@ -266,6 +270,14 @@ export fn XCloseDisplay(display_opt: ?*c.Display) c_int {
     return 0;
 }
 
+export fn XSetIOErrorHandler(
+    handler: ?*const fn (*c.Display) callconv(.c) c_int,
+) usize {
+    const previous = global.io_error_handler;
+    global.io_error_handler = handler;
+    return @intFromPtr(previous);
+}
+
 export fn XCreateSimpleWindow(
     display: *c.Display,
     root_window: c.Window,
@@ -355,7 +367,7 @@ export fn XMapRaised(display: *c.Display, window: c.Window) c_int {
     return 0;
 }
 
-fn handleReadError(err: anytype) noreturn {
+fn handleReadError(display: *c.Display, err: anytype) noreturn {
     switch (err) {
         error.ConnectionResetByPeer,
         error.EndOfStream,
@@ -364,6 +376,9 @@ fn handleReadError(err: anytype) noreturn {
             //@panic("TODO: report x connection closed and/or reset");
             // This seems to be similar to what libx11 does?
             std.io.getStdErr().writer().print("X connection broken\n", .{}) catch @panic("X connection broken");
+            if (global.io_error_handler) |handler| {
+                _ = handler(display);
+            }
             std.process.exit(1);
         },
         error.MessageTooBig => {
@@ -385,12 +400,12 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
 
     //var header_buf: [32]u8 align(4) = undefined;
     var reader: x11.SocketReader = .init(display.fd);
-    const len = x11.readOneMsg(reader.interface(), display_full.read_buf) catch |err| handleReadError(err);
+    const len = x11.readOneMsg(reader.interface(), display_full.read_buf) catch |err| handleReadError(display, err);
 
     if (len > display_full.read_buf.len) {
         std.log.err("TODO: realloc read_buf len to be bigger", .{});
         //c_allocator.realloc();
-        x11.readOneMsgFinish(reader.interface(), display_full.read_buf) catch |err| handleReadError(err);
+        x11.readOneMsgFinish(reader.interface(), display_full.read_buf) catch |err| handleReadError(display, err);
         @panic("todo");
     }
 
@@ -408,6 +423,27 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
                     .width = e.width,
                     .height = e.height,
                     .count = e.count,
+                },
+            };
+        },
+        .key_press => |k| {
+            event.* = .{
+                .xkey = .{
+                    .type = c.KeyPress,
+                    .serial = k.sequence,
+                    .send_event = @intFromBool((display_full.read_buf[0] & 0x80) != 0),
+                    .display = display,
+                    .window = @intFromEnum(k.event),
+                    .root = @intFromEnum(k.root),
+                    .subwindow = @intFromEnum(k.child),
+                    .time = @intFromEnum(k.time),
+                    .x = k.event_x,
+                    .y = k.event_y,
+                    .x_root = k.root_x,
+                    .y_root = k.root_y,
+                    .state = @as(u16, @bitCast(k.state)),
+                    .keycode = k.keycode,
+                    .same_screen = k.same_screen,
                 },
             };
         },
