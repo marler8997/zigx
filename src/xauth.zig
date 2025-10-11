@@ -89,7 +89,6 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
     const auth_mapped = try x.MappedFile.init(auth_filename.str, .{});
     defer auth_mapped.unmap();
 
-
     const stdout_writer = std.io.getStdOut().writer();
     var buffered_writer = std.io.bufferedWriter(stdout_writer);
     const writer = buffered_writer.writer();
@@ -111,9 +110,10 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
         }
 
         var display_buf: [40]u8 = undefined;
-        const display: []const u8 = if (entry.display_num) |d| (
-            std.fmt.bufPrint(&display_buf, "{}", .{d}) catch unreachable
-        ) else "";
+        const display: []const u8 = if (entry.display_num) |d|
+            (std.fmt.bufPrint(&display_buf, "{}", .{d}) catch unreachable)
+        else
+            "";
         try writer.print(":{s}  {s}  {}\n", .{
             display,
             entry.name(auth_mapped.mem),

@@ -118,11 +118,11 @@ pub fn genericExtensionEventTaggedUnion(msg_ptr: [*]align(4) u8) GenericExtensio
 
 pub const get_extension_version = struct {
     pub const non_list_len =
-              2 // extension and command opcodes
-            + 2 // request length
-            + 2 // name length
-            + 2 // unused
-            ;
+        2 // extension and command opcodes
+        + 2 // request length
+        + 2 // name length
+        + 2 // unused
+    ;
     pub fn getLen(name_len: u16) u16 {
         return non_list_len + std.mem.alignForward(u16, name_len, 4);
     }
@@ -157,15 +157,17 @@ pub const get_extension_version = struct {
         present: bool,
         reserved: [19]u8,
     };
-    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+    comptime {
+        std.debug.assert(@sizeOf(Reply) == 32);
+    }
 };
 
 pub const query_version = struct {
     pub const len =
-              2 // extension and command opcodes
-            + 2 // request length
-            + 2 // client major version
-            + 2 // client minor version
+        2 // extension and command opcodes
+        + 2 // request length
+        + 2 // client major version
+        + 2 // client minor version
     ;
     pub const Args = struct {
         major_version: u16,
@@ -188,7 +190,9 @@ pub const query_version = struct {
         minor_version: u16,
         reserved: [20]u8,
     };
-    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+    comptime {
+        std.debug.assert(@sizeOf(Reply) == 32);
+    }
 };
 
 pub const list_input_devices = struct {
@@ -202,7 +206,7 @@ pub const list_input_devices = struct {
 
 pub const change_property = struct {
     pub const non_list_len =
-          2 // extension and command opcodes
+        2 // extension and command opcodes
         + 2 // request length
         + 2 // device id
         + 2 // mode and format
@@ -225,7 +229,7 @@ pub const change_property = struct {
                 mode: Mode,
                 value_format: u8 = @sizeOf(T),
                 property: u32, // atom
-                @"type": u32, // atom or AnyPropertyType
+                type: u32, // atom or AnyPropertyType
                 values: x.Slice(u16, [*]const T),
             };
             pub fn serialize(buf: [*]u8, input_ext_opcode: u8, args: Args) void {
@@ -238,7 +242,7 @@ pub const change_property = struct {
                 buf[6] = @intFromEnum(args.mode);
                 buf[7] = @sizeOf(T) * 8;
                 x.writeIntNative(u32, buf + 8, args.property);
-                x.writeIntNative(u32, buf + 12, args.@"type");
+                x.writeIntNative(u32, buf + 12, args.type);
                 x.writeIntNative(u32, buf + 16, args.values.len);
                 @memcpy(@as([*]align(1) T, @ptrCast(buf + 20))[0..args.values.len], args.values.nativeSlice());
             }
@@ -251,7 +255,7 @@ pub const get_property = struct {
     pub const Args = struct {
         device_id: u16,
         property: u32, // atom
-        @"type": u32, // atom or AnyPropertyType
+        type: u32, // atom or AnyPropertyType
         offset: u32,
         len: u32,
         delete: bool,
@@ -264,7 +268,7 @@ pub const get_property = struct {
         x.writeIntNative(u8, buf + 6, @intFromBool(args.delete));
         buf[7] = 0; // unused pad
         x.writeIntNative(u32, buf + 8, args.property);
-        x.writeIntNative(u32, buf + 12, args.@"type");
+        x.writeIntNative(u32, buf + 12, args.type);
         x.writeIntNative(u32, buf + 16, args.offset);
         x.writeIntNative(u32, buf + 20, args.len);
     }
@@ -273,16 +277,16 @@ pub const get_property = struct {
         unused_pad: u8,
         sequence: u16,
         word_len: u32,
-        @"type": u32,
+        type: u32,
         bytes_after: u32,
         value_count: u32,
         format: u8,
         pad: [11]u8,
     };
-    comptime { std.debug.assert(@sizeOf(Reply) == 32); }
+    comptime {
+        std.debug.assert(@sizeOf(Reply) == 32);
+    }
 };
-
-
 
 pub const DeviceUse = enum(u8) {
     pointer = 0,
@@ -299,7 +303,9 @@ pub const DeviceInfo = extern struct {
     use: DeviceUse,
     unused: u8,
 };
-comptime { std.debug.assert(@sizeOf(DeviceInfo) == 8); }
+comptime {
+    std.debug.assert(@sizeOf(DeviceInfo) == 8);
+}
 
 pub const InputClassIdKeyKind = enum(u8) { id = 0 };
 pub const InputClassIdButtonKind = enum(u8) { id = 1 };
@@ -326,7 +332,7 @@ pub const UnknownInfo = extern struct {
         _ = fmt;
         _ = options;
         const bytes = @as([*]const u8, @ptrCast(self))[0..self.length];
-        try writer.print("Unknown length={} data={}", .{self.length, std.fmt.fmtSliceHexUpper(bytes)});
+        try writer.print("Unknown length={} data={}", .{ self.length, std.fmt.fmtSliceHexUpper(bytes) });
     }
 };
 
@@ -345,10 +351,12 @@ pub const KeyInfo = extern struct {
     ) !void {
         _ = fmt;
         _ = options;
-        try writer.print("Key min={}, max={} count={}", .{self.min_keycode, self.max_keycode, self.key_count});
+        try writer.print("Key min={}, max={} count={}", .{ self.min_keycode, self.max_keycode, self.key_count });
     }
 };
-comptime { std.debug.assert(@sizeOf(KeyInfo) == 8); }
+comptime {
+    std.debug.assert(@sizeOf(KeyInfo) == 8);
+}
 
 pub const ButtonInfo = extern struct {
     class_id: InputClassIdButtonKind,
@@ -365,7 +373,9 @@ pub const ButtonInfo = extern struct {
         try writer.print("Button count={}", .{self.button_count});
     }
 };
-comptime { std.debug.assert(@sizeOf(ButtonInfo) == 4); }
+comptime {
+    std.debug.assert(@sizeOf(ButtonInfo) == 4);
+}
 
 pub const ValuatorInfo = extern struct {
     class_id: InputClassIdValuatorKind,
@@ -381,7 +391,10 @@ pub const ValuatorInfo = extern struct {
     ) !void {
         _ = fmt;
         _ = options;
-        try writer.print("Valuator axes={}, mode=0x{x}, motion_buf_size={}", .{self.number_of_axes, self.mode, self.motion_buffer_size});
+        try writer.print(
+            "Valuator axes={}, mode=0x{x}, motion_buf_size={}",
+            .{ self.number_of_axes, self.mode, self.motion_buffer_size },
+        );
     }
 };
 
@@ -410,14 +423,10 @@ pub const InputInfoIterator = struct {
 
     pub fn front(self: InputInfoIterator) TaggedUnion {
         return switch (self.ptr[0]) {
-            @intFromEnum(InputClassId.key     ) =>
-                return TaggedUnion{ .key      = @ptrCast(self.ptr) },
-            @intFromEnum(InputClassId.button  ) =>
-                return TaggedUnion{ .button   = @ptrCast(self.ptr) },
-            @intFromEnum(InputClassId.valuator) =>
-                return TaggedUnion{ .valuator = @ptrCast(self.ptr) },
-            else                              =>
-                return TaggedUnion{ .unknown  = @ptrCast(self.ptr) },
+            @intFromEnum(InputClassId.key) => return TaggedUnion{ .key = @ptrCast(self.ptr) },
+            @intFromEnum(InputClassId.button) => return TaggedUnion{ .button = @ptrCast(self.ptr) },
+            @intFromEnum(InputClassId.valuator) => return TaggedUnion{ .valuator = @ptrCast(self.ptr) },
+            else => return TaggedUnion{ .unknown = @ptrCast(self.ptr) },
         };
     }
     pub fn pop(self: *InputInfoIterator) void {
@@ -458,7 +467,9 @@ pub const ListInputDevicesReply = extern struct {
         };
     }
 };
-comptime { std.debug.assert(@sizeOf(ListInputDevicesReply) == 32); }
+comptime {
+    std.debug.assert(@sizeOf(ListInputDevicesReply) == 32);
+}
 
 pub const event = struct {
     pub const device_changed: u32 = (1 << 1);
@@ -507,20 +518,24 @@ pub const EventMask = struct {
 /// Specify which X Input events this window is interested in.
 pub const select_events = struct {
     const size_of_event_mask_over_the_wire =
-          2 // device_id
+        2 // device_id
         + 2 // mask_len
         + 4 // mask
     ;
-    comptime { std.debug.assert(size_of_event_mask_over_the_wire == 8); }
+    comptime {
+        std.debug.assert(size_of_event_mask_over_the_wire == 8);
+    }
 
     pub const non_option_len =
-              2 // extension and command opcodes
-              + 2 // request length
-              + 4 // window_id
-              + 2 // num_mask
-              + 2 // padding
+        2 // extension and command opcodes
+        + 2 // request length
+        + 4 // window_id
+        + 2 // num_mask
+        + 2 // padding
     ;
-    comptime { std.debug.assert(non_option_len == 12); }
+    comptime {
+        std.debug.assert(non_option_len == 12);
+    }
 
     pub fn getLen(num_masks: u16) u16 {
         return non_option_len +
@@ -528,7 +543,7 @@ pub const select_events = struct {
     }
 
     pub const Args = struct {
-        window_id: u32,
+        window_id: x.Window,
         masks: []EventMask,
     };
     pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) u16 {
@@ -536,7 +551,7 @@ pub const select_events = struct {
         buf[1] = @intFromEnum(ExtOpcode.select_events);
         const calculated_length = getLen(@as(u16, @intCast(args.masks.len)));
         x.writeIntNative(u16, buf + 2, calculated_length >> 2);
-        x.writeIntNative(u32, buf + 4, args.window_id);
+        x.writeIntNative(u32, buf + 4, @intFromEnum(args.window_id));
         x.writeIntNative(u16, buf + 8, @as(u16, @intCast(args.masks.len)));
         // 2 bytes of padding
 
