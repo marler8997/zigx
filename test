@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -ex
+zig build test
 
 rm -f zig-out/fontnames.txt
 mkdir -p zig-out
