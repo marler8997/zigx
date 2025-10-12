@@ -6,6 +6,9 @@ const c = @cImport({
 const x11 = @import("x11");
 const c_allocator = std.heap.c_allocator;
 
+const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
+const SinglyLinkedList = if (zig_atleast_15) std.SinglyLinkedList else @import("SinglyLinkedList.zig");
+
 const global = struct {
     var io_error_handler: ?*const fn (*c.Display) callconv(.c) c_int = null;
 };
@@ -46,9 +49,11 @@ const Display = struct {
     public: c.Display,
     resource_id_base: u32,
     next_resource_id_offset: u32,
-    gc_list: std.SinglyLinkedList(*GC),
+    gc_list: SinglyLinkedList,
     read_buf: []align(4) u8,
 };
+
+const align4 = if (zig_atleast_15) .@"4" else 4;
 
 export fn XOpenDisplay(display_opt: ?[*:0]const u8) ?*c.Display {
     return openDisplay(display_opt) catch return null;
@@ -93,7 +98,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
                 std.log.debug("no auth connect setup failed, version={}.{}, reason='{f}'", .{
                     connect_setup_header.proto_major_ver,
                     connect_setup_header.proto_minor_ver,
-                    connect_setup_header.readFailReason(reader),
+                    connect_setup_header.readFailReason(reader.interface()),
                 });
             },
             .authenticate => {
@@ -108,7 +113,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
         return reportError("the X server rejected our connect setup message", .{});
     };
 
-    const buf = try c_allocator.allocWithOptions(u8, setup_header.getReplyLen(), 4, null);
+    const buf = try c_allocator.allocWithOptions(u8, setup_header.getReplyLen(), align4, null);
     defer c_allocator.free(buf);
 
     const connect_setup = x11.ConnectSetup{ .buf = buf };
@@ -152,7 +157,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
         };
     }
 
-    const read_buf = try c_allocator.allocWithOptions(u8, 4096, 4, null);
+    const read_buf = try c_allocator.allocWithOptions(u8, 4096, align4, null);
     errdefer c_allocator.free(read_buf);
 
     display.* = .{
@@ -229,7 +234,7 @@ fn connectSetupAuth(
                 std.log.debug("connect setup failed, version={}.{}, reason='{f}'", .{
                     connect_setup_header.proto_major_ver,
                     connect_setup_header.proto_minor_ver,
-                    connect_setup_header.readFailReason(reader),
+                    connect_setup_header.readFailReason(reader.interface()),
                 });
                 // try the next?
             },
@@ -367,8 +372,39 @@ export fn XMapRaised(display: *c.Display, window: c.Window) c_int {
     return 0;
 }
 
-fn handleReadError(display: *c.Display, err: anytype) noreturn {
-    switch (err) {
+fn handleReadError(display: *c.Display, err: x11.SocketReader.Error) noreturn {
+    if (zig_atleast_15) switch (err) {
+        error.InputOutput,
+        error.OperationAborted,
+        error.BrokenPipe,
+        error.ConnectionResetByPeer,
+        error.EndOfStream,
+        error.ConnectionTimedOut,
+        => {
+            //@panic("TODO: report x connection closed and/or reset");
+            // This seems to be similar to what libx11 does?
+            std.fs.File.stderr().writeAll("X connection broken\n") catch @panic("X connection broken");
+            if (global.io_error_handler) |handler| {
+                _ = handler(display);
+            }
+            std.process.exit(1);
+        },
+        error.MessageTooBig => @panic("TODO: how to handle MessageTooBig?"),
+        error.NetworkSubsystemFailed => @panic("TODO: how to handle NetworkSubsystemFailed?"),
+        error.SystemResources => @panic("TODO: how to handle SystemResources?"),
+        error.WouldBlock => @panic("TODO: how to handle WouldBlock?"),
+        error.AccessDenied => @panic("TODO: how to handle AccessDenied?"),
+        // error.ConnectionRefused,
+        error.SocketNotBound,
+        error.SocketNotConnected,
+        error.IsDir,
+        error.NotOpenForReading,
+        error.Canceled,
+        error.ProcessNotFound,
+        error.LockViolation,
+        error.Unexpected,
+        => unreachable,
+    } else switch (err) {
         error.ConnectionResetByPeer,
         error.EndOfStream,
         error.ConnectionTimedOut,
@@ -400,12 +436,12 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
 
     //var header_buf: [32]u8 align(4) = undefined;
     var reader: x11.SocketReader = .init(display.fd);
-    const len = x11.readOneMsg(reader.interface(), display_full.read_buf) catch |err| handleReadError(display, err);
+    const len = x11.readOneMsg(reader.interface(), display_full.read_buf) catch |err| handleReadError(display, reader.getError(err).?);
 
     if (len > display_full.read_buf.len) {
         std.log.err("TODO: realloc read_buf len to be bigger", .{});
         //c_allocator.realloc();
-        x11.readOneMsgFinish(reader.interface(), display_full.read_buf) catch |err| handleReadError(display, err);
+        x11.readOneMsgFinish(reader.interface(), display_full.read_buf) catch |err| handleReadError(display, reader.getError(err).?);
         @panic("todo");
     }
 
