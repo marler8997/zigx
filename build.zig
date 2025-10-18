@@ -1,6 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+pub const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
+
 const examples = [_][]const u8{
     "getserverfontnames",
     "testexample",
@@ -45,6 +47,7 @@ pub fn build(b: *std.Build) void {
         const install = b.addInstallArtifact(exe, .{});
         examples_step.dependOn(&install.step);
         b.getInstallStep().dependOn(&install.step);
+        b.step("build-" ++ example_name, "").dependOn(&install.step);
 
         const run = b.addRunArtifact(exe);
         run.step.dependOn(&install.step);
