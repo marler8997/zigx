@@ -5,7 +5,7 @@ const examples = [_][]const u8{
     // ordered by what's easier to test first
     "getserverfontnames",
     "queryfont",
-    "example",
+    "hello",
     "graphics",
     "fontviewer",
     "keys",
