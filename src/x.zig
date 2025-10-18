@@ -203,9 +203,9 @@ pub fn parseDisplay(display: []const u8) InvalidDisplayError!ParsedDisplay {
         if (std.mem.eql(u8, display, "w32")) return .{
             .proto = .w32,
             .hostStart = 0,
-            .hostLimit = undefined,
-            .display_num = undefined,
-            .preferredScreen = undefined,
+            .hostLimit = 0,
+            .display_num = .@"0",
+            .preferredScreen = null,
         };
     }
 

@@ -13,7 +13,7 @@ const TEST_RECEIVED_CONNECT_SETUP_BUFFER align(4) = [_]u8{
 fn testParseDisplay(display: []const u8, proto: ?x.Protocol, host: []const u8, display_num: u16, screen: ?u32) !void {
     const parsed = try x.parseDisplay(display);
     try testing.expectEqual(proto, parsed.proto);
-    try testing.expect(std.mem.eql(u8, host, parsed.hostSlice(display.ptr)));
+    try testing.expectEqualSlices(u8, host, parsed.hostSlice(display.ptr));
     try testing.expectEqual(x.DisplayNum.fromInt(display_num), parsed.display_num);
     try testing.expectEqual(screen, parsed.preferredScreen);
 }
