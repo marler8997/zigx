@@ -2,15 +2,16 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 const examples = [_][]const u8{
+    // ordered by what's easier to test first
     "getserverfontnames",
-    "testexample",
-    "graphics",
     "queryfont",
     "example",
+    "graphics",
     "fontviewer",
     "keys",
     "input",
     "dbe",
+    "testexample",
 };
 
 pub fn build(b: *std.Build) void {
@@ -23,11 +24,22 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/x.zig"),
     });
 
-    const examples_step = b.step("examples", "");
+    const examples_exe = b.addExecutable(.{
+        .name = "examples",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/runall.zig"),
+            .target = target,
+            .optimize = .Debug,
+        }),
+    });
+    const run_examples = b.addRunArtifact(examples_exe);
+
+    const test_step = b.step("test", "Run all tests and interactive examples)");
+    test_step.dependOn(&run_examples.step);
+
+    const build_examples_step = b.step("build-examples", "");
 
     inline for (examples) |example_name| {
-        // const basename = std.fs.path.basename(example_file);
-        // const name = basename[0 .. basename.len - std.fs.path.extension(basename).len];
         const example_mod = b.createModule(.{
             .root_source_file = b.path("examples/" ++ example_name ++ ".zig"),
             .optimize = optimize,
@@ -43,8 +55,11 @@ pub fn build(b: *std.Build) void {
         });
 
         const install = b.addInstallArtifact(exe, .{});
-        examples_step.dependOn(&install.step);
+        build_examples_step.dependOn(&install.step);
         b.getInstallStep().dependOn(&install.step);
+
+        run_examples.addArtifactArg(exe);
+        run_examples.step.dependOn(&install.step);
 
         const run = b.addRunArtifact(exe);
         run.step.dependOn(&install.step);
@@ -91,6 +106,9 @@ pub fn build(b: *std.Build) void {
         const install = b.addInstallArtifact(exe, .{});
         b.getInstallStep().dependOn(&install.step);
 
+        // run_examples.addArtifactArg(exe);
+        // run_examples.step.dependOn(&install.step);
+
         const run = b.addRunArtifact(exe);
         run.step.dependOn(&install.step);
         if (b.args) |args| {
@@ -98,6 +116,9 @@ pub fn build(b: *std.Build) void {
         }
         b.step("hellox11", "").dependOn(&run.step);
     }
+
+    const test_non_interactive = b.step("test-non-interactive", "Run unit tests (excluding interactive examples)");
+    test_step.dependOn(test_non_interactive);
 
     {
         const unit_tests = b.addTest(.{
@@ -107,6 +128,6 @@ pub fn build(b: *std.Build) void {
             }),
         });
         const run = b.addRunArtifact(unit_tests);
-        b.step("test", "Run unit tests").dependOn(&run.step);
+        test_non_interactive.dependOn(&run.step);
     }
 }
