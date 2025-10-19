@@ -8,9 +8,9 @@ const examples = [_][]const u8{
     "hello",
     "graphics",
     "fontviewer",
+    "dbe",
     "keys",
     "input",
-    "dbe",
     "testexample",
 };
 
