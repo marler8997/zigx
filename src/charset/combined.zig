@@ -1,5 +1,6 @@
 const Charset = @import("../charset.zig").Charset;
 pub const Combined = enum(u16) {
+    void = 0,
     latin_space = (@as(u16, @intCast(@intFromEnum(Charset.latin1))) << 8) | 32,
     latin_exclamation_point = (@as(u16, @intCast(@intFromEnum(Charset.latin1))) << 8) | 33,
     latin_quotation_mark = (@as(u16, @intCast(@intFromEnum(Charset.latin1))) << 8) | 34,

@@ -213,6 +213,7 @@ with open(os.path.join(repo_dir, "src", "charset.zig"), "w") as zig_charset_file
 with open(os.path.join(zig_charset_dir, "combined.zig"), "w") as out_file:
     out_file.write("const Charset = @import(\"../charset.zig\").Charset;\n")
     out_file.write("pub const Combined = enum(u16) {\n")
+    out_file.write("    void = 0,\n")
     for charset in charsets:
         for keysym in charset.keysyms:
             out_file.write("    {}_{} = (@as(u16, @intCast(@intFromEnum(Charset.{}))) << 8) | {},\n".format(
