@@ -2,6 +2,7 @@
     .name = .x11,
     .version = "0.0.0",
     .fingerprint = 0x3220e772e6b06bc9,
+    .zig_version = "0.15.2",
     .minimum_zig_version = "0.14.0",
     .dependencies = .{},
     .paths = .{
