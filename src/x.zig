@@ -2771,6 +2771,10 @@ pub fn XY(comptime T: type) type {
     return struct {
         x: T,
         y: T,
+        const Self = @This();
+        pub fn eql(self: Self, other: Self) bool {
+            return std.meta.eql(self.x, other.x) and std.meta.eql(self.y, other.y);
+        }
     };
 }
 
@@ -3828,6 +3832,28 @@ pub const ReadFormatter = struct {
     }
 };
 
+comptime {
+    std.debug.assert(@sizeOf(CommonEvent) == 32);
+}
+// A common view of many of the x11 events, cast multiple kinds
+// of events to this in order to handle them with common code
+pub const CommonEvent = extern struct {
+    kind: enum(u8) { ButtonPress = @intFromEnum(ServerMsgKind.ButtonPress) },
+    flexible: u8,
+    sequence: u16,
+    timestamp: Timestamp,
+    root: Window,
+    event: Window,
+    child: Window,
+    root_x: i16,
+    root_y: i16,
+    event_x: i16,
+    event_y: i16,
+    state: KeyButtonMask,
+    something: u8,
+    unused: u8,
+};
+
 pub const servermsg = struct {
     comptime {
         std.debug.assert(@sizeOf(Error) == 32);
@@ -3945,6 +3971,9 @@ pub const servermsg = struct {
             yes = 1,
         }),
         unused: u8,
+        pub fn asCommon(self: ButtonPress) CommonEvent {
+            return @bitCast(self);
+        }
     };
     comptime {
         std.debug.assert(@sizeOf(ButtonRelease) == 32);
@@ -3992,6 +4021,9 @@ pub const servermsg = struct {
             yes = 1,
         }),
         unused: u8,
+        pub fn asCommon(self: MotionNotify) CommonEvent {
+            return @bitCast(self);
+        }
     };
     comptime {
         std.debug.assert(@sizeOf(EnterNotify) == 32);

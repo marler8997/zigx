@@ -11,6 +11,7 @@ const examples = [_][]const u8{
     "dbe",
     "keys",
     "input",
+    "draw",
     "testexample",
 };
 
