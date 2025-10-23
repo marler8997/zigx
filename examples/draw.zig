@@ -95,6 +95,19 @@ pub fn main() !void {
         },
     );
 
+    const font_dims: FontDims = blk: {
+        try sink.QueryTextExtents(ids.gc().fontable(), .initComptime(&[_]u16{'m'}));
+        try sink.writer.flush();
+        const extents, _ = try source.readSynchronousReplyFull(sink.sequence, .QueryTextExtents);
+        std.log.info("text extents: {}", .{extents});
+        break :blk .{
+            .width = @intCast(extents.overall_width),
+            .height = @intCast(extents.font_ascent + extents.font_descent),
+            .font_left = @intCast(extents.overall_left),
+            .font_ascent = extents.font_ascent,
+        };
+    };
+
     try sink.MapWindow(ids.window());
 
     var point_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
@@ -123,6 +136,10 @@ pub fn main() !void {
                 std.log.info("ButtonPress", .{});
                 const msg = try source.read2(.ButtonPress);
                 do_render = onMouseEvent(&points, &mouse_state, msg.asCommon());
+                if (msg.button == 3) {
+                    points.clearRetainingCapacity();
+                    do_render = true;
+                }
             },
             .ButtonRelease => {
                 std.log.info("ButtonRelease", .{});
@@ -145,6 +162,7 @@ pub fn main() !void {
                 if (window_size.x != msg.width or window_size.y != msg.height) {
                     std.log.info("WindowSize {}x{}", .{ msg.width, msg.height });
                     window_size = .{ .x = msg.width, .y = msg.height };
+                    do_render = true;
                 }
             },
             .MapNotify,
@@ -159,6 +177,7 @@ pub fn main() !void {
                 &sink,
                 ids.window(),
                 ids.gc(),
+                font_dims,
                 dbe,
                 window_size,
                 points.items,
@@ -229,10 +248,18 @@ const MouseState = struct {
     }
 };
 
+const FontDims = struct {
+    width: u8,
+    height: u8,
+    font_left: i16, // pixels to the left of the text basepoint
+    font_ascent: i16, // pixels up from the text basepoint to the top of the text
+};
+
 fn render(
     sink: *x11.RequestSink,
     window: x11.Window,
     gc: x11.GraphicsContext,
+    font_dims: FontDims,
     dbe: Dbe,
     window_size: XY(u16),
     lines: []const XY(i16),
@@ -251,6 +278,18 @@ fn render(
     }
     const drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
     try renderLines(sink, drawable, gc, lines);
+
+    const text = "Draw on me!";
+    const text_width = font_dims.width * text.len;
+    try sink.ImageText8(
+        drawable,
+        gc,
+        .{
+            .x = @truncate(@divTrunc((@as(i32, @intCast(window_size.x)) - @as(i32, @intCast(text_width))), 2) + font_dims.font_left),
+            .y = @truncate(@divTrunc((@as(i32, @intCast(window_size.y)) - @as(i32, @intCast(font_dims.height))), 2) + font_dims.font_ascent),
+        },
+        .initComptime(text),
+    );
     switch (dbe) {
         .unsupported => {},
         .enabled => |enabled| try x11.dbe.Swap(sink, enabled.opcode, .initAssume(&.{
