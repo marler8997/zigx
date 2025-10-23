@@ -111,7 +111,7 @@ pub fn main() !void {
     try sink.MapWindow(ids.window());
 
     var point_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
-    var points: std.array_list.Managed(XY(i16)) = .init(point_arena.allocator());
+    var points: x11.ArrayListManaged(XY(i16)) = .init(point_arena.allocator());
     var mouse_state: MouseState = .{};
 
     while (true) {
@@ -187,7 +187,7 @@ pub fn main() !void {
 }
 
 fn onMouseEvent(
-    points: *std.array_list.Managed(XY(i16)),
+    points: *x11.ArrayListManaged(XY(i16)),
     mouse_state: *MouseState,
     event: x11.CommonEvent,
 ) bool {
@@ -221,7 +221,7 @@ const MouseState = struct {
     }
     pub fn update(
         state: *MouseState,
-        points: *std.array_list.Managed(XY(i16)),
+        points: *x11.ArrayListManaged(XY(i16)),
         button_down: bool,
         new_pos: XY(i16),
     ) void {

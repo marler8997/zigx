@@ -55,6 +55,8 @@ pub const zig_atleast_15_3 = @import("builtin").zig_version.order(.{ .major = 0,
 const std15 = if (zig_atleast_15) std else @import("15/std.zig");
 const Stream15 = if (zig_atleast_15) std.net.Stream else std15.net.Stream15;
 
+pub const ArrayListManaged = if (zig_atleast_15) std.array_list.Managed else std.ArrayList;
+
 pub const Writer = std15.Io.Writer;
 pub const Reader = std15.Io.Reader;
 
