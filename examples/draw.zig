@@ -266,22 +266,24 @@ fn renderLines(
     lines: []const XY(i16),
 ) x11.Writer.Error!void {
     if (lines.len == 0) return;
-
     var i: usize = 0;
-    while (true) {
+    blk_segment: while (true) {
         // every line should start with at least two non lift-pen points
         std.debug.assert(i + 2 <= lines.len);
         std.debug.assert(!lines[i].eql(lift_pen));
         std.debug.assert(!lines[i + 1].eql(lift_pen));
+        var point_sink: x11.PolyPointSink = .{
+            .kind = .Line,
+            .coordinate_mode = .origin,
+            .drawable = drawable,
+            .gc = gc,
+        };
+        defer point_sink.endSetMsgSize(sink.writer);
+        try point_sink.write(sink, lines[i]);
         while (true) {
-            try sink.PolyLine(
-                .origin,
-                drawable,
-                gc,
-                .initAssume(&[_]XY(i16){ lines[i], lines[i + 1] }),
-            );
+            try point_sink.write(sink, lines[i + 1]);
             i += 1;
-            if (i + 1 == lines.len) return;
+            if (i + 1 == lines.len) break :blk_segment;
             if (lines[i + 1].eql(lift_pen)) break;
         }
         i += 2;

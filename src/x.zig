@@ -1496,17 +1496,12 @@ pub const RequestSink = struct {
 
     pub fn PolyLine(
         sink: *RequestSink,
-        coordinate_mode: enum(u8) { origin = 0, previous = 1 },
+        coordinate_mode: CoordinateMode,
         drawable: Drawable,
         gc: GraphicsContext,
         points: Slice(u18, [*]const XY(i16)),
     ) Writer.Error!void {
-        const msg_len: u18 =
-            2 // opcode and coordinate-mode
-            + 2 // request length
-            + 4 // drawable id
-            + 4 // gc id
-            + points.len * 4; // each point is 4 bytes (i16 x, i16 y)
+        const msg_len: u18 = poly_line_header_size + points.len * 4; // each point is 4 bytes (i16 x, i16 y)
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
             @intFromEnum(Opcode.poly_line),
@@ -1831,6 +1826,15 @@ pub fn writePad4(writer: *Writer, offset: *usize) Writer.Error!void {
     const pad_len = pad4Len(@truncate(offset.*));
     try writer.splatByteAll(0, pad_len);
     offset.* += pad_len;
+}
+
+fn writeAllNoFlush(writer: *Writer, buf: []const u8) void {
+    std.debug.assert(buf.len <= writer.buffer.len - writer.end);
+    @memcpy(writer.buffer[writer.end..][0..buf.len], buf);
+    writer.end += buf.len;
+}
+pub fn writeIntNoFlush(writer: *Writer, comptime T: type, int: T) void {
+    writeAllNoFlush(writer, std.mem.asBytes(&int));
 }
 
 pub fn flushSetup(
@@ -4842,5 +4846,103 @@ pub const KeyboardMappingIterator = struct {
             self.syms_buffer[index] = @enumFromInt(@as(u16, @truncate(keysym_u32)));
         }
         return self.syms_buffer[0..self.syms_per_keycode];
+    }
+};
+
+pub const CoordinateMode = enum(u8) { origin = 0, previous = 1 };
+const poly_line_header_size: u18 =
+    2 // opcode and coordinate-mode
+    + 2 // request length
+    + 4 // drawable id
+    + 4 // gc id
+;
+const point_size = 4; // points are 4 bytes (two i16's)
+
+/// Sends a sequence of Poly* messages (i.e. PolyLine) where
+/// the caller can provide one point at a time.  If the maximum
+/// number of points per message is reached, it will end and start
+/// a new message for you.
+///
+/// Caller must guarantee that the sink writer buffer is at least min_buffer.
+/// (big enough to hold the header and at least two points).
+pub const PolyPointSink = struct {
+    // buffer must fit at least the header and two points
+    pub const min_buffer = poly_line_header_size + 2 * point_size;
+    kind: enum {
+        Line,
+        // Segment,
+    },
+    coordinate_mode: CoordinateMode,
+    drawable: Drawable,
+    gc: GraphicsContext,
+    state: union(enum) {
+        initial,
+        header_written: struct {
+            start_offset: usize,
+        },
+    } = .initial,
+
+    // updates the write buffer with the actual length of the message
+    pub fn endSetMsgSize(point_sink: *PolyPointSink, writer: *Writer) void {
+        point_sink.setMsgSize(writer);
+        point_sink.* = undefined;
+    }
+    fn setMsgSize(point_sink: PolyPointSink, writer: *Writer) void {
+        const state = switch (point_sink.state) {
+            .initial => return,
+            .header_written => |*s| s,
+        };
+        std.debug.assert(writer.end >= state.start_offset + poly_line_header_size);
+        const msg_len = writer.end - state.start_offset;
+        std.debug.assert(msg_len & 3 == 0);
+        std.mem.writeInt(u16, writer.buffer[state.start_offset + 2 ..][0..2], @intCast(msg_len >> 2), native_endian);
+    }
+    pub fn write(point_sink: *PolyPointSink, msg_sink: *RequestSink, p: XY(i16)) Writer.Error!void {
+        std.debug.assert(msg_sink.writer.buffer.len >= min_buffer);
+        var write_header = false;
+        var maybe_previous_point: ?XY(i16) = null;
+        switch (point_sink.state) {
+            .initial => {
+                write_header = true;
+            },
+            .header_written => |*state| {
+                const available = msg_sink.writer.buffer.len - msg_sink.writer.end;
+                if (available < point_size or (msg_sink.writer.end + 2 - state.start_offset >= std.math.maxInt(u18))) {
+                    maybe_previous_point = .{
+                        .x = std.mem.readInt(i16, msg_sink.writer.buffer[msg_sink.writer.end - 4 ..][0..2], native_endian),
+                        .y = std.mem.readInt(i16, msg_sink.writer.buffer[msg_sink.writer.end - 2 ..][0..2], native_endian),
+                    };
+                    point_sink.setMsgSize(msg_sink.writer);
+                    point_sink.state = .initial;
+                    write_header = true;
+                }
+            },
+        }
+
+        if (write_header) {
+            std.debug.assert(point_sink.state == .initial);
+            const available = msg_sink.writer.buffer.len - msg_sink.writer.end;
+            if (available < min_buffer) {
+                try msg_sink.writer.flush();
+            }
+            const start_offset = msg_sink.writer.end;
+            writeAllNoFlush(msg_sink.writer, &[_]u8{
+                @intFromEnum(Opcode.poly_line),
+                @intFromEnum(point_sink.coordinate_mode),
+            });
+            // the message length (filled in at the end)
+            writeIntNoFlush(msg_sink.writer, u16, undefined);
+            writeIntNoFlush(msg_sink.writer, u32, @intFromEnum(point_sink.drawable));
+            writeIntNoFlush(msg_sink.writer, u32, @intFromEnum(point_sink.gc));
+            point_sink.state = .{ .header_written = .{
+                .start_offset = start_offset,
+            } };
+        }
+        if (maybe_previous_point) |p2| {
+            writeIntNoFlush(msg_sink.writer, i16, p2.x);
+            writeIntNoFlush(msg_sink.writer, i16, p2.y);
+        }
+        writeIntNoFlush(msg_sink.writer, i16, p.x);
+        writeIntNoFlush(msg_sink.writer, i16, p.y);
     }
 };
