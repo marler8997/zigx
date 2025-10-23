@@ -28,7 +28,7 @@ pub const PositionType = enum(u8) {
 pub fn GetVersion(
     sink: *x11.RequestSink,
     named: struct {
-        ext_opcode: u8,
+        ext_opcode_base: u8,
         wanted_major_version: u8,
         wanted_minor_version: u16,
     },
@@ -42,7 +42,7 @@ pub fn GetVersion(
     ;
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
-        named.ext_opcode,
+        named.ext_opcode_base,
         @intFromEnum(ExtOpcode.get_version),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);

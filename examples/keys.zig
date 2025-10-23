@@ -86,8 +86,8 @@ pub fn main() !u8 {
 
     const dbe: Dbe = blk: {
         const ext = try x11.ext.synchronousQueryExtension(&source, &sink, x11.dbe.name) orelse break :blk .unsupported;
-        try x11.dbe.Allocate(&sink, ext.opcode, ids.window(), ids.backBuffer(), .background);
-        break :blk .{ .enabled = .{ .opcode = ext.opcode, .back_buffer = ids.backBuffer() } };
+        try x11.dbe.Allocate(&sink, ext.opcode_base, ids.window(), ids.backBuffer(), .background);
+        break :blk .{ .enabled = .{ .opcode = ext.opcode_base, .back_buffer = ids.backBuffer() } };
     };
 
     const font_dims: FontDims = blk: {

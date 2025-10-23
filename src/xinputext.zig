@@ -83,8 +83,8 @@ pub const fixed_point_32_32 = extern struct {
 pub const ExtEvent = struct {
     pub const RawButtonPress = extern struct {
         response_type: x11.GenericEventKind,
-        /// The major opcode of the extension.
-        ext_opcode: u8,
+        /// The base opcode of the extension.
+        ext_base_opcode: u8,
         sequence: u16,
         /// The length field specifies the number of 4-byte blocks after the
         /// initial 32 bytes. If length is 0, the event is 32 bytes long.

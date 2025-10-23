@@ -81,8 +81,8 @@ pub fn main() !void {
 
     const dbe: Dbe = blk: {
         const ext = try x11.ext.synchronousQueryExtension(&source, &sink, x11.dbe.name) orelse break :blk .unsupported;
-        try x11.dbe.Allocate(&sink, ext.opcode, ids.window(), ids.backBuffer(), .background);
-        break :blk .{ .enabled = .{ .opcode = ext.opcode, .back_buffer = ids.backBuffer() } };
+        try x11.dbe.Allocate(&sink, ext.opcode_base, ids.window(), ids.backBuffer(), .background);
+        break :blk .{ .enabled = .{ .opcode_base = ext.opcode_base, .back_buffer = ids.backBuffer() } };
     };
 
     try sink.CreateGc(
@@ -292,7 +292,7 @@ fn render(
     );
     switch (dbe) {
         .unsupported => {},
-        .enabled => |enabled| try x11.dbe.Swap(sink, enabled.opcode, .initAssume(&.{
+        .enabled => |enabled| try x11.dbe.Swap(sink, enabled.opcode_base, .initAssume(&.{
             .{ .window = window, .action = .background },
         })),
     }
@@ -332,7 +332,7 @@ fn renderLines(
 const Dbe = union(enum) {
     unsupported,
     enabled: struct {
-        opcode: u8,
+        opcode_base: u8,
         back_buffer: x11.Drawable,
     },
     pub fn backBuffer(self: Dbe) ?x11.Drawable {

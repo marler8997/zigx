@@ -325,7 +325,7 @@ pub fn main() !u8 {
             const expected_version_major = 0;
             const expected_version_minor = 10;
             try x11.render.request.QueryVersion(&sink, .{
-                .ext_opcode = render_ext.opcode,
+                .ext_opcode = render_ext.opcode_base,
                 .major_version = expected_version_major,
                 .minor_version = expected_version_minor,
             });
@@ -352,7 +352,7 @@ pub fn main() !u8 {
 
         // Find some compatible picture formats for use with the X Render extension. We want
         // to find a 24-bit depth format for use with the root and our window.
-        try x11.render.QueryPictFormats(&sink, render_ext.opcode);
+        try x11.render.QueryPictFormats(&sink, render_ext.opcode_base);
         try sink.writer.flush();
         const result, _ = try source.readSynchronousReplyHeader(sink.sequence, .RENDER_QueryPictFormats);
         std.log.info(
@@ -394,7 +394,7 @@ pub fn main() !u8 {
         // Create a picture for the root window that we will copy from in this example
         try x11.render.CreatePicture(
             &sink,
-            opt_render_ext.?.opcode,
+            opt_render_ext.?.opcode_base,
             ids.picture_root(),
             screen.root.drawable(),
             picture_format.id,
@@ -409,7 +409,7 @@ pub fn main() !u8 {
         // Create a picture for the our window that we can copy and composite things onto
         try x11.render.CreatePicture(
             &sink,
-            opt_render_ext.?.opcode,
+            opt_render_ext.?.opcode_base,
             ids.picture_window(),
             ids.window().drawable(),
             picture_format.id,
@@ -419,7 +419,7 @@ pub fn main() !u8 {
 
     const opt_shape_ext = try x11.ext.synchronousQueryExtension(&source, &sink, x11.shape.name);
     if (opt_shape_ext) |shape_ext| {
-        try x11.shape.QueryVersion(&sink, shape_ext.opcode);
+        try x11.shape.QueryVersion(&sink, shape_ext.opcode_base);
         try sink.writer.flush();
         try sink.writer.flush();
         const version, _ = try source.readSynchronousReplyFull(sink.sequence, .SHAPE_QueryVersion);
@@ -432,7 +432,7 @@ pub fn main() !u8 {
         const expected_version_major = 2;
         const expected_version_minor = 2;
         try x11.testext.GetVersion(&sink, .{
-            .ext_opcode = test_ext.opcode,
+            .ext_opcode_base = test_ext.opcode_base,
             .wanted_major_version = expected_version_major,
             .wanted_minor_version = expected_version_minor,
         });
@@ -447,7 +447,7 @@ pub fn main() !u8 {
     // Send a fake mouse left-click event
     if (opt_test_ext) |test_ext| {
         std.log.info("sending fake button press/release...", .{});
-        try x11.testext.FakeInput(&sink, test_ext.opcode, .{
+        try x11.testext.FakeInput(&sink, test_ext.opcode_base, .{
             .button_press = .{
                 .event_type = x11.testext.FakeEventType.button_press,
                 .detail = 1,
@@ -455,7 +455,7 @@ pub fn main() !u8 {
                 .device_id = null,
             },
         });
-        try x11.testext.FakeInput(&sink, test_ext.opcode, .{
+        try x11.testext.FakeInput(&sink, test_ext.opcode_base, .{
             .button_press = .{
                 .event_type = x11.testext.FakeEventType.button_release,
                 .detail = 1,
@@ -733,7 +733,7 @@ fn render(
     if (opt_render_ext) |render_ext| {
         // Capture a small 100x100 screenshot of the top-left of the root window and
         // composite it onto our window.
-        try x11.render.Composite(sink, render_ext.opcode, .{
+        try x11.render.Composite(sink, render_ext.opcode_base, .{
             .picture_operation = .over,
             .src_picture = ids.picture_root(),
             .mask_picture = x11.render.Picture.none,

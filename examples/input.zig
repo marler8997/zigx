@@ -263,9 +263,9 @@ pub fn main() !u8 {
                     .get_version => |v| v.extension,
                     .enabled => |e| e,
                 };
-                if (extension.opcode != event.ext_opcode) std.debug.panic(
+                if (extension.opcode_base != event.ext_opcode_base) std.debug.panic(
                     "expected opcode {} but got {}",
-                    .{ extension.opcode, event.ext_opcode },
+                    .{ extension.opcode_base, event.ext_opcode_base },
                 );
                 const code: x11.NonExhaustive(x11.inputext.ExtEventCode) = @enumFromInt(@as(u8, @truncate(event.type)));
                 try source.discardRemaining();
@@ -324,7 +324,7 @@ fn handleReply(
             const maybe_ext: ?x11.Extension = try .init(try source.read3Full(.QueryExtension));
             std.log.info("extension '{s}': {?}", .{ x11.inputext.name.nativeSlice(), maybe_ext });
             if (maybe_ext) |ext| {
-                try x11.inputext.request.GetExtensionVersion(sink, ext.opcode, x11.inputext.name);
+                try x11.inputext.request.GetExtensionVersion(sink, ext.opcode_base, x11.inputext.name);
                 state.xinput = .{ .get_version = .{
                     .sequence = sink.sequence,
                     .extension = ext,
@@ -528,8 +528,8 @@ fn listenToRawEvents(sink: *x11.RequestSink, state: *State, root_window_id: x11.
                 .mask = x11.inputext.event.raw_button_press,
             }};
 
-            const input_ext_opcode = state.xinput.enabled.opcode;
-            try x11.inputext.SelectEvents(sink, input_ext_opcode, root_window_id, event_masks[0..]);
+            const opcode_base = state.xinput.enabled.opcode_base;
+            try x11.inputext.SelectEvents(sink, opcode_base, root_window_id, event_masks[0..]);
 
             state.listen_to_raw_events = .enabled;
         },
@@ -555,11 +555,11 @@ fn disableInputDevice(sink: *x11.RequestSink, state: *State) !void {
                 return;
             }
 
-            const input_ext_opcode = state.xinput.enabled.opcode;
-            try x11.inputext.ListInputDevices(sink, input_ext_opcode);
+            const opcode_base = state.xinput.enabled.opcode_base;
+            try x11.inputext.ListInputDevices(sink, opcode_base);
             state.disable_input_device = .{ .list_devices = .{
                 .sequence = sink.sequence,
-                .ext_opcode = input_ext_opcode,
+                .ext_opcode = opcode_base,
             } };
         },
         .extension_missing => std.log.info(extension_missing_fmt, .{}),

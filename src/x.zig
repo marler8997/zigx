@@ -3387,7 +3387,7 @@ pub const Source = struct {
                 sequence: u16,
             },
             generic_event: struct {
-                ext_opcode: u8,
+                ext_opcode_base: u8,
                 sequence: u16,
                 type: u16,
             },
@@ -3515,7 +3515,11 @@ pub const Source = struct {
                 .taken = 0,
             } },
             .GenericEvent => .{ .reply = .{
-                .msg = .{ .generic_event = .{ .ext_opcode = result.ext_opcode, .sequence = result.sequence, .type = result.type } },
+                .msg = .{ .generic_event = .{
+                    .ext_opcode_base = result.ext_opcode_base,
+                    .sequence = result.sequence,
+                    .type = result.type,
+                } },
                 .word_count = @as(u33, result.word_count) + 5,
                 .taken = 0,
             } },
@@ -3793,7 +3797,7 @@ pub const ReadFormatter = struct {
                 switch (reply.msg) {
                     .none => {},
                     .reply => |msg| try writer.print(" sequence={} flex={}", .{ msg.sequence, msg.flexible }),
-                    .generic_event => |msg| try writer.print(" sequence={} ext-opcode={} event-type={}", .{ msg.sequence, msg.ext_opcode, msg.type }),
+                    .generic_event => |msg| try writer.print(" sequence={} ext-opcode-base={} event-type={}", .{ msg.sequence, msg.ext_opcode_base, msg.type }),
                 }
                 const total = reply.total();
                 try writer.print(" with {} bytes: ", .{total});
@@ -4511,8 +4515,8 @@ pub const servermsg = struct {
     }
     pub const GenericEvent = extern struct {
         kind: enum(u8) { GenericEvent = @intFromEnum(ServerMsgKind.GenericEvent) },
-        /// The major opcode of the extension.
-        ext_opcode: u8 align(1),
+        /// The extension's opcode base value
+        ext_opcode_base: u8 align(1),
         sequence: u16 align(1),
         word_count: u32 align(1),
         type: u16,
@@ -4650,9 +4654,9 @@ pub const stage3 = struct {
             no = 0,
             yes = 1,
         }),
-        major_opcode: u8,
-        first_event: u8,
-        first_error: u8,
+        opcode_base: u8,
+        event_base: u8,
+        error_base: u8,
         unused: [20]u8,
     };
     comptime {
@@ -4722,9 +4726,9 @@ const Read3Full = enum {
 };
 
 pub const Extension = struct {
-    opcode: u8,
-    first_event: u8,
-    first_error: u8,
+    opcode_base: u8,
+    event_base: u8,
+    error_base: u8,
     pub fn init(reply: stage3.QueryExtension) ProtocolError!?Extension {
         switch (reply.present) {
             .no => return null,
@@ -4735,9 +4739,9 @@ pub const Extension = struct {
             },
         }
         return .{
-            .opcode = reply.major_opcode,
-            .first_event = reply.first_event,
-            .first_error = reply.first_error,
+            .opcode_base = reply.opcode_base,
+            .event_base = reply.event_base,
+            .error_base = reply.error_base,
         };
     }
 };
