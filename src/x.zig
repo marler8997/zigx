@@ -776,7 +776,7 @@ pub const Addr = struct {
         comptime fmt_spec: []const u8,
         options: std.fmt.FormatOptions,
         writer: anytype,
-    ) @TypeOf(writer).Error!void {
+    ) !void {
         _ = fmt_spec;
         _ = options;
         const d = self.data;

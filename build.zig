@@ -132,4 +132,23 @@ pub fn build(b: *std.Build) void {
         const run = b.addRunArtifact(unit_tests);
         test_non_interactive.dependOn(&run.step);
     }
+
+    {
+        const xauth_exe = b.addExecutable(.{
+            .name = "xauth",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/xauth.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        const install = b.addInstallArtifact(xauth_exe, .{});
+        b.step("install-xauth", "").dependOn(&install.step);
+        test_non_interactive.dependOn(&install.step);
+
+        const run = b.addRunArtifact(xauth_exe);
+        run.step.dependOn(&install.step);
+        if (b.args) |args| run.addArgs(args);
+        b.step("xauth", "Run the xauth cmdline tool").dependOn(&run.step);
+    }
 }

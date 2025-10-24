@@ -1,5 +1,5 @@
 const std = @import("std");
-const x = @import("x.zig");
+const x11 = @import("x.zig");
 
 const global = struct {
     pub var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -75,25 +75,25 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
     }
 
     const auth_filename = blk: {
-        if (opt.auth_filename) |f| break :blk x.AuthFilename{
+        if (opt.auth_filename) |f| break :blk x11.AuthFilename{
             .str = f,
             .owned = false,
         };
-        break :blk try x.getAuthFilename(global.arena) orelse {
+        break :blk try x11.getAuthFilename(global.arena) orelse {
             std.log.err("unable to find an Xauthority file", .{});
             std.process.exit(1);
         };
     };
     // no need to auth_filename.deinit(allocator);
 
-    const auth_mapped = try x.MappedFile.init(auth_filename.str, .{});
+    const auth_mapped = try x11.ext.MappedFile.init(auth_filename.str, .{});
     defer auth_mapped.unmap();
 
-    const stdout_writer = std.io.getStdOut().writer();
-    var buffered_writer = std.io.bufferedWriter(stdout_writer);
-    const writer = buffered_writer.writer();
+    var stdout_buffer: [1000]u8 = undefined;
+    var stdout_writer: x11.FileWriter = .init(x11.stdout(), &stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
-    var auth_it = x.AuthIterator{ .mem = auth_mapped.mem };
+    var auth_it = x11.AuthIterator{ .mem = auth_mapped.mem };
     while (auth_it.next() catch {
         std.log.err("auth file '{s}' is invalid", .{auth_filename.str});
         std.process.exit(1);
@@ -101,24 +101,27 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
         switch (entry.family) {
             .wild => {}, // not sure what to do, should we write "*"? nothing?
             else => {
-                const addr = x.Addr{
+                const addr = x11.Addr{
                     .family = entry.family,
                     .data = entry.addr(auth_mapped.mem),
                 };
-                try addr.format("", .{}, writer);
+                if (x11.zig_atleast_15)
+                    try addr.format(stdout)
+                else
+                    try addr.format("", .{}, stdout);
             },
         }
 
         var display_buf: [40]u8 = undefined;
         const display: []const u8 = if (entry.display_num) |d|
-            (std.fmt.bufPrint(&display_buf, "{}", .{d}) catch unreachable)
+            (std.fmt.bufPrint(&display_buf, "{d}", .{@intFromEnum(d)}) catch unreachable)
         else
             "";
-        try writer.print(":{s}  {s}  {}\n", .{
+        try stdout.print(":{s}  {s}  {x}\n", .{
             display,
             entry.name(auth_mapped.mem),
-            std.fmt.fmtSliceHexLower(entry.data(auth_mapped.mem)),
+            if (x11.zig_atleast_15) entry.data(auth_mapped.mem) else std.fmt.fmtSliceHexLower(entry.data(auth_mapped.mem)),
         });
     }
-    try buffered_writer.flush();
+    try stdout.flush();
 }
