@@ -5,141 +5,72 @@ pub const ContiguousReadBuffer = @import("ext/ContiguousReadBuffer.zig");
 
 const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
 
-const AuthResult = union(enum) {
-    failed: x11.AuthFailReason,
-    success: x11.SetupReplyStart,
-};
 pub fn authenticate(
-    writer: *x11.Writer,
-    source: *x11.Source,
-    auth_filter: struct {
-        display_num: x11.DisplayNum, // used to filter authentication entries
-        socket: std.posix.socket_t, // used to filter authentication entries
-    },
-) !AuthResult {
-    var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
-
-    const auth_error: AuthError = blk: {
-        var fba: std.heap.FixedBufferAllocator = .init(&filename_buf);
-        const auth_filename = try x11.getAuthFilename(fba.allocator()) orelse break :blk .{ .creds_failed = .{
-            .total = 0,
-            .attempted = 0,
-        } };
-        var auth_filter2 = x11.AuthFilter{
-            .addr = .{ .family = .wild, .data = &[0]u8{} },
-            .display_num = auth_filter.display_num,
-        };
-        var addr_buf: [x11.max_sock_filter_addr]u8 = undefined;
-        if (auth_filter2.applySocket(auth_filter.socket, &addr_buf)) {
-            x11.log.debug("applied address filter {f}", .{auth_filter2.addr});
-        } else |err| {
-            // not a huge deal, we'll just try all auth methods
-            x11.log.warn("failed to apply socket to auth filter with {s}", .{@errorName(err)});
-        }
-        break :blk switch (try connectSetupAuth(writer, source, auth_filename.str, &auth_filter2)) {
-            .success => |reply| return .{ .success = reply },
-            .fail => |err| break :blk err,
-        };
+    display: x11.Display,
+    parsed_display: x11.ParsedDisplay,
+    address: x11.Address,
+    io: *x11.Io,
+) !void {
+    var filename_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var authenticator: x11.Authenticator = .{
+        .display = display,
+        .parsed_display = parsed_display,
+        .address = address,
+        .io = io,
+        .filename_buffer = &filename_buffer,
     };
-
-    // Try no authentication
-    x11.log.info("trying no auth", .{});
-    try x11.flushSetup(writer, .{
-        .auth_name = .empty,
-        .auth_data = .empty,
-    });
-    switch (try source.readSetup()) {
-        .failed => |reason| {
-            x11.log.info("no AUTH setup failed: {s}'", .{reason.slice()});
+    defer authenticator.deinit();
+    while (true) switch (authenticator.next()) {
+        .reply => |reply| switch (reply) {
+            .success => break,
+            .failed => |f| std.log.err(
+                "server (version {}.{}) reported failure '{s}'",
+                .{ f.version_major, f.version_minor, f.reason() },
+            ),
         },
-        .success => |reply| return .{ .success = reply },
-    }
-
-    var result: AuthResult = .{ .failed = .{ .len = undefined, .buf = undefined } };
-    result.failed.len = @intCast((switch (auth_error) {
-        .invalid_auth_file => std.fmt.bufPrint(&result.failed.buf, "invalid auth file", .{}) catch unreachable,
-        .creds_failed => |cred_counts| std.fmt.bufPrint(
-            &result.failed.buf,
-            "auth failed with {} out of {} credentials",
-            .{ cred_counts.attempted, cred_counts.total },
-        ) catch unreachable,
-    }).len);
-    return result;
-}
-
-const AuthError = union(enum) {
-    creds_failed: struct { attempted: u32, total: u32 },
-    invalid_auth_file,
-};
-
-fn connectSetupAuth(
-    writer: *x11.Writer,
-    source: *x11.Source,
-    auth_filename: []const u8,
-    auth_filter: *const x11.AuthFilter,
-) !union(enum) {
-    success: x11.SetupReplyStart,
-    fail: AuthError,
-} {
-    const test_bad_auth = false;
-    if (test_bad_auth) {
-        x11.log.debug("trying bad auth...", .{});
-        try x11.flushSetup(writer, .{ .auth_name = .initComptime("wat"), .auth_data = .empty });
-        switch (try source.readSetup()) {
-            .failed => |reason| {
-                x11.log.info("bad auth failed as expected: {s}", .{reason.slice()});
+        .done => |done| {
+            switch (done.reason) {
+                .reconnect_error => |err| {
+                    std.log.err(
+                        "reconnect (to try a new auth) failed with {s} ({} attempts, {} auth entries skipped)",
+                        .{ @errorName(err), done.attempt_count, done.skip_count },
+                    );
+                },
+                .no_more_auth => {
+                    std.log.err(
+                        "failed to connect ({} attempts, {} auth entries skipped)",
+                        .{ done.attempt_count, done.skip_count },
+                    );
+                },
+            }
+            return error.X11Authentication;
+        },
+        .get_auth_filename_error => |e| {
+            std.log.err("get auth filename ({s}) failed with {s}", .{ e.kind.context(), @errorName(e.err) });
+        },
+        .open_auth_file_error => |e| {
+            std.log.err("open auth file '{s}' ({s}) failed with {s}", .{ e.filename, e.kind.context(), @errorName(e.err) });
+        },
+        .auth_file_opened => |f| {
+            std.log.info("opened auth file '{s}' ({s})", .{ f.filename, f.kind.context() });
+        },
+        .io_error => |e| switch (e) {
+            .write_error => |err| {
+                std.log.err("write to server failed with {s}", .{@errorName(err)});
             },
-            .success => @panic("this was supposed to fail"),
-        }
-    }
-
-    const auth_mapped = try MappedFile.init(auth_filename, .{});
-    defer auth_mapped.unmap();
-
-    var total_cred_count: u32 = 0;
-    var attempted_cred_count: u32 = 0;
-
-    var auth_it = x11.AuthIterator{ .mem = auth_mapped.mem };
-    while (auth_it.next() catch {
-        x11.log.warn("auth file '{s}' is invalid", .{auth_filename});
-        return .{ .fail = .invalid_auth_file };
-    }) |entry| {
-        total_cred_count += 1;
-        if (auth_filter.isFiltered(auth_mapped.mem, entry)) |reason| {
-            x11.log.debug("ignoring auth because {s} does not match: {f}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
-            continue;
-        }
-        attempted_cred_count += 1;
-        const name = entry.name(auth_mapped.mem);
-        const data = entry.data(auth_mapped.mem);
-        const name_x = x11.Slice(u16, [*]const u8){
-            .ptr = name.ptr,
-            .len = @intCast(name.len),
-        };
-        const data_x = x11.Slice(u16, [*]const u8){
-            .ptr = data.ptr,
-            .len = @intCast(data.len),
-        };
-        x11.log.debug("trying auth {f}", .{entry.fmt(auth_mapped.mem)});
-        try x11.flushSetup(writer, .{ .auth_name = name_x, .auth_data = data_x });
-        switch (try source.readSetup()) {
-            .failed => |reason| {
-                x11.log.err("connect setup failed: {s}'", .{reason.slice()});
-                return error.ConnectSetupFailed;
+            .read_error => |err| {
+                std.log.err("read from server failed with {s}", .{@errorName(err)});
             },
-            .success => |reply| return .{ .success = reply },
-        }
-    }
-
-    return .{ .fail = .{ .creds_failed = .{
-        .attempted = attempted_cred_count,
-        .total = total_cred_count,
-    } } };
+            .protocol => {
+                std.log.err("server sent unexpected data", .{});
+            },
+        },
+    };
 }
 
 pub fn readSetupDynamic(
     source: *x11.Source,
-    setup: *const x11.SetupReplyStart,
+    setup: *const x11.Setup,
     opt: struct {
         log_vendor: bool = true,
         log_visuals: bool = false,

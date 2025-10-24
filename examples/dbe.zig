@@ -38,37 +38,26 @@ const Ids = struct {
 pub fn main() !u8 {
     try x11.wsaStartup();
 
-    const display = x11.getDisplay();
-    std.log.info("DISPLAY '{s}'", .{display});
+    const display = try x11.getDisplay();
+    std.log.info("DISPLAY {f}", .{display});
     const parsed_display = x11.parseDisplay(display) catch |err| {
-        std.log.err("invalid display '{s}': {s}", .{ display, @errorName(err) });
+        std.log.err("invalid DISPLAY {f}: {s}", .{ display, @errorName(err) });
         std.process.exit(0xff);
     };
-
-    const stream = x11.connect(display, parsed_display) catch |err| {
-        std.log.err("failed to connect to display '{s}': {s}", .{ display, @errorName(err) });
+    const address = try x11.getAddress(display, &parsed_display);
+    var write_buffer: [1000]u8 = undefined;
+    var read_buffer: [1000]u8 = undefined;
+    var io = x11.connect(address, &write_buffer, &read_buffer) catch |err| {
+        std.log.err("connect to {f} failed with {s}", .{ address, @errorName(err) });
         std.process.exit(0xff);
     };
-    defer std.posix.shutdown(stream.handle, .both) catch {};
-
-    var write_buf: [1000]u8 = undefined;
-    var read_buf: [1000]u8 = undefined;
-    var socket_writer = x11.socketWriter(stream, &write_buf);
-    var socket_reader = x11.socketReader(stream, &read_buf);
-    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
-    var source: x11.Source = .{ .reader = socket_reader.interface() };
-
-    const setup = switch (try x11.ext.authenticate(sink.writer, &source, .{
-        .display_num = parsed_display.display_num,
-        .socket = stream.handle,
-    })) {
-        .failed => |reason| {
-            x11.log.err("auth failed: {f}", .{reason});
-            std.process.exit(0xff);
-        },
-        .success => |reply_len| reply_len,
-    };
-    std.log.info("setup reply {}", .{setup});
+    defer io.shutdown(); // no need to close as well
+    std.log.info("connected to {f}", .{address});
+    try x11.ext.authenticate(display, parsed_display, address, &io);
+    var sink: x11.RequestSink = .{ .writer = &io.socket_writer.interface };
+    var source: x11.Source = .{ .reader = io.socket_reader.interface() };
+    const setup = try source.readSetup();
+    std.log.info("setup reply {f}", .{setup});
     const screen = try x11.ext.readSetupDynamic(&source, &setup, .{}) orelse {
         std.log.err("no screen?", .{});
         std.process.exit(0xff);
@@ -132,9 +121,9 @@ pub fn main() !u8 {
     while (true) {
         try sink.writer.flush();
 
-        const action: enum { timeout, socket } = switch (try pollSocketReader(&socket_reader, 0)) {
+        const action: enum { timeout, socket } = switch (try pollSocketReader(&io.socket_reader, 0)) {
             .ready => .socket,
-            .timeout => if (try getTimeout(animate.previous_time, animate_frame_ms)) |timeout_ms| switch (try pollSocketReader(&socket_reader, timeout_ms)) {
+            .timeout => if (try getTimeout(animate.previous_time, animate_frame_ms)) |timeout_ms| switch (try pollSocketReader(&io.socket_reader, timeout_ms)) {
                 .ready => .socket,
                 .timeout => .timeout,
             } else .timeout,
@@ -161,7 +150,7 @@ pub fn main() !u8 {
                 std.log.info("X11 connection closed (EndOfStream)", .{});
                 std.process.exit(0);
             },
-            else => |e| switch (socket_reader.getError() orelse e) {
+            else => |e| switch (io.socket_reader.getError() orelse e) {
                 error.ConnectionResetByPeer => {
                     std.log.info("X11 connection closed (ConnectionReset)", .{});
                     return std.process.exit(0);

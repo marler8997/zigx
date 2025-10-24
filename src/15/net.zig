@@ -12,7 +12,12 @@ const File15 = std.fs.File15;
 const Stream = @import("std").net.Stream;
 
 pub const Stream15 = struct {
-    const ReadError = posix.ReadError || error{
+    pub const Handle = switch (native_os) {
+        .windows => windows.ws2_32.SOCKET,
+        else => posix.fd_t,
+    };
+
+    pub const ReadError = posix.ReadError || error{
         SocketNotBound,
         MessageTooBig,
         NetworkSubsystemFailed,
@@ -20,7 +25,7 @@ pub const Stream15 = struct {
         SocketNotConnected,
     };
 
-    const WriteError = posix.SendMsgError || error{
+    pub const WriteError = posix.SendMsgError || error{
         ConnectionResetByPeer,
         SocketNotBound,
         MessageTooBig,
@@ -283,7 +288,7 @@ pub const Stream15 = struct {
                 }
             }
 
-            fn sendBufs(handle: Stream.Handle, bufs: []windows.ws2_32.WSABUF) Error!u32 {
+            fn sendBufs(handle: Stream15.Handle, bufs: []windows.ws2_32.WSABUF) Error!u32 {
                 var n: u32 = undefined;
                 var overlapped: windows.OVERLAPPED = std.mem.zeroes(windows.OVERLAPPED);
                 if (windows.ws2_32.WSASend(

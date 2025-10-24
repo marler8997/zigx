@@ -70,58 +70,29 @@ fn getImageFormat(
     };
 }
 
-fn expectSequence(expected_sequence: u16, reply: *const x11.ServerMsg.Reply) void {
-    if (expected_sequence != reply.sequence) std.debug.panic(
-        "expected reply sequence {} but got {f}",
-        .{ expected_sequence, reply },
-    );
-}
-
-/// Sanity check that we're not running into data integrity (corruption) issues caused
-/// by overflowing and wrapping around to the front ofq the buffer.
-fn checkMessageLengthFitsInBuffer(message_length: usize, buffer_limit: usize) !void {
-    if (message_length > buffer_limit) {
-        std.debug.panic("Reply is bigger than our buffer (data corruption will ensue) {} > {}. " ++
-            "In order to fix, increase the buffer size.", .{
-            message_length,
-            buffer_limit,
-        });
-    }
-}
-
 pub fn main() !u8 {
     try x11.wsaStartup();
-    const display = x11.getDisplay();
-    std.log.info("DISPLAY '{s}'", .{display});
+
+    const display = try x11.getDisplay();
+    std.log.info("DISPLAY {f}", .{display});
     const parsed_display = x11.parseDisplay(display) catch |err| {
-        std.log.err("invalid display '{s}': {s}", .{ display, @errorName(err) });
+        std.log.err("invalid DISPLAY {f}: {s}", .{ display, @errorName(err) });
         std.process.exit(0xff);
     };
-
-    const stream = x11.connect(display, parsed_display) catch |err| {
-        std.log.err("failed to connect to display '{s}': {s}", .{ display, @errorName(err) });
+    const address = try x11.getAddress(display, &parsed_display);
+    var write_buffer: [1000]u8 = undefined;
+    var read_buffer: [1000]u8 = undefined;
+    var io = x11.connect(address, &write_buffer, &read_buffer) catch |err| {
+        std.log.err("connect to {f} failed with {s}", .{ address, @errorName(err) });
         std.process.exit(0xff);
     };
-    defer std.posix.shutdown(stream.handle, .both) catch {};
-
-    var write_buf: [1000]u8 = undefined;
-    var read_buf: [1000]u8 = undefined;
-    var socket_writer = x11.socketWriter(stream, &write_buf);
-    var socket_reader = x11.socketReader(stream, &read_buf);
-    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
-    var source: x11.Source = .{ .reader = socket_reader.interface() };
-
-    const setup = switch (try x11.ext.authenticate(sink.writer, &source, .{
-        .display_num = parsed_display.display_num,
-        .socket = stream.handle,
-    })) {
-        .failed => |reason| {
-            x11.log.err("auth failed: {f}", .{reason});
-            std.process.exit(0xff);
-        },
-        .success => |reply_len| reply_len,
-    };
-    std.log.info("setup reply {}", .{setup});
+    defer io.shutdown(); // no need to close as well
+    std.log.info("connected to {f}", .{address});
+    try x11.ext.authenticate(display, parsed_display, address, &io);
+    var sink: x11.RequestSink = .{ .writer = &io.socket_writer.interface };
+    var source: x11.Source = .{ .reader = io.socket_reader.interface() };
+    const setup = try source.readSetup();
+    std.log.info("setup reply {f}", .{setup});
     try source.requireReplyAtLeast(setup.required());
     if (x11.zig_atleast_15) {
         var used = false;
@@ -482,7 +453,7 @@ pub fn main() !u8 {
                 std.log.info("X11 connection closed (EndOfStream)", .{});
                 std.process.exit(0);
             },
-            else => |e| switch (socket_reader.getError() orelse e) {
+            else => |e| switch (io.socket_reader.getError() orelse e) {
                 error.ConnectionResetByPeer => {
                     std.log.info("X11 connection closed (ConnectionReset)", .{});
                     return std.process.exit(0);

@@ -74,54 +74,96 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
         std.process.exit(1);
     }
 
-    const auth_filename = blk: {
-        if (opt.auth_filename) |f| break :blk x11.AuthFilename{
-            .str = f,
-            .owned = false,
-        };
-        break :blk try x11.getAuthFilename(global.arena) orelse {
-            std.log.err("unable to find an Xauthority file", .{});
+    if (opt.auth_filename) |filename| {
+        const file = std.fs.cwd().openFile(filename, .{}) catch |err| {
+            std.log.err("open '{s}' failed with {s}", .{ filename, @errorName(err) });
             std.process.exit(1);
         };
+        defer file.close();
+        try list2(file);
+    } else {
+        var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+        for (std.enums.valuesFromFields(
+            x11.AuthFileKind,
+            @typeInfo(x11.AuthFileKind).@"enum".fields,
+        )) |kind| {
+            if (x11.getAuthFilename(kind, &filename_buf) catch |err| {
+                std.log.err("get auth filename ({s}) failed with {s}", .{ kind.context(), @errorName(err) });
+                continue;
+            }) |filename| {
+                if (std.fs.cwd().openFile(filename, .{})) |file| {
+                    defer file.close();
+                    try list2(file);
+                } else |err| {
+                    std.log.info("open '{s}' failed with {s}", .{ filename, @errorName(err) });
+                }
+            }
+        }
+    }
+}
+
+fn list2(file: std.fs.File) !void {
+    var file_read_buf: [4096]u8 = undefined;
+    var file_reader = x11.fileReader(file, &file_read_buf);
+    var reader: x11.AuthReader = .{ .reader = &file_reader.interface };
+    list3(&reader) catch |err| return switch (err) {
+        error.ReadFailed => file_reader.err orelse error.ReadFailed,
+        else => |e| e,
     };
-    // no need to auth_filename.deinit(allocator);
+}
 
-    const auth_mapped = try x11.ext.MappedFile.init(auth_filename.str, .{});
-    defer auth_mapped.unmap();
-
+fn list3(reader: *x11.AuthReader) !void {
     var stdout_buffer: [1000]u8 = undefined;
     var stdout_writer: x11.FileWriter = .init(x11.stdout(), &stdout_buffer);
     const stdout = &stdout_writer.interface;
-
-    var auth_it = x11.AuthIterator{ .mem = auth_mapped.mem };
-    while (auth_it.next() catch {
-        std.log.err("auth file '{s}' is invalid", .{auth_filename.str});
-        std.process.exit(1);
-    }) |entry| {
-        switch (entry.family) {
-            .wild => {}, // not sure what to do, should we write "*"? nothing?
-            else => {
-                const addr = x11.Addr{
-                    .family = entry.family,
-                    .data = entry.addr(auth_mapped.mem),
-                };
-                if (x11.zig_atleast_15)
-                    try addr.format(stdout)
-                else
-                    try addr.format("", .{}, stdout);
+    var entry_index: u32 = 0;
+    while (true) : (entry_index += 1) {
+        const family = (try reader.takeFamily()) orelse break;
+        try stdout.print("AddressFamily={f} ", .{x11.fmtEnum(family)});
+        const addr_len = try reader.takeDynamicLen(.addr);
+        switch (family) {
+            .inet => if (addr_len == 4) {
+                const a = try reader.takeDynamic(4);
+                try stdout.print("{}.{}.{}.{} ", .{ a[0], a[1], a[2], a[3] });
             },
+            .inet6 => {},
+            .unix => {
+                try stdout.writeAll("UnixAddress='");
+                try reader.streamDynamic(stdout, addr_len);
+                try stdout.writeAll("' ");
+            },
+            .wild => {},
+            _ => {},
+        }
+        if (reader.state == .dynamic_data) {
+            try stdout.print("Address({} bytes)=", .{addr_len});
+            try streamHex(reader, stdout, addr_len);
+            try stdout.writeAll(" ");
         }
 
-        var display_buf: [40]u8 = undefined;
-        const display: []const u8 = if (entry.display_num) |d|
-            (std.fmt.bufPrint(&display_buf, "{d}", .{@intFromEnum(d)}) catch unreachable)
-        else
-            "";
-        try stdout.print(":{s}  {s}  {x}\n", .{
-            display,
-            entry.name(auth_mapped.mem),
-            if (x11.zig_atleast_15) entry.data(auth_mapped.mem) else std.fmt.fmtSliceHexLower(entry.data(auth_mapped.mem)),
-        });
+        const display_num_len = try reader.takeDynamicLen(.display_num);
+        try stdout.writeAll("DisplayNum='");
+        try reader.streamDynamic(stdout, display_num_len);
+        try stdout.writeAll("'");
+
+        const name_len = try reader.takeDynamicLen(.name);
+        try stdout.writeAll(" AuthName='");
+        try reader.streamDynamic(stdout, name_len);
+        const data_len = try reader.takeDynamicLen(.data);
+        try stdout.print("' Data({} bytes)=", .{data_len});
+        try streamHex(reader, stdout, data_len);
+        try stdout.writeByte('\n');
     }
     try stdout.flush();
+}
+
+fn streamHex(reader: *x11.AuthReader, stdout: *x11.Writer, n: usize) !void {
+    var remaining = n;
+    while (remaining > 0) {
+        const take_len = @min(remaining, reader.reader.buffer.len);
+        const data = try reader.takeDynamic(take_len);
+        try stdout.print("{x}", .{if (x11.zig_atleast_15) data else std.fmt.fmtSliceHexLower(data)});
+        remaining -= take_len;
+    }
+    reader.finishDynamic();
 }
