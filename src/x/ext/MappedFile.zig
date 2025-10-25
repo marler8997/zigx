@@ -12,7 +12,12 @@ pub const Options = struct {
 };
 const empty_mem: [0]u8 align(std.heap.page_size_min) = .{};
 
-pub fn init(filename: []const u8, opt: Options) !MappedFile {
+pub const InitError = error{
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    Foo,
+};
+
+pub fn init(filename: []const u8, opt: Options) InitError!MappedFile {
     var file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
     const file_size_u64: u64 = try file.getEndPos();
@@ -60,7 +65,7 @@ pub fn init(filename: []const u8, opt: Options) !MappedFile {
         errdefer std.debug.assert(0 != win32.UnmapViewOfFile(ptr));
 
         return .{
-            .mem = @as([*]align(std.heap.page_size_min) u8, @alignCast(@ptrCast(ptr)))[0..file_size],
+            .mem = @as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(ptr)))[0..file_size],
             .mapping = mapping,
         };
     }

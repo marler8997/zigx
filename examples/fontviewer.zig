@@ -27,17 +27,20 @@ const Ids = struct {
 };
 
 pub fn main() !u8 {
-    const display = x11.getDisplay();
-    const parsed_display = x11.parseDisplay(display) catch |err| {
-        std.log.err("invalid display '{s}': {s}", .{ display, @errorName(err) });
+    try x11.wsaStartup();
+
+    const display = try x11.getDisplay();
+    std.log.info("DISPLAY {f}", .{display});
+    const parsed_display = display.parse() catch |err| {
+        std.log.err("invalid DISPLAY {f}: {s}", .{ display, @errorName(err) });
         std.process.exit(0xff);
     };
-
-    const stream = x11.connect(display, parsed_display) catch |err| {
-        std.log.err("failed to connect to display '{s}': {s}", .{ display, @errorName(err) });
+    const addr, const stream = x11.connect(display, parsed_display) catch |err| {
+        std.log.err("connect to DISPLAY {f} failed with {s}", .{ display, @errorName(err) });
         std.process.exit(0xff);
     };
     defer std.posix.shutdown(stream.handle, .both) catch {};
+    std.log.info("connected to {f}", .{addr});
 
     var write_buf: [1000]u8 = undefined;
     var read_buf: [1000]u8 = undefined;
@@ -46,15 +49,16 @@ pub fn main() !u8 {
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .{ .reader = socket_reader.interface() };
 
-    const setup = switch (try x11.ext.authenticate(sink.writer, &source, .{
-        .display_num = parsed_display.display_num,
-        .socket = stream.handle,
+    const setup = switch (try x11.authenticate(sink.writer, &source, .{
+        .display = display,
+        .parsed = parsed_display,
+        .addr = addr,
     })) {
         .failed => |reason| {
-            x11.log.err("auth failed: {f}", .{reason});
+            std.log.err("auth failed: {f}", .{reason});
             std.process.exit(0xff);
         },
-        .success => |reply_len| reply_len,
+        .success => |setup| setup,
     };
     std.log.info("setup reply {}", .{setup});
     const screen = try x11.ext.readSetupDynamic(&source, &setup, .{}) orelse {
