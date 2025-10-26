@@ -1420,15 +1420,17 @@ fn matchAddr(
 fn matchDisplayNum(
     connect_display: Display,
     connect_parsed_display: ParsedDisplay,
-    file_display_num: []const u8,
+    file_display_num_string: []const u8,
 ) bool {
-    const connect_display_string = connect_display.string orelse return file_display_num.len == 0;
+    const connect_display_string = connect_display.string orelse return file_display_num_string.len == 0;
     // My guess is this means it applies to all displays
-    if (file_display_num.len == 0) return true;
-    _ = connect_parsed_display;
+    if (file_display_num_string.len == 0) return true;
+    if (std.fmt.parseInt(u16, file_display_num_string, 10)) |file_display_num| {
+        return @intFromEnum(connect_parsed_display.display_num) == file_display_num;
+    } else |_| {}
     (if (builtin.mode == .Debug) std.debug.panic else log.err)(
         "TODO: implement matching display '{s}' against num '{s}'",
-        .{ connect_display_string, file_display_num },
+        .{ connect_display_string, file_display_num_string },
     );
     return false;
 }
