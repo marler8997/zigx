@@ -949,11 +949,11 @@ pub const DisplayNum = enum(u16) {
     }
 };
 
-const ConnectAddressError =
+pub const ConnectAddressError =
     error{UnknownHostName} ||
     ConnectTcpError ||
     ConnectUnixError;
-fn connectAddress(addr: *const Address) ConnectAddressError!struct { std.net.Address, std.net.Stream } {
+pub fn connectAddress(addr: *const Address) ConnectAddressError!struct { std.net.Address, std.net.Stream } {
     switch (addr.*) {
         .net => |*net_addr| return .{ net_addr.*, try connectNetAddress(net_addr) },
         .host => |*host| {
