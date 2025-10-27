@@ -88,7 +88,12 @@ pub fn build(b: *std.Build) void {
         .{},
     );
     x11_lib.linkLibC();
-    b.installArtifact(x11_lib);
+    {
+        const install = b.addInstallArtifact(x11_lib, .{});
+        b.step("lib", "").dependOn(&install.step);
+        // disabled for now as the build is currently broken
+        // b.getInstallStep().dependOn(&install.step);
+    }
 
     {
         const exe = b.addExecutable(.{
@@ -106,7 +111,9 @@ pub fn build(b: *std.Build) void {
         exe.linkLibrary(x11_lib);
 
         const install = b.addInstallArtifact(exe, .{});
-        b.getInstallStep().dependOn(&install.step);
+        b.step("install-hellox11b", "").dependOn(&install.step);
+        // disabled for now as the build is currently broken
+        // b.getInstallStep().dependOn(&install.step);
 
         // run_examples.addArtifactArg(exe);
         // run_examples.step.dependOn(&install.step);
