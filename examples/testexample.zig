@@ -401,11 +401,11 @@ pub fn main() !u8 {
         if (version.major != 1) std.debug.panic("unsupported SHAPE version {}", .{version.major});
     }
 
-    const opt_test_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.testext.name);
+    const opt_test_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.tst.name);
     if (opt_test_ext) |test_ext| {
         const expected_version_major = 2;
         const expected_version_minor = 2;
-        try x11.testext.GetVersion(&sink, .{
+        try x11.tst.GetVersion(&sink, .{
             .ext_opcode_base = test_ext.opcode_base,
             .wanted_major_version = expected_version_major,
             .wanted_minor_version = expected_version_minor,
@@ -421,17 +421,17 @@ pub fn main() !u8 {
     // Send a fake mouse left-click event
     if (opt_test_ext) |test_ext| {
         std.log.info("sending fake button press/release...", .{});
-        try x11.testext.FakeInput(&sink, test_ext.opcode_base, .{
+        try x11.tst.FakeInput(&sink, test_ext.opcode_base, .{
             .button_press = .{
-                .event_type = x11.testext.FakeEventType.button_press,
+                .event_type = x11.tst.FakeEventType.button_press,
                 .detail = 1,
                 .delay_ms = 0,
                 .device_id = null,
             },
         });
-        try x11.testext.FakeInput(&sink, test_ext.opcode_base, .{
+        try x11.tst.FakeInput(&sink, test_ext.opcode_base, .{
             .button_press = .{
-                .event_type = x11.testext.FakeEventType.button_release,
+                .event_type = x11.tst.FakeEventType.button_release,
                 .detail = 1,
                 .delay_ms = 0,
                 .device_id = null,

@@ -33,11 +33,27 @@ const posix = std.posix;
 const windows = std.os.windows;
 
 pub const draft = @import("x/draft.zig");
-pub const inputext = @import("xinputext.zig");
-pub const render = @import("render.zig");
-pub const dbe = @import("xdbe.zig");
-pub const shape = @import("xshape.zig");
-pub const testext = @import("xtest.zig");
+
+// ================================================================================
+// Extensions
+// ================================================================================
+pub const input = @import("x/input.zig");
+pub const render = @import("x/render.zig");
+pub const dbe = @import("x/dbe.zig");
+pub const shape = @import("x/shape.zig");
+pub const tst = @import("x/tst.zig");
+pub const randr = @compileError("todo");
+pub const fixes = @compileError("todo");
+pub const damage = @compileError("todo");
+pub const composite = @compileError("todo");
+pub const shm = @compileError("todo");
+pub const sync = @compileError("todo");
+pub const video = @compileError("todo");
+pub const vmc = @compileError("todo");
+pub const dri = @compileError("todo");
+pub const present = @compileError("todo");
+pub const res = @compileError("todo");
+pub const record = @compileError("todo");
 
 // Expose some helpful stuff
 pub const BoundedArray = @import("bounded_array.zig").BoundedArray;

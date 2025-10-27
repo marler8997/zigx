@@ -153,7 +153,7 @@ pub fn main() !u8 {
 
     var state = State{};
 
-    try sink.QueryExtension(x11.inputext.name);
+    try sink.QueryExtension(x11.input.name);
     state.xinput = .{ .sent_extension_query = .{
         .sequence = sink.sequence,
     } };
@@ -264,7 +264,7 @@ pub fn main() !u8 {
                     "expected opcode {} but got {}",
                     .{ extension.opcode_base, event.ext_opcode_base },
                 );
-                const code: x11.NonExhaustive(x11.inputext.ExtEventCode) = @enumFromInt(@as(u8, @truncate(event.type)));
+                const code: x11.NonExhaustive(x11.input.ExtEventCode) = @enumFromInt(@as(u8, @truncate(event.type)));
                 try source.discardRemaining();
                 switch (code) {
                     .raw_button_press => {
@@ -319,9 +319,9 @@ fn handleReply(
                 .{ @sizeOf(x11.stage3.QueryExtension), remaining_size },
             );
             const maybe_ext: ?x11.Extension = try .init(try source.read3Full(.QueryExtension));
-            std.log.info("extension '{s}': {?}", .{ x11.inputext.name.nativeSlice(), maybe_ext });
+            std.log.info("extension '{s}': {?}", .{ x11.input.name.nativeSlice(), maybe_ext });
             if (maybe_ext) |ext| {
-                try x11.inputext.request.GetExtensionVersion(sink, ext.opcode_base, x11.inputext.name);
+                try x11.input.request.GetExtensionVersion(sink, ext.opcode_base, x11.input.name);
                 state.xinput = .{ .get_version = .{
                     .sequence = sink.sequence,
                     .extension = ext,
@@ -332,15 +332,15 @@ fn handleReply(
             return true; // handled
         },
         .get_version => |info| if (reply.sequence == info.sequence) {
-            if (reply.flexible != @intFromEnum(x11.inputext.ExtOpcode.get_extension_version)) std.debug.panic(
+            if (reply.flexible != @intFromEnum(x11.input.ExtOpcode.get_extension_version)) std.debug.panic(
                 "expected reply opcode(flexible) {} but got {}",
-                .{ @intFromEnum(x11.inputext.ExtOpcode.get_extension_version), reply },
+                .{ @intFromEnum(x11.input.ExtOpcode.get_extension_version), reply },
             );
-            if (remaining_size != @sizeOf(x11.inputext.stage3.GetExtensionVersion)) std.debug.panic(
+            if (remaining_size != @sizeOf(x11.input.stage3.GetExtensionVersion)) std.debug.panic(
                 "expected size {} but got {}",
                 .{ @sizeOf(x11.stage3.QueryExtension), remaining_size },
             );
-            const version = try x11.inputext.read3Full(source, .GetExtensionVersion);
+            const version = try x11.input.read3Full(source, .GetExtensionVersion);
             if (version.present != .yes) std.debug.panic("XInputExtension present={} after it was already present?", .{@intFromEnum(version.present)});
             if (version.major != 2) std.debug.panic("expected XInputExtension major version {} but got {}", .{ 2, version.major });
             if (version.minor < 3) std.debug.panic("XInputExtension minor version is {} but require at least 3", .{version.minor});
@@ -364,7 +364,7 @@ fn handleReply(
     // switch (state.disable_input_device) {
     //     .initial, .no_pointer_to_disable, .extension_not_available_yet, .extension_missing, .disabled => {},
     //     .list_devices => |state_info| if (msg.sequence == state_info.sequence) {
-    //         const devices_reply: *const x11.inputext.ListInputDevicesReply = @ptrCast(msg);
+    //         const devices_reply: *const x11.input.ListInputDevicesReply = @ptrCast(msg);
     //         var input_info_it = devices_reply.inputInfoIterator();
     //         var names_it = devices_reply.findNames();
     //         var selected_pointer_id: ?u8 = null;
@@ -403,7 +403,7 @@ fn handleReply(
     //     },
     //     .intern_atom => |info| if (msg.sequence == info.sequence) {
     //         const atom = x11.readIntNative(u32, msg.reserve_min[0..]);
-    //         try x11.inputext.GetProperty(sink, info.ext_opcode, .{
+    //         try x11.input.GetProperty(sink, info.ext_opcode, .{
     //             .device_id = info.pointer_id,
     //             .property = atom,
     //             .type = 0,
@@ -420,10 +420,10 @@ fn handleReply(
     //         return true;
     //     },
     //     .get_prop => |info| if (msg.sequence == info.sequence) {
-    //         const reply: *const x11.inputext.get_property.Reply = @ptrCast(msg);
+    //         const reply: *const x11.input.get_property.Reply = @ptrCast(msg);
     //         std.log.info("get_property returned {}", .{reply});
 
-    //         try x11.inputext.ChangeProperty(sink, info.ext_opcode, u8, .{
+    //         try x11.input.ChangeProperty(sink, info.ext_opcode, u8, .{
     //             .device_id = info.pointer_id,
     //             .mode = .replace,
     //             .property = info.atom,
@@ -520,13 +520,13 @@ fn listenToRawEvents(sink: *x11.RequestSink, state: *State, root_window_id: x11.
 
             // Listen to all mouse clicks regardless of where they occurred
             std.log.info("Setting up raw mouse click listener...", .{});
-            var event_masks = [_]x11.inputext.EventMask{.{
+            var event_masks = [_]x11.input.EventMask{.{
                 .device_id = .all_master,
-                .mask = x11.inputext.event.raw_button_press,
+                .mask = x11.input.event.raw_button_press,
             }};
 
             const opcode_base = state.xinput.enabled.opcode_base;
-            try x11.inputext.SelectEvents(sink, opcode_base, root_window_id, event_masks[0..]);
+            try x11.input.SelectEvents(sink, opcode_base, root_window_id, event_masks[0..]);
 
             state.listen_to_raw_events = .enabled;
         },
@@ -553,7 +553,7 @@ fn disableInputDevice(sink: *x11.RequestSink, state: *State) !void {
             }
 
             const opcode_base = state.xinput.enabled.opcode_base;
-            try x11.inputext.ListInputDevices(sink, opcode_base);
+            try x11.input.ListInputDevices(sink, opcode_base);
             state.disable_input_device = .{ .list_devices = .{
                 .sequence = sink.sequence,
                 .ext_opcode = opcode_base,

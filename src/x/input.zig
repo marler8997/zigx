@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const x11 = @import("x.zig");
+const x11 = @import("../x.zig");
 
 pub const name = x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
 
@@ -500,8 +500,8 @@ pub const Device = enum(u16) {
 
 pub const EventMask = struct {
     device_id: Device,
-    /// Bit mask made up of `x.inputext.event.*` constants that you're interested in.
-    /// ex. `x.inputext.event.raw_button_press | x.inputext.event.raw_key_release`
+    /// Bit mask made up of `x.input.event.*` constants that you're interested in.
+    /// ex. `x.input.event.raw_button_press | x.input.event.raw_key_release`
     mask: u32,
 };
 

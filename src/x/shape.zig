@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const x11 = @import("x.zig");
+const x11 = @import("../x.zig");
 
 pub const name: x11.Slice(u16, [*]const u8) = .initComptime("SHAPE");
 
