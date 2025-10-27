@@ -4,33 +4,27 @@ An x11 client library for Zig applications.
 
 # What you should know about X
 
-X is a protocol for transmitting graphics primitives and user inputs.
-
-## Components
-
-XClient - a program that connects to an XServer to send graphics primitives and receive user inputs
-
-XServer - a program that accepts XClients to receive graphics primitives and send user inputs
+X is a protocol for transmitting graphics primitives and user inputs. It's a client/server model. X clients are typically programs that connect to a server.  Once connected, the client program will continually receive "user inputs" from the server (like keyboard/mouse events) and send drawing instructions. X has many extensions but the core specification is found here: https://www.x.org/docs/XProtocol/proto.pdf
 
 ## The `DISPLAY` environment variable
 
 XClient libraries use the `DISPLAY` environment variable to know how to connect to the XServer.  It uses this format:
 
 ```
-[PROTOCOL/]HOST:DISPLAYNUM[.SCREEN]
+[PROTOCOL/][HOST]:DISPLAYNUM[.SCREEN]
 ```
 
 Examples:
 
 ```
-# connect to localhost port 6000
+# connect to unix socket at /tmp/.X11-unix/X0
 :0
 
-# connect to host "foo" port 6003
-foo:3
+# connect to "localhost" on port 6003
+localhost:3
 
-# connect to host "foo" port 6007 screen 5
-foo:7.5
+# connect to myserver port 6007 screen 5
+myserver:7.5
 ```
 
 Here are some examples of starting XClient programs and settings the `DISPLAY` environment variable:
@@ -54,7 +48,7 @@ DISPLAY=mymachine:10.1 ./yet-another-x-program
 xtrace -n -- command
 
 # i.e.
-xtrace -n -- zig run example.zig
+xtrace -n -- zig build hello
 ```
 
 # Authentication
