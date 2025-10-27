@@ -31,7 +31,7 @@ pub fn main() !void {
     const address = try x11.getAddress(display, &parsed_display);
     var write_buffer: [1000]u8 = undefined;
     var read_buffer: [1000]u8 = undefined;
-    var io = x11.connect(address, &write_buffer, &read_buffer) catch |err| {
+    var io = x11.connect(&address, &write_buffer, &read_buffer) catch |err| {
         std.log.err("connect to {f} failed with {s}", .{ address, @errorName(err) });
         std.process.exit(0xff);
     };

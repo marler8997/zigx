@@ -473,8 +473,8 @@ pub fn getAddress(display: Display, parsed: *const ParsedDisplay) GetAddressErro
 }
 
 pub const ConnectError = ConnectAddressError;
-pub fn connect(addr: Address, write_buffer: []u8, read_buffer: []u8) ConnectError!Io {
-    const address, const stream = try connectAddress(&addr);
+pub fn connect(addr: *const Address, write_buffer: []u8, read_buffer: []u8) ConnectError!Io {
+    const address, const stream = try connectAddress(addr);
     return .{
         .address = address,
         .socket_writer = socketWriter(stream, write_buffer),
