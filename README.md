@@ -53,6 +53,14 @@ xtrace -n -- zig build hello
 
 # Authentication
 
+Authentication credentials are stored in a file in a binary format. The default path is `$HOME/.Xauthority` but can be overriden with the `XAUTHORITY` environment variable.
+
+This binary file contains a list of credentials. Each entry can contain both an address and/or display number to that indicate which server the authorization applies to. Afterwards it contains a name/data pair to be exchanged with the server for authorization. You can build and use the `xauth` cli program to list the contents of one of these files, i.e.
+
+```
+zig build xauth -- list
+```
+
 https://en.wikipedia.org/wiki/X_Window_authorization
 
 * `MIT-MAGIC-COOKIE`: implemented for local connections
