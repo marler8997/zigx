@@ -501,8 +501,8 @@ pub const AuthFileKind = enum {
 /// the given IO.
 pub const Authenticator = struct {
     display: Display,
-    parsed_display: ParsedDisplay,
-    address: Address,
+    parsed_display: *const ParsedDisplay,
+    address: *const Address,
     io: *Io,
     filename_buffer: []u8,
     order: Order = .auth_first,
@@ -672,7 +672,7 @@ pub const Authenticator = struct {
                 const match = switch (matchAuthEntry(
                     authenticator.display,
                     authenticator.parsed_display,
-                    &authenticator.address,
+                    authenticator.address,
                     &authenticator.io.address,
                     &r.reader,
                     authenticator.auth_count,
@@ -883,7 +883,7 @@ fn readSetupReply1(reader: *Reader) ReadSetupReply1Error!SetupReply1 {
 
 fn matchAuthEntry(
     display: Display,
-    parsed_display: ParsedDisplay,
+    parsed_display: *const ParsedDisplay,
     address: *const Address,
     net_address: *std.net.Address,
     auth_reader: *AuthReader,
@@ -1435,7 +1435,7 @@ fn matchAddr(
 }
 fn matchDisplayNum(
     connect_display: Display,
-    connect_parsed_display: ParsedDisplay,
+    connect_parsed_display: *const ParsedDisplay,
     file_display_num_string: []const u8,
 ) bool {
     const connect_display_string = connect_display.string orelse return file_display_num_string.len == 0;

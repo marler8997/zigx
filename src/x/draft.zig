@@ -3,8 +3,8 @@ const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .mino
 
 pub fn authenticate(
     display: x11.Display,
-    parsed_display: x11.ParsedDisplay,
-    address: x11.Address,
+    parsed_display: *const x11.ParsedDisplay,
+    address: *const x11.Address,
     io: *x11.Io,
 ) !void {
     var filename_buffer: [std.fs.max_path_bytes]u8 = undefined;
