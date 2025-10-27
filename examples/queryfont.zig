@@ -5,10 +5,9 @@ pub const log_level = std.log.Level.info;
 
 const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
 
-var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-const allocator = arena.allocator();
-
 pub fn main() !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const allocator = arena.allocator();
     const all_args = try std.process.argsAlloc(allocator);
     if (all_args.len <= 1) {
         std.debug.print("Usage: queryfont FONTNAME\n", .{});
