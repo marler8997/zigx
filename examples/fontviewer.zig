@@ -18,11 +18,8 @@ const Ids = struct {
     pub fn font(self: Ids) x11.Font {
         return self.base.add(1).font();
     }
-    pub fn gcBackground(self: Ids) x11.GraphicsContext {
+    pub fn gc(self: Ids) x11.GraphicsContext {
         return self.base.add(2).graphicsContext();
-    }
-    pub fn gcText(self: Ids) x11.GraphicsContext {
-        return self.base.add(3).graphicsContext();
     }
 };
 
@@ -102,6 +99,10 @@ pub fn main() !u8 {
     };
 
     const ids = Ids{ .base = setup.resource_id_base };
+    const depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(
+        "unsupported depth {}",
+        .{screen.root_depth},
+    );
 
     try sink.CreateWindow(.{
         .window_id = ids.window(),
@@ -118,24 +119,14 @@ pub fn main() !u8 {
         .bg_pixel = 0xffffff,
         .event_mask = .{ .KeyPress = 1, .Exposure = 1 },
     });
-
     try sink.CreateGc(
-        ids.gcBackground(),
+        ids.gc(),
         ids.window().drawable(),
         .{
-            .background = x11.rgbFrom24(screen.root_depth, 0xffffff),
-            .foreground = x11.rgbFrom24(screen.root_depth, 0xffffff),
+            .background = depth.rgbFrom24(0xffffff),
+            .foreground = depth.rgbFrom24(0),
         },
     );
-    try sink.CreateGc(
-        ids.gcText(),
-        ids.window().drawable(),
-        .{
-            .background = x11.rgbFrom24(screen.root_depth, 0xffffff),
-            .foreground = x11.rgbFrom24(screen.root_depth, 0),
-        },
-    );
-
     try sink.MapWindow(ids.window());
 
     var state = State{ .desired_font_index = 0, .exposed = .no };
@@ -381,27 +372,25 @@ fn render(
     font_index: usize,
     font_info: FontInfo,
 ) !void {
+    try sink.ClearArea(
+        ids.window(),
+        .{ .x = 0, .y = 0, .width = window_width, .height = window_height },
+        .{ .exposures = false },
+    );
+
     const font_name = fonts[font_index];
     //std.log.info("rendering font '{s}'", .{font_name});
 
-    try sink.PolyFillRectangle(
-        ids.window().drawable(),
-        ids.gcBackground(),
-        .initComptime(&[_]x11.Rectangle{
-            .{ .x = 0, .y = 0, .width = window_width, .height = window_height },
-        }),
-    );
-
-    try sink.ChangeGc(ids.gcText(), .{ .font = ids.font() });
+    try sink.ChangeGc(ids.gc(), .{ .font = ids.font() });
 
     const font_height = font_info.font_ascent + font_info.font_descent;
 
-    try renderText(sink, ids.window().drawable(), ids.gcText(), .{ .x = 10, .y = 10 + (font_height * 1) }, "font {}/{}", .{ font_index + 1, fonts.len });
-    try renderText(sink, ids.window().drawable(), ids.gcText(), .{ .x = 10, .y = 10 + (font_height * 2) }, "{f}", .{font_name});
-    try renderText(sink, ids.window().drawable(), ids.gcText(), .{ .x = 10, .y = 10 + (font_height * 3) }, "property_count={} char_info_count={}", .{ font_info.property_count, font_info.info_count });
-    try renderText(sink, ids.window().drawable(), ids.gcText(), .{ .x = 10, .y = 10 + (font_height * 4) }, "The quick brown fox jumped over the lazy dog", .{});
-    try renderText(sink, ids.window().drawable(), ids.gcText(), .{ .x = 10, .y = 10 + (font_height * 5) }, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", .{});
-    try renderText(sink, ids.window().drawable(), ids.gcText(), .{ .x = 10, .y = 10 + (font_height * 6) }, "abcdefghijklmnopqrstuvwxyz", .{});
+    try renderText(sink, ids.window().drawable(), ids.gc(), .{ .x = 10, .y = 10 + (font_height * 1) }, "font {}/{}", .{ font_index + 1, fonts.len });
+    try renderText(sink, ids.window().drawable(), ids.gc(), .{ .x = 10, .y = 10 + (font_height * 2) }, "{f}", .{font_name});
+    try renderText(sink, ids.window().drawable(), ids.gc(), .{ .x = 10, .y = 10 + (font_height * 3) }, "property_count={} char_info_count={}", .{ font_info.property_count, font_info.info_count });
+    try renderText(sink, ids.window().drawable(), ids.gc(), .{ .x = 10, .y = 10 + (font_height * 4) }, "The quick brown fox jumped over the lazy dog", .{});
+    try renderText(sink, ids.window().drawable(), ids.gc(), .{ .x = 10, .y = 10 + (font_height * 5) }, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", .{});
+    try renderText(sink, ids.window().drawable(), ids.gc(), .{ .x = 10, .y = 10 + (font_height * 6) }, "abcdefghijklmnopqrstuvwxyz", .{});
     try sink.writer.flush();
 }
 
@@ -412,7 +401,7 @@ fn renderNoFontInfo(sink: *x11.RequestSink, ids: Ids, fonts: []x11.Slice(u8, [*]
 
     try sink.PolyFillRectangle(
         ids.window().drawable(),
-        ids.gcBackground(),
+        ids.gc(),
         .initComptime(&[_]x11.Rectangle{
             .{ .x = 0, .y = 0, .width = window_width, .height = window_height },
         }),
@@ -420,15 +409,15 @@ fn renderNoFontInfo(sink: *x11.RequestSink, ids: Ids, fonts: []x11.Slice(u8, [*]
 
     //    {
     //        var msg_buf: [x11.change_gc.max_len]u8 = undefined;
-    //        const len = x11.change_gc.serialize(&msg_buf, ids.gcText(), .{
+    //        const len = x11.change_gc.serialize(&msg_buf, ids.gc(), .{
     //            .font = ids.font(),
     //        });
     //        try x11.ext.send(sock, msg_buf[0..len]);
     //    }
 
-    //try renderText(sock, ids.window(), ids.gcText(), 10, 30, "font {}/{}", .{font_index+1, fonts.len});
-    //try renderText(sock, ids.window(), ids.gcText(), 10, 60, "{s}", .{font_name});
-    //try renderText(sock, ids.window(), ids.gcText(), 10, 90, "Failed to query font info", .{});
+    //try renderText(sock, ids.window(), ids.gc(), 10, 30, "font {}/{}", .{font_index+1, fonts.len});
+    //try renderText(sock, ids.window(), ids.gc(), 10, 60, "{s}", .{font_name});
+    //try renderText(sock, ids.window(), ids.gc(), 10, 90, "Failed to query font info", .{});
 }
 
 fn renderText(

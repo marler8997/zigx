@@ -40,6 +40,10 @@ pub fn main() !void {
     };
 
     const ids: Ids = .{ .base = setup.resource_id_base };
+    const depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(
+        "unsupported depth {}",
+        .{screen.root_depth},
+    );
 
     var window_size: XY(u16) = .{ .x = 400, .y = 400 };
 
@@ -57,7 +61,7 @@ pub fn main() !void {
             .visual_id = screen.root_visual,
         },
         .{
-            .bg_pixel = x11.rgbFrom24(screen.root_depth, 0),
+            .bg_pixel = depth.rgbFrom24(0),
             .event_mask = .{
                 .ButtonPress = 1,
                 .ButtonRelease = 1,

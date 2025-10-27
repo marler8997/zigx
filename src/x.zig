@@ -3977,31 +3977,109 @@ pub const Setup = extern struct {
     }
 };
 
-pub fn rgb16From24(color: u24) u16 {
-    const r: u16 = @intCast((color >> 19) & 0x1f);
-    const g: u16 = @intCast((color >> 11) & 0x1f);
-    const b: u16 = @intCast((color >> 3) & 0x1f);
-    return (r << 11) | (g << 6) | b;
+pub const Depth = enum {
+    /// mono (just black/white)
+    @"1",
+    /// 16-color (early CGA/EGA era)
+    @"4",
+    /// 256-color (indexed/palette-based color)
+    @"8",
+    /// 32,768 colors (5 bits per channel)
+    @"15",
+    /// 65,536 colors (typically 5-6-5 RGB)
+    @"16",
+    /// 16.7 million colors (8 bits per RGB channel)
+    @"24",
+    /// same as 24-bit but with an 8-bit alpha or just padding
+    @"32",
+
+    pub fn init(byte: u8) ?Depth {
+        return switch (byte) {
+            1 => .@"1",
+            4 => .@"4",
+            8 => .@"8",
+            15 => .@"15",
+            16 => .@"16",
+            24 => .@"24",
+            32 => .@"32",
+            else => null,
+        };
+    }
+
+    pub fn rgbFrom24(depth: Depth, color: u24) u32 {
+        return switch (depth) {
+            .@"1" => rgb1From24(color),
+            .@"4" => rgb4From24(color),
+            .@"8" => rgb8From24(color),
+            .@"15" => rgb15From24(color),
+            .@"16" => rgb16From24(color),
+            .@"24" => color,
+            .@"32" => rgb32From24(color),
+        };
+    }
+};
+
+pub fn rgb1From24(color: u24) u32 {
+    const r: u32 = (color >> 16) & 0xff;
+    const g: u32 = (color >> 8) & 0xff;
+    const b: u32 = color & 0xff;
+    // Use luminosity formula to determine if pixel should be white or black
+    // Weights: 0.299 R + 0.587 G + 0.114 B
+    // Using integer math: (299*R + 587*G + 114*B) / 1000
+    const luminosity = (299 * r + 587 * g + 114 * b) / 1000;
+    // Threshold at middle gray (128)
+    return if (luminosity >= 128) 1 else 0;
 }
-
-// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-// TODO: change depth_bits to an enum so we can remove this panic
-pub fn rgbFrom24(depth_bits: u8, color: u24) u32 {
-    return switch (depth_bits) {
-        16 => rgb16From24(color),
-        24 => color,
-        32 => {
-            // Add an opaque alpha component (0xAARRGGBB)
-            const alpha = 0xff;
-            // Shift the alpha component all the way up to the top
-            // 0x000000ff -> 0xff000000
-            const alpha_shifted: u32 = alpha << 24;
-
-            // Combine the color and alpha component
-            return alpha_shifted | color;
-        },
-        else => @panic("todo"),
-    };
+pub fn rgb4From24(color: u24) u32 {
+    const r: u32 = (color >> 16) & 0xff;
+    const g: u32 = (color >> 8) & 0xff;
+    const b: u32 = color & 0xff;
+    // Reduce each component from 8-bit to 1-bit (threshold at 128)
+    const r1: u32 = if (r >= 128) 1 else 0;
+    const g1: u32 = if (g >= 128) 1 else 0;
+    const b1: u32 = if (b >= 128) 1 else 0;
+    // 4-bit color is typically: bit 3 = intensity, bit 2 = R, bit 1 = G, bit 0 = B
+    // Calculate intensity as whether at least 2 components are bright
+    const intensity: u32 = if (r1 + g1 + b1 >= 2) 1 else 0;
+    return (intensity << 3) | (r1 << 2) | (g1 << 1) | b1;
+}
+pub fn rgb8From24(color: u24) u32 {
+    const r: u32 = (color >> 16) & 0xff;
+    const g: u32 = (color >> 8) & 0xff;
+    const b: u32 = color & 0xff;
+    // 8-bit color typically uses 3-3-2 encoding (3 bits red, 3 bits green, 2 bits blue)
+    // Scale down: 8 bits -> 3 bits (divide by 32), 8 bits -> 2 bits (divide by 64)
+    const r3: u32 = r >> 5; // Top 3 bits
+    const g3: u32 = g >> 5; // Top 3 bits
+    const b2: u32 = b >> 6; // Top 2 bits
+    return (r3 << 5) | (g3 << 2) | b2;
+}
+pub fn rgb15From24(color: u24) u32 {
+    const r: u32 = (color >> 16) & 0xff;
+    const g: u32 = (color >> 8) & 0xff;
+    const b: u32 = color & 0xff;
+    const r5: u32 = r >> 3;
+    const g5: u32 = g >> 3;
+    const b5: u32 = b >> 3;
+    return (r5 << 10) | (g5 << 5) | b5;
+}
+pub fn rgb16From24(color: u24) u16 {
+    const r: u8 = @truncate(color >> 16);
+    const g: u8 = @truncate(color >> 8);
+    const b: u8 = @truncate(color);
+    const r5: u5 = @intCast(r >> 3);
+    const g6: u6 = @intCast(g >> 2);
+    const b5: u5 = @intCast(b >> 3);
+    return (@as(u16, r5) << 11) | (@as(u16, g6) << 5) | b5;
+}
+pub fn rgb32From24(color: u24) u32 {
+    // Add an opaque alpha component (0xAARRGGBB)
+    const alpha = 0xff;
+    // Shift the alpha component all the way up to the top
+    // 0x000000ff -> 0xff000000
+    const alpha_shifted: u32 = alpha << 24;
+    // Combine the color and alpha component
+    return alpha_shifted | color;
 }
 
 pub const Source = struct {

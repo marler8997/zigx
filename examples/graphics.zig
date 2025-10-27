@@ -49,6 +49,10 @@ pub fn main() !u8 {
     };
 
     const ids: Ids = .{ .base = setup.resource_id_base };
+    const depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(
+        "unsupported depth {}",
+        .{screen.root_depth},
+    );
 
     try sink.CreateWindow(.{
         .window_id = ids.window(),
@@ -62,7 +66,7 @@ pub fn main() !u8 {
         .visual_id = screen.root_visual,
         .depth = 0,
     }, .{
-        .bg_pixel = x11.rgbFrom24(screen.root_depth, 0xbbccdd),
+        .bg_pixel = depth.rgbFrom24(0xbbccdd),
         .event_mask = .{ .Exposure = 1 },
     });
     try sink.CreateGc(
@@ -75,7 +79,7 @@ pub fn main() !u8 {
         ids.window().drawable(),
         .{
             .background = screen.black_pixel,
-            .foreground = x11.rgbFrom24(screen.root_depth, 0x884411),
+            .foreground = depth.rgbFrom24(0x884411),
             .line_width = 10,
         },
     );

@@ -173,7 +173,10 @@ pub fn main() !u8 {
     };
 
     const ids = Ids{ .base = setup.resource_id_base };
-
+    const depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(
+        "unsupported depth {}",
+        .{screen.root_depth},
+    );
     try sink.CreateWindow(.{
         .window_id = ids.window(),
         .parent_window_id = screen.root,
@@ -186,7 +189,7 @@ pub fn main() !u8 {
         .class = .input_output,
         .visual_id = screen.root_visual,
     }, .{
-        .bg_pixel = x11.rgbFrom24(screen.root_depth, 0xbbccdd),
+        .bg_pixel = depth.rgbFrom24(0xbbccdd),
         .event_mask = .{
             .KeymapState = 1,
             .Exposure = 1,
@@ -269,7 +272,7 @@ pub fn main() !u8 {
         ids.window().drawable(),
         .{
             .background = screen.black_pixel,
-            .foreground = x11.rgbFrom24(screen.root_depth, 0xffaadd),
+            .foreground = depth.rgbFrom24(0xffaadd),
             // prevent NoExposure events when we send CopyArea
             .graphics_exposures = false,
         },
@@ -484,7 +487,7 @@ pub fn main() !u8 {
                 std.log.info("{}", .{expose});
                 try render(
                     &sink,
-                    screen.root_depth,
+                    depth,
                     image_format,
                     ids,
                     font_dims,
@@ -547,7 +550,7 @@ const FontDims = struct {
 
 fn render(
     sink: *x11.RequestSink,
-    depth: u8,
+    depth: x11.Depth,
     image_format: ImageFormat,
     ids: Ids,
     font_dims: FontDims,
@@ -567,7 +570,7 @@ fn render(
         .height = 100,
     }, .{ .exposures = false });
     try sink.ChangeGc(ids.fg_gc(), .{
-        .foreground = x11.rgbFrom24(depth, 0xffaadd),
+        .foreground = depth.rgbFrom24(0xffaadd),
     });
 
     {
@@ -600,7 +603,7 @@ fn render(
         );
     }
     try sink.ChangeGc(ids.fg_gc(), .{
-        .foreground = x11.rgbFrom24(depth, 0x00ff00),
+        .foreground = depth.rgbFrom24(0x00ff00),
     });
     try sink.PolyFillRectangle(
         ids.window().drawable(),
@@ -611,7 +614,7 @@ fn render(
         }),
     );
     try sink.ChangeGc(ids.fg_gc(), .{
-        .foreground = x11.rgbFrom24(depth, 0x0000ff),
+        .foreground = depth.rgbFrom24(0x0000ff),
     });
     try sink.PolyRectangle(
         ids.window().drawable(),
@@ -763,7 +766,7 @@ fn writeTestImage(
                 // currently assumes bpp is 32
                 32 => try writer.writeInt(
                     u32,
-                    x11.rgbFrom24(32, color),
+                    x11.rgb32From24(color),
                     image_format.endian,
                 ),
                 else => std.debug.panic("TODO: implement image depth {}", .{image_format.depth}),
