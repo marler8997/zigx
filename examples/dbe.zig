@@ -2,9 +2,6 @@
 const std = @import("std");
 const x11 = @import("x11");
 
-var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-const allocator = arena.allocator();
-
 const window_width = 400;
 const window_height = 400;
 
@@ -63,7 +60,7 @@ pub fn main() !u8 {
         std.process.exit(0xff);
     };
 
-    var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
+    var keycode_map = [1]?Key{null} ** std.math.maxInt(u8);
     {
         var it = try x11.synchronousGetKeyboardMapping(&sink, &source, try .init(
             setup.min_keycode,
@@ -72,8 +69,18 @@ pub fn main() !u8 {
         for (setup.min_keycode..@as(usize, setup.max_keycode) + 1) |keycode| {
             for (try it.readSyms(&source)) |sym| {
                 if (Key.fromSym(sym)) |key| {
-                    std.log.info("key {s} code is {}", .{ @tagName(key), keycode });
-                    try keycode_map.put(allocator, @intCast(keycode), key);
+                    if (keycode_map[keycode]) |existing| {
+                        std.log.info("keycode {} maps to {s}", .{ keycode, @tagName(key) });
+                        if (existing != key) {
+                            std.log.err(
+                                "keycode {} maps to {s} and {s} (need to improve keymap)",
+                                .{ keycode, @tagName(existing), @tagName(key) },
+                            );
+                            std.process.exit(0xff);
+                        }
+                    } else {
+                        keycode_map[keycode] = key;
+                    }
                 }
             }
         }
@@ -163,7 +170,7 @@ pub fn main() !u8 {
                 const event = try source.read2(.KeyPress);
 
                 var do_render = true;
-                if (keycode_map.get(event.keycode)) |key| switch (key) {
+                if (keycode_map[event.keycode]) |key| switch (key) {
                     .f => {
                         if (animate_frame_ms > 1) {
                             animate_frame_ms -= 1;
