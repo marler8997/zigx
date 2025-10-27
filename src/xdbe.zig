@@ -71,7 +71,7 @@ pub fn Allocate(
     window: x11.Window,
     backbuffer: x11.Drawable,
     swapaction: SwapAction,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const msg_len = 16;
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
@@ -95,7 +95,7 @@ pub fn Deallocate(
     sink: *x11.RequestSink,
     ext_opcode: u8,
     backbuffer: x11.Drawable,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const msg_len = 8;
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
@@ -117,7 +117,7 @@ pub fn Swap(
     sink: *x11.RequestSink,
     ext_opcode: u8,
     swap_infos: x11.Slice(u32, [*]const SwapInfo),
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const msg_len =
         2 // extension and command opcodes
         + 2 // request length

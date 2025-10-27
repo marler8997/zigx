@@ -47,7 +47,7 @@ pub fn Slice(comptime LenType: type, comptime Ptr: type) type {
         pub const format = switch (@typeInfo(Ptr).pointer.child) {
             u8 => (struct {
                 pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-                fn formatNew(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+                fn formatNew(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
                     try writer.writeAll(self.ptr[0..self.len]);
                 }
                 fn formatLegacy(
@@ -111,7 +111,7 @@ pub fn SliceWithMaxLen(comptime LenType: type, comptime Ptr: type, comptime max_
         pub const format = switch (@typeInfo(Ptr).pointer.child) {
             u8 => (struct {
                 pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-                fn formatNew(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+                fn formatNew(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
                     try writer.writeAll(self.ptr[0..self.len]);
                 }
                 pub fn formatLegacy(

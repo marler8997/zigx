@@ -736,7 +736,7 @@ fn writeTestImage(
     height: u16,
     stride: usize,
     writer: *x11.Writer,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     if ((image_format.bits_per_pixel % 8) != 0) @panic("todo");
     const row_pixel_size = @divExact(image_format.bits_per_pixel, 8) * width;
     std.debug.assert(stride >= row_pixel_size);

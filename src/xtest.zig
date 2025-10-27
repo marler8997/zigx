@@ -32,7 +32,7 @@ pub fn GetVersion(
         wanted_major_version: u8,
         wanted_minor_version: u16,
     },
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const msg_len =
         2 // extension and command opcodes
         + 2 // request length
@@ -61,7 +61,7 @@ pub fn FakeInput(
     sink: *x11.RequestSink,
     ext_opcode: u8,
     args: fake_input.Args,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const msg_len =
         2 // extension and command opcodes
         + 2 // request length

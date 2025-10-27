@@ -167,7 +167,7 @@ pub const request = struct {
             major_version: u32,
             minor_version: u32,
         },
-    ) x11.Writer.Error!void {
+    ) error{WriteFailed}!void {
         const msg_len = 12;
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
@@ -207,7 +207,7 @@ pub const PictureFormatInfo = extern struct {
     colormap: u32,
 
     pub const format = if (x11.zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(self: PictureFormatInfo, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(self: PictureFormatInfo, writer: *std.Io.Writer) error{WriteFailed}!void {
         try self.formatLegacy("", .{}, writer);
     }
     fn formatLegacy(
@@ -241,7 +241,7 @@ pub fn CreatePicture(
     drawable_id: x11.Drawable,
     format_id: PictureFormat,
     options: create_picture.Options,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const msg = inspectCreatePicture(&options);
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
@@ -348,7 +348,7 @@ pub fn Composite(sink: *x11.RequestSink, ext_opcode: u8, named: struct {
     dst_y: i16,
     width: u16,
     height: u16,
-}) x11.Writer.Error!void {
+}) error{WriteFailed}!void {
     const msg_len =
         2 // extension and command opcodes
         + 2 // request length
@@ -396,7 +396,7 @@ pub fn Composite(sink: *x11.RequestSink, ext_opcode: u8, named: struct {
 pub fn QueryPictFormats(
     sink: *x11.RequestSink,
     ext_opcode: u8,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const msg_len =
         2 // extension and command opcodes
         + 2 // request length

@@ -40,7 +40,7 @@ pub const Ordering = enum(u8) {
 pub fn QueryVersion(
     sink: *x11.RequestSink,
     ext_opcode: u8,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const msg_len =
         2 // extension and command opcodes
         + 2 // request length

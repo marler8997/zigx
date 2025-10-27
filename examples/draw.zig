@@ -296,7 +296,7 @@ fn renderLines(
     drawable: x11.Drawable,
     gc: x11.GraphicsContext,
     lines: []const XY(i16),
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     if (lines.len == 0) return;
     var i: usize = 0;
     blk_segment: while (true) {

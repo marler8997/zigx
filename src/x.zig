@@ -206,7 +206,7 @@ pub const Display = struct {
         return .{ .string = s };
     }
     pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(display: Display, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(display: Display, writer: *std.Io.Writer) error{WriteFailed}!void {
         try display.formatLegacy("", .{}, writer);
     }
     fn formatLegacy(
@@ -370,7 +370,7 @@ pub const Address = union(enum) {
         return .{ .host = .{ .string = host, .port = port } };
     }
     pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(addr: Address, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(addr: Address, writer: *std.Io.Writer) error{WriteFailed}!void {
         try addr.formatLegacy("", .{}, writer);
     }
     fn formatLegacy(
@@ -803,7 +803,7 @@ fn flushSetupWithAuth(
     auth_reader: *AuthReader,
     name: Slice(u16, [*]const u8),
     data_len: u16,
-) (Reader.Error || Writer.Error)!void {
+) (Reader.Error || error{WriteFailed})!void {
     try writeSetupHeader(writer, name, data_len);
     // we're done with name so now we can read the data
     try writeSetupData(writer, .initAssume(try auth_reader.takeDynamic(data_len)));
@@ -934,7 +934,7 @@ pub const DisplayNum = enum(u16) {
     }
 
     pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(self: DisplayNum, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(self: DisplayNum, writer: *std.Io.Writer) error{WriteFailed}!void {
         try writer.print("{}", .{@intFromEnum(self)});
     }
     fn formatLegacy(
@@ -1199,7 +1199,7 @@ const FmtRead = struct {
     reader: *Reader,
     n: usize,
     result: *FmtReadResult,
-    pub fn format(r: FmtRead, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn format(r: FmtRead, writer: *std.Io.Writer) error{WriteFailed}!void {
         std.debug.assert(r.result.* == .init);
         if (r.reader.streamExact(writer, r.n)) {
             r.result.* = .success;
@@ -1335,7 +1335,7 @@ pub fn fmtMaybeString(s: ?[]const u8) FmtMaybeString {
 pub const FmtMaybeString = struct {
     s: ?[]const u8,
     pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(f: FmtMaybeString, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(f: FmtMaybeString, writer: *std.Io.Writer) error{WriteFailed}!void {
         try f.formatLegacy("", .{}, writer);
     }
     fn formatLegacy(
@@ -1439,7 +1439,7 @@ const AuthFileAddr = struct {
     family: AuthFamily,
     data: []const u8,
     pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(self: AuthFileAddr, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(self: AuthFileAddr, writer: *std.Io.Writer) error{WriteFailed}!void {
         try self.formatLegacy("", .{}, writer);
     }
     fn formatLegacy(
@@ -1621,7 +1621,7 @@ pub const RequestSink = struct {
     writer: *Writer,
     sequence: u16 = 0,
 
-    pub fn CreateWindow(sink: *RequestSink, args: CreateWindowArgs, options: window.Options) Writer.Error!void {
+    pub fn CreateWindow(sink: *RequestSink, args: CreateWindowArgs, options: window.Options) error{WriteFailed}!void {
         const msg = inspectCreateWindow(&options);
         var offset: usize = 0;
 
@@ -1649,12 +1649,12 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub fn ChangeWindowAttributes(sink: *RequestSink) Writer.Error!void {
+    pub fn ChangeWindowAttributes(sink: *RequestSink) error{WriteFailed}!void {
         _ = sink;
         @compileError("todo");
     }
 
-    pub fn DestroyWindow(sink: *RequestSink, window_id: Window) Writer.Error!void {
+    pub fn DestroyWindow(sink: *RequestSink, window_id: Window) error{WriteFailed}!void {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1667,7 +1667,7 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub fn MapWindow(sink: *RequestSink, w: Window) Writer.Error!void {
+    pub fn MapWindow(sink: *RequestSink, w: Window) error{WriteFailed}!void {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1684,7 +1684,7 @@ pub const RequestSink = struct {
         sink: *RequestSink,
         window_id: Window,
         options: configure_window.Options,
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const msg = inspectConfigureWindow(&options);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1718,7 +1718,7 @@ pub const RequestSink = struct {
         }
         return .{ .len = len, .option_mask = option_mask };
     }
-    pub fn QueryTree(sink: *RequestSink, window_id: Window) Writer.Error!void {
+    pub fn QueryTree(sink: *RequestSink, window_id: Window) error{WriteFailed}!void {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1731,7 +1731,7 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub fn InternAtom(sink: *RequestSink, args: intern_atom.Args) Writer.Error!void {
+    pub fn InternAtom(sink: *RequestSink, args: intern_atom.Args) error{WriteFailed}!void {
         const msg_len = intern_atom.getLen(args.name.len);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1758,7 +1758,7 @@ pub const RequestSink = struct {
         property_type: Atom,
         comptime T: type,
         values: Slice(u16, [*]const T),
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const non_list_len =
             2 // opcode and mode
             + 2 // request length
@@ -1815,7 +1815,7 @@ pub const RequestSink = struct {
             /// `type` doesn't match
             delete: bool,
         },
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const msg_len = 24;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1841,7 +1841,7 @@ pub const RequestSink = struct {
         confine_to: Window,
         cursor: Cursor,
         time: Timestamp,
-    }) Writer.Error!void {
+    }) error{WriteFailed}!void {
         const msg_len = 24;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1862,7 +1862,7 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub fn UngrabPointer(sink: *RequestSink, time: Timestamp) Writer.Error!void {
+    pub fn UngrabPointer(sink: *RequestSink, time: Timestamp) error{WriteFailed}!void {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1884,7 +1884,7 @@ pub const RequestSink = struct {
         src_height: u16,
         dst_x: i16,
         dst_y: i16,
-    }) Writer.Error!void {
+    }) error{WriteFailed}!void {
         const msg_len = 24;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1903,7 +1903,7 @@ pub const RequestSink = struct {
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
-    pub fn OpenFont(sink: *RequestSink, font_id: Font, name: Slice(u16, [*]const u8)) Writer.Error!void {
+    pub fn OpenFont(sink: *RequestSink, font_id: Font, name: Slice(u16, [*]const u8)) error{WriteFailed}!void {
         const non_list_len =
             2 // opcode and unused
             + 2 // request length
@@ -1926,7 +1926,7 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub fn CloseFont(sink: *RequestSink, font_id: Font) Writer.Error!void {
+    pub fn CloseFont(sink: *RequestSink, font_id: Font) error{WriteFailed}!void {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1939,7 +1939,7 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub fn QueryFont(sink: *RequestSink, font: Fontable) Writer.Error!void {
+    pub fn QueryFont(sink: *RequestSink, font: Fontable) error{WriteFailed}!void {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -1952,7 +1952,7 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub fn ListFonts(sink: *RequestSink, max_names: u16, pattern: Slice(u16, [*]const u8)) Writer.Error!void {
+    pub fn ListFonts(sink: *RequestSink, max_names: u16, pattern: Slice(u16, [*]const u8)) error{WriteFailed}!void {
         const non_list_len =
             2 // opcode and unused
             + 2 // request length
@@ -1977,7 +1977,7 @@ pub const RequestSink = struct {
         sink: *RequestSink,
         font_id: Fontable,
         text: Slice(u16, [*]const u16),
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const non_list_len =
             2 // opcode and odd_length
             + 2 // request length
@@ -2006,7 +2006,7 @@ pub const RequestSink = struct {
         depth: u8,
         width: u16,
         height: u16,
-    }) Writer.Error!void {
+    }) error{WriteFailed}!void {
         const msg_len = 16;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -2022,7 +2022,7 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub fn FreePixmap(sink: *RequestSink, id: Pixmap) Writer.Error!void {
+    pub fn FreePixmap(sink: *RequestSink, id: Pixmap) error{WriteFailed}!void {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -2035,10 +2035,10 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub inline fn CreateGc(sink: *RequestSink, gc: GraphicsContext, drawable: Drawable, opt: GcOptions) Writer.Error!void {
+    pub inline fn CreateGc(sink: *RequestSink, gc: GraphicsContext, drawable: Drawable, opt: GcOptions) error{WriteFailed}!void {
         try sink.updateGc(gc, .{ .create = drawable }, &opt);
     }
-    pub inline fn ChangeGc(sink: *RequestSink, gc: GraphicsContext, opt: GcOptions) Writer.Error!void {
+    pub inline fn ChangeGc(sink: *RequestSink, gc: GraphicsContext, opt: GcOptions) error{WriteFailed}!void {
         try sink.updateGc(gc, .change, &opt);
     }
     fn updateGc(
@@ -2046,7 +2046,7 @@ pub const RequestSink = struct {
         gc: GraphicsContext,
         variant: GcVariant,
         options: *const GcOptions,
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const msg = inspectUpdateGc(variant, options);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -2074,7 +2074,7 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub fn FreeGc(sink: *RequestSink, gc: GraphicsContext) Writer.Error!void {
+    pub fn FreeGc(sink: *RequestSink, gc: GraphicsContext) error{WriteFailed}!void {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -2092,7 +2092,7 @@ pub const RequestSink = struct {
         window_id: Window,
         area: Rectangle,
         named: struct { exposures: bool },
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const msg_len = 16;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -2122,7 +2122,7 @@ pub const RequestSink = struct {
         dst_y: i16,
         width: u16,
         height: u16,
-    }) Writer.Error!void {
+    }) error{WriteFailed}!void {
         const msg_len = 28;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -2149,7 +2149,7 @@ pub const RequestSink = struct {
         drawable: Drawable,
         gc: GraphicsContext,
         points: Slice(u18, [*]const XY(i16)),
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const msg_len: u18 = poly_line_header_size + points.len * 4; // each point is 4 bytes (i16 x, i16 y)
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -2173,7 +2173,7 @@ pub const RequestSink = struct {
         drawable: Drawable,
         gc: GraphicsContext,
         rectangles: Slice(u18, [*]const Rectangle),
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         try sink.polyRectangle(drawable, gc, rectangles, @intFromEnum(Opcode.poly_rectangle));
     }
 
@@ -2182,7 +2182,7 @@ pub const RequestSink = struct {
         drawable: Drawable,
         gc: GraphicsContext,
         rectangles: Slice(u18, [*]const Rectangle),
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         try sink.polyRectangle(drawable, gc, rectangles, @intFromEnum(Opcode.poly_fill_rectangle));
     }
 
@@ -2192,7 +2192,7 @@ pub const RequestSink = struct {
         gc: GraphicsContext,
         rectangles: Slice(u18, [*]const Rectangle),
         opcode: u8,
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const msg_len: u18 =
             2 // opcode and unused
             + 2 // request length
@@ -2222,7 +2222,7 @@ pub const RequestSink = struct {
         sink: *RequestSink,
         args: put_image.Args,
         data: Slice(u18, [*]const u8),
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         var offset = try PutImageStart(sink, args, data.len);
         try writeAll(sink.writer, &offset, data.nativeSlice());
         offset += data.len;
@@ -2233,7 +2233,7 @@ pub const RequestSink = struct {
         sink: *RequestSink,
         args: put_image.Args,
         data_len: u18,
-    ) Writer.Error!usize {
+    ) error{WriteFailed}!usize {
         const msg_len = put_image.getLen(data_len);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -2262,7 +2262,7 @@ pub const RequestSink = struct {
         sink: *RequestSink,
         data_len: u18,
         msg_offset: usize,
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const msg_len = put_image.getLen(data_len);
         var offset = msg_offset;
         try writePad4(sink.writer, &offset);
@@ -2281,7 +2281,7 @@ pub const RequestSink = struct {
         width: u16,
         height: u16,
         plane_mask: u32,
-    }) Writer.Error!void {
+    }) error{WriteFailed}!void {
         const msg_len =
             1 // opcode
             + 1 // format
@@ -2314,7 +2314,7 @@ pub const RequestSink = struct {
         gc: GraphicsContext,
         pos: XY(i16),
         items: []const TextItem8,
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const non_list_len =
             2 // opcode and string_length
             + 2 // request length
@@ -2373,7 +2373,7 @@ pub const RequestSink = struct {
         pos: XY(i16),
         comptime fmt: []const u8,
         args: anytype,
-    ) (error{TextTooLong} || Writer.Error)!void {
+    ) (error{TextTooLong} || error{WriteFailed})!void {
         const text_len_u64 = std.fmt.count(fmt, args);
         const text_len = std.math.cast(u8, text_len_u64) orelse return error.TextTooLong;
         var text_buf: [std.math.maxInt(@TypeOf(text_len))]u8 = undefined;
@@ -2392,7 +2392,7 @@ pub const RequestSink = struct {
         gc: GraphicsContext,
         pos: XY(i16),
         text: Slice(u8, [*]const u8),
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const msg_len =
             2 // opcode and string_length
             + 2 // request length
@@ -2418,7 +2418,7 @@ pub const RequestSink = struct {
 
     // create_colormap = 78,
     // free_colormap = 79,
-    pub fn QueryExtension(sink: *RequestSink, name: Slice(u16, [*]const u8)) Writer.Error!void {
+    pub fn QueryExtension(sink: *RequestSink, name: Slice(u16, [*]const u8)) error{WriteFailed}!void {
         const non_list_len = 8;
         const msg_len = non_list_len + std.mem.alignForward(u16, name.len, 4);
         var offset: usize = 0;
@@ -2442,7 +2442,7 @@ pub const RequestSink = struct {
         sink: *RequestSink,
         first_keycode: u8,
         count: u8,
-    ) Writer.Error!void {
+    ) error{WriteFailed}!void {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
@@ -2463,15 +2463,15 @@ pub const RequestSink = struct {
 
 pub const native_endian = builtin.target.cpu.arch.endian();
 
-pub fn writeAll(writer: *Writer, offset: *usize, buf: []const u8) Writer.Error!void {
+pub fn writeAll(writer: *Writer, offset: *usize, buf: []const u8) error{WriteFailed}!void {
     try writer.writeAll(buf);
     offset.* += buf.len;
 }
-pub fn writeInt(writer: *Writer, offset: *usize, comptime T: type, int: T) Writer.Error!void {
+pub fn writeInt(writer: *Writer, offset: *usize, comptime T: type, int: T) error{WriteFailed}!void {
     try writer.writeInt(T, int, native_endian);
     offset.* += @sizeOf(T);
 }
-pub fn writePad4(writer: *Writer, offset: *usize) Writer.Error!void {
+pub fn writePad4(writer: *Writer, offset: *usize) error{WriteFailed}!void {
     const pad_len = pad4Len(@truncate(offset.*));
     try writer.splatByteAll(0, pad_len);
     offset.* += pad_len;
@@ -2486,7 +2486,7 @@ pub fn writeIntNoFlush(writer: *Writer, comptime T: type, int: T) void {
     writeAllNoFlush(writer, std.mem.asBytes(&int));
 }
 
-fn writeSetupHeader(writer: *Writer, name: Slice(u16, [*]const u8), data_len: u16) Writer.Error!void {
+fn writeSetupHeader(writer: *Writer, name: Slice(u16, [*]const u8), data_len: u16) error{WriteFailed}!void {
     try writer.writeAll(&[_]u8{
         @as(u8, if (native_endian == .big) BigEndian else LittleEndian),
         0, // unused
@@ -2499,7 +2499,7 @@ fn writeSetupHeader(writer: *Writer, name: Slice(u16, [*]const u8), data_len: u1
     try writer.writeAll(name.nativeSlice());
     try writer.splatByteAll(0, pad4Len(@truncate(name.len)));
 }
-fn writeSetupData(writer: *Writer, data: Slice(u16, [*]const u8)) Writer.Error!void {
+fn writeSetupData(writer: *Writer, data: Slice(u16, [*]const u8)) error{WriteFailed}!void {
     try writer.writeAll(data.nativeSlice());
     try writer.splatByteAll(0, pad4Len(@truncate(data.len)));
 }
@@ -2524,7 +2524,7 @@ pub const ResourceBase = enum(u32) {
         _ = opt;
         try writer.print("ResourceBase({})", .{@intFromEnum(v)});
     }
-    fn formatNew(v: ResourceBase, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(v: ResourceBase, writer: *std.Io.Writer) error{WriteFailed}!void {
         try writer.print("ResourceBase({})", .{@intFromEnum(v)});
     }
 };
@@ -2574,7 +2574,7 @@ pub const Resource = enum(u32) {
             try writer.print("Resource({})", .{@intFromEnum(v)});
         }
     }
-    fn formatNew(v: Resource, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(v: Resource, writer: *std.Io.Writer) error{WriteFailed}!void {
         if (v == .none) {
             try writer.writeAll("Resource(<none>)");
         } else {
@@ -3945,7 +3945,7 @@ pub const Setup = extern struct {
             (@sizeOf(ScreenHeader) *| @as(u35, setup.root_screen_count));
     }
     pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    pub fn formatNew(setup: Setup, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn formatNew(setup: Setup, writer: *std.Io.Writer) error{WriteFailed}!void {
         try setup.formatLegacy("", .{}, writer);
     }
     fn formatLegacy(
@@ -4247,7 +4247,7 @@ pub const Source = struct {
             self.used_ref.* = true;
             self.source.replyDiscard(self.n);
         }
-        pub fn format(self: FmtReplyData, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        pub fn format(self: FmtReplyData, writer: *std.Io.Writer) error{WriteFailed}!void {
             if (self.used_ref.*) unreachable;
             self.used_ref.* = true;
             self.source.streamReply(writer, self.n) catch |err| switch (err) {
@@ -4437,7 +4437,7 @@ pub const ReadFormatter = struct {
     source: *Source,
 
     pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    pub fn formatNew(self: ReadFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn formatNew(self: ReadFormatter, writer: *std.Io.Writer) error{WriteFailed}!void {
         self.formatLegacy("", .{}, writer) catch |err| switch (err) {
             error.ReadFailed => return error.WriteFailed,
             error.EndOfStream => return error.WriteFailed,
@@ -4574,7 +4574,7 @@ pub const servermsg = struct {
         major_opcode: NonExhaustive(Opcode),
         data: [21]u8,
         pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-        pub fn formatNew(err: Error, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        pub fn formatNew(err: Error, writer: *std.Io.Writer) error{WriteFailed}!void {
             try writer.print("{f} sequence={} generic={} opcode={f}.{}", .{
                 fmtEnum(err.code),
                 err.sequence,
@@ -5466,7 +5466,7 @@ pub fn FmtEnum(comptime T: type) type {
 
         const Self = @This();
         pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-        fn formatNew(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        fn formatNew(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
             if (@typeInfo(T).@"enum".is_exhaustive) {
                 try writer.print("{s}", .{@tagName(self.value)});
             } else {
@@ -5600,7 +5600,7 @@ pub const PolyPointSink = struct {
         std.debug.assert(msg_len & 3 == 0);
         std.mem.writeInt(u16, writer.buffer[state.start_offset + 2 ..][0..2], @intCast(msg_len >> 2), native_endian);
     }
-    pub fn write(point_sink: *PolyPointSink, msg_sink: *RequestSink, p: XY(i16)) Writer.Error!void {
+    pub fn write(point_sink: *PolyPointSink, msg_sink: *RequestSink, p: XY(i16)) error{WriteFailed}!void {
         std.debug.assert(msg_sink.writer.buffer.len >= min_buffer);
         var write_header = false;
         var maybe_previous_point: ?XY(i16) = null;

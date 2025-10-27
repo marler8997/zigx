@@ -267,7 +267,7 @@ pub const UnknownInfo = extern struct {
     class_id: u8,
     length: u8,
     pub const format = if (x11.zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(self: *const UnknownInfo, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(self: *const UnknownInfo, writer: *std.Io.Writer) error{WriteFailed}!void {
         const bytes = @as([*]const u8, @ptrCast(self))[0..self.length];
         try writer.print("Unknown length={} data={X}", .{ self.length, bytes });
     }
@@ -292,7 +292,7 @@ pub const KeyInfo = extern struct {
     key_count: u16,
     unused: u16,
     pub const format = if (x11.zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(self: KeyInfo, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(self: KeyInfo, writer: *std.Io.Writer) error{WriteFailed}!void {
         try writer.print("Key min={}, max={} count={}", .{ self.min_keycode, self.max_keycode, self.key_count });
     }
     pub fn formatLegacy(
@@ -315,7 +315,7 @@ pub const ButtonInfo = extern struct {
     length: Length(u8, 4),
     button_count: u16,
     pub const format = if (x11.zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(self: ButtonInfo, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(self: ButtonInfo, writer: *std.Io.Writer) error{WriteFailed}!void {
         try writer.print("Button count={}", .{self.button_count});
     }
     pub fn formatLegacy(
@@ -340,7 +340,7 @@ pub const ValuatorInfo = extern struct {
     mode: u8,
     motion_buffer_size: u32,
     pub const format = if (x11.zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(self: ValuatorInfo, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn formatNew(self: ValuatorInfo, writer: *std.Io.Writer) error{WriteFailed}!void {
         try writer.print(
             "Valuator axes={}, mode=0x{x}, motion_buf_size={}",
             .{ self.number_of_axes, self.mode, self.motion_buffer_size },
@@ -371,7 +371,7 @@ pub const InputInfoIterator = struct {
         unknown: *align(4) const UnknownInfo,
 
         pub const format = if (x11.zig_atleast_15) formatNew else formatLegacy;
-        fn formatNew(self: TaggedUnion, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        fn formatNew(self: TaggedUnion, writer: *std.Io.Writer) error{WriteFailed}!void {
             switch (self) {
                 .key => |key| try key.format(writer),
                 .button => |button| try button.format(writer),
@@ -510,7 +510,7 @@ pub const request = struct {
         sink: *x11.RequestSink,
         ext_opcode: u8,
         ext_name: x11.Slice(u16, [*]const u8),
-    ) x11.Writer.Error!void {
+    ) error{WriteFailed}!void {
         const non_list_len =
             2 // extension and command opcodes
             + 2 // request length
@@ -535,7 +535,7 @@ pub const request = struct {
 pub fn ListInputDevices(
     sink: *x11.RequestSink,
     ext_opcode: u8,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const msg_len = list_input_devices.len;
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
@@ -551,7 +551,7 @@ pub fn GetProperty(
     sink: *x11.RequestSink,
     ext_opcode: u8,
     args: get_property.Args,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const msg_len = get_property.len;
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
@@ -577,7 +577,7 @@ pub fn ChangeProperty(
     ext_opcode: u8,
     comptime T: type,
     args: change_property.withFormat(T).Args,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const change_prop = change_property.withFormat(T);
     const msg_len = change_prop.getLen(args.values.len);
     var offset: usize = 0;
@@ -608,7 +608,7 @@ pub fn SelectEvents(
     ext_opcode: u8,
     window: x11.Window,
     masks: []EventMask,
-) x11.Writer.Error!void {
+) error{WriteFailed}!void {
     const non_option_len =
         2 // extension and command opcodes
         + 2 // request length
