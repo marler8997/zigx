@@ -32,12 +32,12 @@ pub fn main() !u8 {
     };
     defer io.shutdown(); // no need to close as well
     std.log.info("connected to {f}", .{address});
-    try x11.ext.authenticate(display, parsed_display, address, &io);
+    try x11.draft.authenticate(display, parsed_display, address, &io);
     var sink: x11.RequestSink = .{ .writer = &io.socket_writer.interface };
     var source: x11.Source = .{ .reader = io.socket_reader.interface() };
     const setup = try source.readSetup();
     std.log.info("setup reply {f}", .{setup});
-    const screen = try x11.ext.readSetupDynamic(&source, &setup, .{}) orelse {
+    const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
         std.log.err("no screen?", .{});
         std.process.exit(0xff);
     };
@@ -75,7 +75,7 @@ pub fn main() !u8 {
     );
 
     const dbe: Dbe = blk: {
-        const ext = try x11.ext.synchronousQueryExtension(&source, &sink, x11.dbe.name) orelse break :blk .unsupported;
+        const ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.dbe.name) orelse break :blk .unsupported;
         try x11.dbe.Allocate(&sink, ext.opcode_base, ids.window(), ids.backBuffer(), .background);
         break :blk .{ .enabled = .{ .opcode = ext.opcode_base, .back_buffer = ids.backBuffer() } };
     };

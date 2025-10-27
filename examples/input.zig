@@ -52,12 +52,12 @@ pub fn main() !u8 {
     };
     defer io.shutdown(); // no need to close as well
     std.log.info("connected to {f}", .{address});
-    try x11.ext.authenticate(display, parsed_display, address, &io);
+    try x11.draft.authenticate(display, parsed_display, address, &io);
     var sink: x11.RequestSink = .{ .writer = &io.socket_writer.interface };
     var source: x11.Source = .{ .reader = io.socket_reader.interface() };
     const setup = try source.readSetup();
     std.log.info("setup reply {f}", .{setup});
-    const screen = try x11.ext.readSetupDynamic(&source, &setup, .{}) orelse {
+    const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
         std.log.err("no screen?", .{});
         std.process.exit(0xff);
     };

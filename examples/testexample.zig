@@ -88,7 +88,7 @@ pub fn main() !u8 {
     };
     defer io.shutdown(); // no need to close as well
     std.log.info("connected to {f}", .{address});
-    try x11.ext.authenticate(display, parsed_display, address, &io);
+    try x11.draft.authenticate(display, parsed_display, address, &io);
     var sink: x11.RequestSink = .{ .writer = &io.socket_writer.interface };
     var source: x11.Source = .{ .reader = io.socket_reader.interface() };
     const setup = try source.readSetup();
@@ -293,7 +293,7 @@ pub fn main() !u8 {
 
     var maybe_picture_format: ?x11.render.PictureFormatInfo = null;
 
-    const opt_render_ext = try x11.ext.synchronousQueryExtension(&source, &sink, x11.render.name);
+    const opt_render_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.render.name);
     if (opt_render_ext) |render_ext| {
         {
             const expected_version_major = 0;
@@ -391,7 +391,7 @@ pub fn main() !u8 {
         );
     }
 
-    const opt_shape_ext = try x11.ext.synchronousQueryExtension(&source, &sink, x11.shape.name);
+    const opt_shape_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.shape.name);
     if (opt_shape_ext) |shape_ext| {
         try x11.shape.QueryVersion(&sink, shape_ext.opcode_base);
         try sink.writer.flush();
@@ -401,7 +401,7 @@ pub fn main() !u8 {
         if (version.major != 1) std.debug.panic("unsupported SHAPE version {}", .{version.major});
     }
 
-    const opt_test_ext = try x11.ext.synchronousQueryExtension(&source, &sink, x11.testext.name);
+    const opt_test_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.testext.name);
     if (opt_test_ext) |test_ext| {
         const expected_version_major = 2;
         const expected_version_minor = 2;
