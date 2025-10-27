@@ -2,8 +2,6 @@
 
 An x11 client library for Zig applications.
 
-Currently tested with zig version `0.14.0`.
-
 # What you should know about X
 
 X is a protocol for transmitting graphics primitives and user inputs.
