@@ -5402,6 +5402,21 @@ pub const stage3 = struct {
         minor: u16,
         unused: [20]u8,
     };
+    comptime {
+        std.debug.assert(@sizeOf(COMPOSITE_QueryVersion) == 24);
+    }
+    pub const COMPOSITE_QueryVersion = extern struct {
+        major: u32,
+        minor: u32,
+        unused_pad: [16]u8,
+    };
+    comptime {
+        std.debug.assert(@sizeOf(COMPOSITE_GetOverlayWindow) == 24);
+    }
+    pub const COMPOSITE_GetOverlayWindow = extern struct {
+        overlay_window_id: u32,
+        unused_pad: [20]u8,
+    };
 };
 
 pub const Read3Header = enum {
@@ -5427,6 +5442,7 @@ const Read3Full = enum {
     XTEST_GetVersion,
     RENDER_QueryVersion,
     SHAPE_QueryVersion,
+    COMPOSITE_QueryVersion,
     pub fn Type(self: Read3Full) type {
         return switch (self) {
             inline else => |tag| @field(stage3, @tagName(tag)),
