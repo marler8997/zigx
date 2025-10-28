@@ -26,30 +26,46 @@ const Ids = struct {
 pub fn main() !u8 {
     try x11.wsaStartup();
 
-    const display = try x11.getDisplay();
-    std.log.info("DISPLAY {f}", .{display});
-    const parsed_display = x11.parseDisplay(display) catch |err| {
-        std.log.err("invalid DISPLAY {f}: {s}", .{ display, @errorName(err) });
-        std.process.exit(0xff);
+    const Screen = struct {
+        window: x11.Window,
+        visual: x11.Visual,
+        depth: x11.Depth,
     };
-    const address = try x11.getAddress(display, &parsed_display);
+
+    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const screen: Screen = blk: {
+        var read_buffer: [1000]u8 = undefined;
+        var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
+        errdefer x11.disconnect(socket_reader.getStream());
+        _ = used_auth;
+        const setup = try x11.readSetupSuccess(socket_reader.interface());
+        std.log.info("setup reply {f}", .{setup});
+        var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
+            std.log.err("no screen?", .{});
+            std.process.exit(0xff);
+        };
+        break :blk .{
+            socket_reader.getStream(),
+            .{ .base = setup.resource_id_base },
+            try .init(setup.min_keycode, setup.max_keycode),
+            .{
+                .window = screen.root,
+                .visual = screen.root_visual,
+                .depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(
+                    "unsupported depth {}",
+                    .{screen.root_depth},
+                ),
+            },
+        };
+    };
+    defer x11.disconnect(stream);
+
     var write_buffer: [1000]u8 = undefined;
     var read_buffer: [1000]u8 = undefined;
-    var io = x11.connect(&address, &write_buffer, &read_buffer) catch |err| {
-        std.log.err("connect to {f} failed with {s}", .{ address, @errorName(err) });
-        std.process.exit(0xff);
-    };
-    defer io.shutdown(); // no need to close as well
-    std.log.info("connected to {f}", .{address});
-    try x11.draft.authenticate(display, &parsed_display, &address, &io);
-    var sink: x11.RequestSink = .{ .writer = &io.socket_writer.interface };
-    var source: x11.Source = .{ .reader = io.socket_reader.interface() };
-    const setup = try source.readSetup();
-    std.log.info("setup reply {f}", .{setup});
-    const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
-        std.log.err("no screen?", .{});
-        std.process.exit(0xff);
-    };
+    var socket_writer = x11.socketWriter(stream, &write_buffer);
+    var socket_reader = x11.socketReader(stream, &read_buffer);
+    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
+    var source: x11.Source = .initAfterSetup(socket_reader.interface());
 
     const Key = enum {
         left,
@@ -58,11 +74,8 @@ pub fn main() !u8 {
     var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
 
     {
-        var it = try x11.synchronousGetKeyboardMapping(&sink, &source, try .init(
-            setup.min_keycode,
-            setup.max_keycode,
-        ));
-        for (setup.min_keycode..@as(usize, setup.max_keycode) + 1) |keycode| {
+        var it = try x11.synchronousGetKeyboardMapping(&sink, &source, keyrange);
+        for (keyrange.min..@as(usize, keyrange.max) + 1) |keycode| {
             for (try it.readSyms(&source)) |sym| switch (sym) {
                 .kbd_left => {
                     std.log.info("keycode {} is left", .{keycode});
@@ -98,15 +111,9 @@ pub fn main() !u8 {
         break :blk fonts;
     };
 
-    const ids = Ids{ .base = setup.resource_id_base };
-    const depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(
-        "unsupported depth {}",
-        .{screen.root_depth},
-    );
-
     try sink.CreateWindow(.{
         .window_id = ids.window(),
-        .parent_window_id = screen.root,
+        .parent_window_id = screen.window,
         .depth = 0,
         .x = 0,
         .y = 0,
@@ -114,7 +121,7 @@ pub fn main() !u8 {
         .height = window_height,
         .border_width = 0, // TODO: what is this?
         .class = .input_output,
-        .visual_id = screen.root_visual,
+        .visual_id = screen.visual,
     }, .{
         .bg_pixel = 0xffffff,
         .event_mask = .{ .KeyPress = 1, .Exposure = 1 },
@@ -123,8 +130,8 @@ pub fn main() !u8 {
         ids.gc(),
         ids.window().drawable(),
         .{
-            .background = depth.rgbFrom24(0xffffff),
-            .foreground = depth.rgbFrom24(0),
+            .background = screen.depth.rgbFrom24(0xffffff),
+            .foreground = screen.depth.rgbFrom24(0),
         },
     );
     try sink.MapWindow(ids.window());
@@ -138,7 +145,7 @@ pub fn main() !u8 {
                 std.log.info("X11 connection closed (EndOfStream)", .{});
                 std.process.exit(0);
             },
-            else => |e| switch (io.socket_reader.getError() orelse e) {
+            else => |e| switch (socket_reader.getError() orelse e) {
                 error.ConnectionResetByPeer => {
                     std.log.info("X11 connection closed (ConnectionReset)", .{});
                     return std.process.exit(0);

@@ -8,31 +8,29 @@ const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .mino
 pub fn main() !void {
     try x11.wsaStartup();
 
-    const display = try x11.getDisplay();
-    std.log.info("DISPLAY {f}", .{display});
-    const parsed_display = x11.parseDisplay(display) catch |err| {
-        std.log.err("invalid DISPLAY {f}: {s}", .{ display, @errorName(err) });
-        std.process.exit(0xff);
+    const stream = blk: {
+        var read_buffer: [1000]u8 = undefined;
+        var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
+        errdefer x11.disconnect(socket_reader.getStream());
+        _ = used_auth;
+        const setup = try x11.readSetupSuccess(socket_reader.interface());
+        std.log.info("setup reply {f}", .{setup});
+        var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
+            std.log.err("no screen?", .{});
+            std.process.exit(0xff);
+        };
+        _ = screen;
+        break :blk socket_reader.getStream();
     };
-    const address = try x11.getAddress(display, &parsed_display);
+    defer x11.disconnect(stream);
+
     var write_buffer: [1000]u8 = undefined;
     var read_buffer: [1000]u8 = undefined;
-    var io = x11.connect(&address, &write_buffer, &read_buffer) catch |err| {
-        std.log.err("connect to {f} failed with {s}", .{ address, @errorName(err) });
-        std.process.exit(0xff);
-    };
-    defer io.shutdown(); // no need to close as well
-    std.log.info("connected to {f}", .{address});
-    try x11.draft.authenticate(display, &parsed_display, &address, &io);
-    var sink: x11.RequestSink = .{ .writer = &io.socket_writer.interface };
-    var source: x11.Source = .{ .reader = io.socket_reader.interface() };
-    const setup = try source.readSetup();
-    std.log.info("setup reply {f}", .{setup});
-    const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
-        std.log.err("no screen?", .{});
-        std.process.exit(0xff);
-    };
-    _ = screen;
+    var socket_writer = x11.socketWriter(stream, &write_buffer);
+    var socket_reader = x11.socketReader(stream, &read_buffer);
+    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
+    var source: x11.Source = .initAfterSetup(socket_reader.interface());
 
     try sink.ListFonts(0xffff, .initComptime("*"));
     try sink.writer.flush();

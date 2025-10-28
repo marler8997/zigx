@@ -1,25 +1,72 @@
 //! This file contains apis that I'm unsure whether to include as they are.
 const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
 
+pub const ConnectError = error{
+    GetDisplay,
+    BadDisplay,
+    ConnectFailed,
+    AuthenticateFailed,
+};
+pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
+    const display = x11.getDisplay() catch |err| {
+        x11.log.err("failed to get x11 display with {s}", .{@errorName(err)});
+        return error.GetDisplay;
+    };
+    x11.log.info("DISPLAY {f}", .{display});
+    const parsed_display = x11.parseDisplay(display) catch |err| {
+        x11.log.err("invalid DISPLAY {f}: {s}", .{ display, @errorName(err) });
+        return error.BadDisplay;
+    };
+    const host = x11.getHost(display, &parsed_display) catch |err| switch (err) {
+        error.X11BadDisplay => {
+            x11.log.err("DISPLAY {f} is not a valid host", .{display});
+            return error.BadDisplay;
+        },
+    };
+    const address, const initial_stream = x11.connect(&host) catch |err| {
+        x11.log.err("connect to {f} failed with {s}", .{ host, @errorName(err) });
+        return error.ConnectFailed;
+    };
+    errdefer x11.disconnect(initial_stream);
+    if (zig_atleast_15)
+        x11.log.info("connected to {f}", .{address})
+    else
+        x11.log.info("connected to {}", .{address});
+    return x11.draft.authenticate(
+        display,
+        &parsed_display,
+        &host,
+        &address,
+        initial_stream,
+        read_buffer,
+    ) catch |err| return switch (err) {
+        error.X11Authentication => error.AuthenticateFailed,
+    };
+}
+
 pub fn authenticate(
     display: x11.Display,
     parsed_display: *const x11.ParsedDisplay,
-    address: *const x11.Address,
-    io: *x11.Io,
-) !void {
+    host: *const x11.Host,
+    address: *const std.net.Address,
+    stream: std.net.Stream,
+    stream_read_buffer: []u8,
+) !x11.Authenticator.Success {
     var filename_buffer: [std.fs.max_path_bytes]u8 = undefined;
     var authenticator: x11.Authenticator = .{
         .display = display,
         .parsed_display = parsed_display,
+        .host = host,
         .address = address,
-        .io = io,
+        .stream = stream,
+        .stream_read_buffer = stream_read_buffer,
         .filename_buffer = &filename_buffer,
     };
     defer authenticator.deinit();
     while (true) switch (authenticator.next()) {
         .reply => |reply| switch (reply) {
-            .success => break,
-            .failed => |f| std.log.err(
+            .success => |success| return success,
+            .failed => |f| x11.log.err(
                 "server (version {}.{}) reported failure '{s}'",
                 .{ f.version_major, f.version_minor, f.reason() },
             ),
@@ -27,13 +74,13 @@ pub fn authenticate(
         .done => |done| {
             switch (done.reason) {
                 .reconnect_error => |err| {
-                    std.log.err(
+                    x11.log.err(
                         "reconnect (to try a new auth) failed with {s} ({} attempts, {} auth entries skipped)",
                         .{ @errorName(err), done.attempt_count, done.skip_count },
                     );
                 },
                 .no_more_auth => {
-                    std.log.err(
+                    x11.log.err(
                         "failed to connect ({} attempts, {} auth entries skipped)",
                         .{ done.attempt_count, done.skip_count },
                     );
@@ -42,23 +89,23 @@ pub fn authenticate(
             return error.X11Authentication;
         },
         .get_auth_filename_error => |e| {
-            std.log.err("get auth filename ({s}) failed with {s}", .{ e.kind.context(), @errorName(e.err) });
+            x11.log.err("get auth filename ({s}) failed with {s}", .{ e.kind.context(), @errorName(e.err) });
         },
         .open_auth_file_error => |e| {
-            std.log.err("open auth file '{s}' ({s}) failed with {s}", .{ e.filename, e.kind.context(), @errorName(e.err) });
+            x11.log.err("open auth file '{s}' ({s}) failed with {s}", .{ e.filename, e.kind.context(), @errorName(e.err) });
         },
         .auth_file_opened => |f| {
-            std.log.info("opened auth file '{s}' ({s})", .{ f.filename, f.kind.context() });
+            x11.log.info("opened auth file '{s}' ({s})", .{ f.filename, f.kind.context() });
         },
         .io_error => |e| switch (e) {
             .write_error => |err| {
-                std.log.err("write to server failed with {s}", .{@errorName(err)});
+                x11.log.err("write to server failed with {s}", .{@errorName(err)});
             },
             .read_error => |err| {
-                std.log.err("read from server failed with {s}", .{@errorName(err)});
+                x11.log.err("read from server failed with {s}", .{@errorName(err)});
             },
             .protocol => {
-                std.log.err("server sent unexpected data", .{});
+                x11.log.err("server sent unexpected data", .{});
             },
         },
     };
@@ -100,7 +147,7 @@ pub fn readSetupDynamic(
     for (0..setup.format_count) |index| {
         var format: x11.Format = undefined;
         try source.readReply(std.mem.asBytes(&format));
-        std.log.info(
+        x11.log.info(
             "format {} depth={} bpp={} scanlinepad={}",
             .{ index, format.depth, format.bits_per_pixel, format.scanline_pad },
         );
@@ -112,7 +159,7 @@ pub fn readSetupDynamic(
         try source.requireReplyAtLeast(@sizeOf(x11.ScreenHeader));
         var screen_header: x11.ScreenHeader = undefined;
         try source.readReply(std.mem.asBytes(&screen_header));
-        std.log.info("screen {} | {}", .{ screen_index, screen_header });
+        x11.log.info("screen {} | {}", .{ screen_index, screen_header });
         if (first_screen_header == null) {
             first_screen_header = screen_header;
         }
@@ -121,12 +168,12 @@ pub fn readSetupDynamic(
             var depth: x11.ScreenDepth = undefined;
             try source.readReply(std.mem.asBytes(&depth));
             try source.requireReplyAtLeast(@as(u35, depth.visual_type_count) * @sizeOf(x11.VisualType));
-            std.log.info("screen {} | depth {} | {}", .{ screen_index, depth_index, depth });
+            x11.log.info("screen {} | depth {} | {}", .{ screen_index, depth_index, depth });
             for (0..depth.visual_type_count) |visual_index| {
                 var visual: x11.VisualType = undefined;
                 try source.readReply(std.mem.asBytes(&visual));
                 if (opt.log_visuals) {
-                    std.log.info("screen {} | depth {} | visual {} | {}\n", .{ screen_index, depth_index, visual_index, visual });
+                    x11.log.info("screen {} | depth {} | visual {} | {}\n", .{ screen_index, depth_index, visual_index, visual });
                 }
             }
         }

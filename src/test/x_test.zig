@@ -200,8 +200,8 @@ test "parse setup reply" {
         .format_count = 4,
     });
     var buffer_reader: x11.Reader = .fixed(&buffer);
-    var source: x11.Source = .{ .reader = &buffer_reader };
-    const setup = try source.readSetup();
+    const setup = try x11.readSetupSuccess(&buffer_reader);
+    var source: x11.Source = .initFinishSetup(&buffer_reader, &setup);
     try testing.expectEqual(@as(u32, 12101008), setup.release_number);
     try testing.expectEqual(x11.ResourceBase.fromInt(396361728), setup.resource_id_base);
     try testing.expectEqual(@as(u32, 0x1fffff), setup.resource_id_mask);
@@ -297,9 +297,8 @@ test "VisualType.findMatchingVisualType" {
         .format_count = 4,
     });
     var buffer_reader: x11.Reader = .fixed(&buffer);
-    var source: x11.Source = .{ .reader = &buffer_reader };
-
-    const setup = try source.readSetup();
+    const setup = try x11.readSetupSuccess(&buffer_reader);
+    var source: x11.Source = .initFinishSetup(&buffer_reader, &setup);
     try testing.expectEqualSlices(u8, zigx_vendor, try source.takeReply(zigx_vendor.len));
     try source.replyDiscard(x11.pad4Len(@truncate(zigx_vendor.len)));
     for (0..setup.format_count) |_| {
