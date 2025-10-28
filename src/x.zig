@@ -494,7 +494,7 @@ pub const Authenticator = struct {
     stream: std.net.Stream,
     stream_read_buffer: []u8,
     filename_buffer: []u8,
-    order: Order = .auth_first,
+    order: Order,
 
     state: State = .{ .connect = .@"0" },
     auth_count: u32 = 0,
@@ -506,7 +506,7 @@ pub const Authenticator = struct {
         authenticator.* = undefined;
     }
 
-    const Order = enum { auth_first, no_auth_first };
+    pub const Order = enum { auth_first, no_auth_first };
     const AuthIndex = enum {
         @"0",
         @"1",

@@ -39,6 +39,7 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
         &address,
         initial_stream,
         read_buffer,
+        .{},
     ) catch |err| return switch (err) {
         error.X11Authentication => error.AuthenticateFailed,
     };
@@ -51,6 +52,9 @@ pub fn authenticate(
     address: *const std.net.Address,
     stream: std.net.Stream,
     stream_read_buffer: []u8,
+    opt: struct {
+        order: x11.Authenticator.Order = .auth_first,
+    },
 ) !x11.Authenticator.Success {
     var filename_buffer: [std.fs.max_path_bytes]u8 = undefined;
     var authenticator: x11.Authenticator = .{
@@ -61,6 +65,7 @@ pub fn authenticate(
         .stream = stream,
         .stream_read_buffer = stream_read_buffer,
         .filename_buffer = &filename_buffer,
+        .order = opt.order,
     };
     defer authenticator.deinit();
     while (true) switch (authenticator.next()) {
