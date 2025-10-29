@@ -419,6 +419,57 @@ test "xauth reader" {
     } });
 }
 
+test "discardRemaining after kind" {
+    for (0..256) |kind| {
+        var buffer = [1]u8{0} ** 32;
+        buffer[0] = @intCast(kind);
+        var buffer_reader: x11.Reader = .fixed(&buffer);
+        var source: x11.Source = .initAfterSetup(&buffer_reader);
+        try source.discardRemaining(); // should do nothing
+        std.debug.assert(source.state == .kind);
+        try std.testing.expectEqual(
+            x11.ServerMsgKind.fromU7(@truncate(kind)),
+            try source.readKind(),
+        );
+        try source.discardRemaining();
+        std.debug.assert(source.state == .kind);
+    }
+}
+
+test "discardRemaining after read2" {
+    for (0..256) |kind| {
+        var buffer = [1]u8{0} ** 32;
+        buffer[0] = @intCast(kind);
+        var buffer_reader: x11.Reader = .fixed(&buffer);
+        var source: x11.Source = .initAfterSetup(&buffer_reader);
+        try source.discardRemaining(); // should do nothing
+        std.debug.assert(source.state == .kind);
+        const kind_enum = try source.readKind();
+        try std.testing.expectEqual(
+            x11.ServerMsgKind.fromU7(@truncate(kind)),
+            kind_enum,
+        );
+        switch (@as(x11.ServerMsgCategory, kind_enum)) {
+            inline else => |kind_ct| {
+                _ = try source.read2(kind_ct);
+            },
+        }
+        try source.discardRemaining();
+        std.debug.assert(source.state == .kind);
+    }
+}
+test "readFmt" {
+    for (0..256) |kind| {
+        var buffer = [1]u8{0} ** 32;
+        buffer[0] = @intCast(kind);
+        var buffer_reader: x11.Reader = .fixed(&buffer);
+        var source: x11.Source = .initAfterSetup(&buffer_reader);
+        var fmt_buf: [1000]u8 = undefined;
+        _ = try std.fmt.bufPrint(&fmt_buf, "{f}", .{source.readFmt()});
+        std.debug.assert(source.state == .kind);
+    }
+}
+
 const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;

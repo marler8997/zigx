@@ -4163,8 +4163,12 @@ pub const Source = struct {
             .kind => return,
             .second => |kind| {
                 switch (kind) {
-                    .Reply, .GenericEvent => {
+                    .Reply => {
                         _ = try source.read2(.Reply);
+                        try source.discardRemaining();
+                    },
+                    .GenericEvent => {
+                        _ = try source.read2(.GenericEvent);
                         try source.discardRemaining();
                     },
                     else => {
@@ -4476,12 +4480,13 @@ pub const ReadFormatter = struct {
                 const err = try self.source.read2(.Error);
                 try writer.print(" {f}", .{err});
             },
-            .Reply => { // 1
+            .Reply, .GenericEvent => {
                 switch (self.source.state) {
                     .kind => unreachable,
-                    .second => |kind| {
-                        std.debug.assert(kind == .Reply);
-                        _ = try self.source.read2(.Reply);
+                    .second => |kind| switch (kind) {
+                        .Reply => _ = try self.source.read2(.Reply),
+                        .GenericEvent => _ = try self.source.read2(.GenericEvent),
+                        else => unreachable,
                     },
                     .reply => {},
                     .err => unreachable,
@@ -4489,8 +4494,14 @@ pub const ReadFormatter = struct {
                 const reply = &self.source.state.reply;
                 switch (reply.msg) {
                     .none => {},
-                    .reply => |msg| try writer.print(" sequence={} flex={}", .{ msg.sequence, msg.flexible }),
-                    .generic_event => |msg| try writer.print(" sequence={} ext-opcode-base={} event-type={}", .{ msg.sequence, msg.ext_opcode_base, msg.type }),
+                    .reply => |msg| try writer.print(
+                        " sequence={} flex={}",
+                        .{ msg.sequence, msg.flexible },
+                    ),
+                    .generic_event => |msg| try writer.print(
+                        " sequence={} ext-opcode-base={} event-type={}",
+                        .{ msg.sequence, msg.ext_opcode_base, msg.type },
+                    ),
                 }
                 const total = reply.total();
                 try writer.print(" with {} bytes: ", .{total});
@@ -4505,28 +4516,7 @@ pub const ReadFormatter = struct {
                     try writer.print("{x}", .{next});
                     remaining -= @intCast(take_len);
                 }
-                return;
             },
-            .FocusIn => @panic("todo"), // 9
-            .FocusOut => @panic("todo"), // 10
-            .GraphicsExposure => @panic("todo"), // 13
-            .NoExposure => @panic("todo"), // 14
-            .VisibilityNotify => @panic("todo"), // 15
-            .CreateNotify => @panic("todo"), // 16
-            .DestroyNotify => @panic("todo"), // 17
-            // .MapNotify => @panic("todo"), // 19
-            .MapRequest => @panic("todo"), // 20
-            .ConfigureRequest => @panic("todo"), // 23
-            .GravityNotify => @panic("todo"), // 24
-            .ResizeRequest => @panic("todo"), // 25
-            .CirculateNotify => @panic("todo"), // 26
-            .CirculateRequest => @panic("todo"), // 27
-            .PropertyNotify => @panic("todo"), // 28
-            .SelectionClear => @panic("todo"), // 29
-            .SelectionRequest => @panic("todo"), // 30
-            .SelectionNotify => @panic("todo"), // 31
-            .ColormapNotify => @panic("todo"), // 32
-            .ClientMessage => @panic("todo"), // 33
             inline else => |_, tag| {
                 const msg = try self.source.read2(tag);
                 try writer.print("{}", .{msg});
@@ -4555,6 +4545,24 @@ pub const CommonEvent = extern struct {
     state: KeyButtonMask,
     something: u8,
     unused: u8,
+};
+
+pub const FocusDetail = enum(u8) {
+    ancestor = 0,
+    virtual = 1,
+    inferior = 2,
+    nonlinear = 3,
+    nonlinear_virtual = 4,
+    pointer = 5,
+    pointer_root = 6,
+    none = 7,
+};
+
+pub const FocusMode = enum(u8) {
+    normal = 0,
+    grab = 1,
+    ungrab = 2,
+    while_grabbed = 3,
 };
 
 pub const servermsg = struct {
@@ -4800,14 +4808,22 @@ pub const servermsg = struct {
     }
     pub const FocusIn = extern struct {
         kind: enum(u8) { FocusIn = @intFromEnum(ServerMsgKind.FocusIn) },
-        todo: [31]u8,
+        detail: NonExhaustive(FocusDetail),
+        sequence: u16,
+        event: Window,
+        mode: NonExhaustive(FocusMode),
+        unused: [23]u8,
     };
     comptime {
         std.debug.assert(@sizeOf(FocusOut) == 32);
     }
     pub const FocusOut = extern struct {
         kind: enum(u8) { FocusOut = @intFromEnum(ServerMsgKind.FocusOut) },
-        todo: [31]u8,
+        detail: NonExhaustive(FocusDetail),
+        sequence: u16,
+        event: Window,
+        mode: NonExhaustive(FocusMode),
+        unused: [23]u8,
     };
 
     comptime {
