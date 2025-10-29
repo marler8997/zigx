@@ -162,21 +162,19 @@ pub const PictureOperation = enum(u8) {
 pub const request = struct {
     pub fn QueryVersion(
         sink: *x11.RequestSink,
-        named: struct {
-            ext_opcode: u8,
-            major_version: u32,
-            minor_version: u32,
-        },
+        ext_opcode: u8,
+        major_version: u32,
+        minor_version: u32,
     ) error{WriteFailed}!void {
         const msg_len = 12;
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
-            named.ext_opcode,
+            ext_opcode,
             @intFromEnum(ExtOpcode.query_version),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try x11.writeInt(sink.writer, &offset, u32, named.major_version);
-        try x11.writeInt(sink.writer, &offset, u32, named.minor_version);
+        try x11.writeInt(sink.writer, &offset, u32, major_version);
+        try x11.writeInt(sink.writer, &offset, u32, minor_version);
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }

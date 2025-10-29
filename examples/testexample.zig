@@ -284,42 +284,28 @@ pub fn main() !u8 {
 
     var maybe_picture_format: ?x11.render.PictureFormatInfo = null;
 
+    const opt_composite_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.composite.name);
+    if (opt_composite_ext) |composite_ext| {
+        const latest_version = try queryExtensionVersions(.composite, &sink, &source, composite_ext.opcode_base);
+        _ = latest_version;
+    }
+
     const opt_render_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.render.name);
     if (opt_render_ext) |render_ext| {
-        {
-            const expected_version_major = 0;
-            const expected_version_minor = 10;
-            try x11.render.request.QueryVersion(&sink, .{
-                .ext_opcode = render_ext.opcode_base,
-                .major_version = expected_version_major,
-                .minor_version = expected_version_minor,
-            });
-            try sink.writer.flush();
-            const version, _ = try source.readSynchronousReplyFull(sink.sequence, .RENDER_QueryVersion);
-            std.log.info("RENDER version {}.{}", .{ version.major, version.minor });
-            if (version.major != expected_version_major) {
-                std.log.err("RENDER major version is {} but we expect {}", .{
-                    version.major,
-                    expected_version_major,
-                });
-                return 1;
-            }
-            if (version.minor < expected_version_minor) {
-                std.log.err("RENDER minor version is {}.{} but I've only tested >= {}.{})", .{
-                    version.major,
-                    version.minor,
-                    expected_version_major,
-                    expected_version_minor,
-                });
-                return 1;
-            }
-        }
+        const latest_version = try queryExtensionVersions(.render, &sink, &source, render_ext.opcode_base);
+        if (latest_version.major != 0) @panic("untested render extension major version");
+        // TODO: actually use the version for now we're just verifying the version
+        //       is the oldest one that's been tested to work
+        const oldest_known_working_version_minor = 10;
+        if (latest_version.minor < oldest_known_working_version_minor) @panic(
+            "untested render extension version, update code and test this older version",
+        );
 
         // Find some compatible picture formats for use with the X Render extension. We want
         // to find a 24-bit depth format for use with the root and our window.
         try x11.render.QueryPictFormats(&sink, render_ext.opcode_base);
         try sink.writer.flush();
-        const result, _ = try source.readSynchronousReplyHeader(sink.sequence, .RENDER_QueryPictFormats);
+        const result, _ = try source.readSynchronousReplyHeader(sink.sequence, .render_QueryPictFormats);
         std.log.info(
             "RENDER extension: pict formats num_formats={} num_screens={} num_depths={} num_visuals={}",
             .{
@@ -387,24 +373,16 @@ pub fn main() !u8 {
         try x11.shape.QueryVersion(&sink, shape_ext.opcode_base);
         try sink.writer.flush();
         try sink.writer.flush();
-        const version, _ = try source.readSynchronousReplyFull(sink.sequence, .SHAPE_QueryVersion);
+        const version, _ = try source.readSynchronousReplyFull(sink.sequence, .shape_QueryVersion);
         std.log.info("SHAPE version {}.{}", .{ version.major, version.minor });
         if (version.major != 1) std.debug.panic("unsupported SHAPE version {}", .{version.major});
     }
 
     const opt_test_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.tst.name);
-    if (opt_test_ext) |test_ext| {
-        const expected_version_major = 2;
-        const expected_version_minor = 2;
-        try x11.tst.GetVersion(&sink, .{
-            .ext_opcode_base = test_ext.opcode_base,
-            .wanted_major_version = expected_version_major,
-            .wanted_minor_version = expected_version_minor,
-        });
-        try sink.writer.flush();
-        const version, const version_major = try source.readSynchronousReplyFull(sink.sequence, .XTEST_GetVersion);
-        std.log.info("XTEST version {}.{}", .{ version_major, version.minor });
-        if (version_major != expected_version_major) std.debug.panic("unsupported XTEST version {}", .{version_major});
+    if (opt_test_ext) |tst_ext| {
+        const latest_version = try queryExtensionVersions(.tst, &sink, &source, tst_ext.opcode_base);
+        if (latest_version.major != 2) @panic("untested XTEST version");
+        if (latest_version.minor < 2) @panic("untested XTEST version");
     }
 
     try sink.MapWindow(ids.window());
@@ -412,7 +390,7 @@ pub fn main() !u8 {
     // Send a fake mouse left-click event
     if (opt_test_ext) |test_ext| {
         std.log.info("sending fake button press/release...", .{});
-        try x11.tst.FakeInput(&sink, test_ext.opcode_base, .{
+        try x11.tst.request.FakeInput(&sink, test_ext.opcode_base, .{
             .button_press = .{
                 .event_type = x11.tst.FakeEventType.button_press,
                 .detail = 1,
@@ -420,7 +398,7 @@ pub fn main() !u8 {
                 .device_id = null,
             },
         });
-        try x11.tst.FakeInput(&sink, test_ext.opcode_base, .{
+        try x11.tst.request.FakeInput(&sink, test_ext.opcode_base, .{
             .button_press = .{
                 .event_type = x11.tst.FakeEventType.button_release,
                 .detail = 1,
@@ -514,6 +492,56 @@ pub fn main() !u8 {
                 return error.TodoHandleGenericExtensionEvent;
             },
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
+        }
+    }
+}
+
+fn queryExtensionVersions(
+    comptime extension: enum { render, composite, tst },
+    sink: *x11.RequestSink,
+    source: *x11.Source,
+    opcode_base: u8,
+) !struct { major: u32, minor: u32 } {
+    // this should query all available versions
+    var wanted_version_major: u32 = 0;
+    while (true) : (wanted_version_major += 1) {
+        var wanted_version_minor: u32 = 0;
+        while (true) : (wanted_version_minor += 1) {
+            try @field(x11, @tagName(extension)).request.QueryVersion(
+                sink,
+                opcode_base,
+                @intCast(wanted_version_major),
+                @intCast(wanted_version_minor),
+            );
+
+            try sink.writer.flush();
+            const version, const flexible = try source.readSynchronousReplyFull(sink.sequence, switch (extension) {
+                .composite => .composite_QueryVersion,
+                .render => .render_QueryVersion,
+                .tst => .tst_GetVersion,
+            });
+            const actual_major = if (@hasField(@TypeOf(version), "major")) version.major else flexible;
+            std.log.info("{f} wanted {}.{} got {}.{}", .{
+                @field(x11, @tagName(extension)).name,
+                wanted_version_major,
+                wanted_version_minor,
+                actual_major,
+                version.minor,
+            });
+            if (wanted_version_major > actual_major) return .{
+                .major = actual_major,
+                .minor = version.minor,
+            };
+            // skips unnecessary major version checks
+            if (wanted_version_major < actual_major) {
+                wanted_version_major = actual_major - 1;
+                break;
+            }
+            if (wanted_version_minor > version.minor) break;
+            // skips unnecessary minor version checks
+            if (wanted_version_minor < version.minor) {
+                wanted_version_minor = version.minor;
+            }
         }
     }
 }

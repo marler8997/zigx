@@ -42,10 +42,10 @@ pub const render = @import("x/render.zig");
 pub const dbe = @import("x/dbe.zig");
 pub const shape = @import("x/shape.zig");
 pub const tst = @import("x/tst.zig");
+pub const composite = @import("x/composite.zig");
 pub const randr = @compileError("todo");
 pub const fixes = @compileError("todo");
 pub const damage = @compileError("todo");
-pub const composite = @compileError("todo");
 pub const shm = @compileError("todo");
 pub const sync = @compileError("todo");
 pub const video = @compileError("todo");
@@ -5369,24 +5369,24 @@ pub const stage3 = struct {
         unused: [20]u8,
     };
     comptime {
-        std.debug.assert(@sizeOf(XTEST_GetVersion) == 24);
+        std.debug.assert(@sizeOf(tst_GetVersion) == 24);
     }
-    pub const XTEST_GetVersion = extern struct {
+    pub const tst_GetVersion = extern struct {
         minor: u16,
         unused: [22]u8,
     };
     comptime {
-        std.debug.assert(@sizeOf(RENDER_QueryVersion) == 24);
+        std.debug.assert(@sizeOf(render_QueryVersion) == 24);
     }
-    pub const RENDER_QueryVersion = extern struct {
+    pub const render_QueryVersion = extern struct {
         major: u32,
         minor: u32,
         reserved: [15]u8,
     };
     comptime {
-        std.debug.assert(@sizeOf(RENDER_QueryPictFormats) == 24);
+        std.debug.assert(@sizeOf(render_QueryPictFormats) == 24);
     }
-    pub const RENDER_QueryPictFormats = extern struct {
+    pub const render_QueryPictFormats = extern struct {
         num_formats: u32,
         num_screens: u32,
         num_depths: u32,
@@ -5395,25 +5395,25 @@ pub const stage3 = struct {
         unused: u32,
     };
     comptime {
-        std.debug.assert(@sizeOf(SHAPE_QueryVersion) == 24);
+        std.debug.assert(@sizeOf(shape_QueryVersion) == 24);
     }
-    pub const SHAPE_QueryVersion = extern struct {
+    pub const shape_QueryVersion = extern struct {
         major: u16,
         minor: u16,
         unused: [20]u8,
     };
     comptime {
-        std.debug.assert(@sizeOf(COMPOSITE_QueryVersion) == 24);
+        std.debug.assert(@sizeOf(composite_QueryVersion) == 24);
     }
-    pub const COMPOSITE_QueryVersion = extern struct {
+    pub const composite_QueryVersion = extern struct {
         major: u32,
         minor: u32,
         unused_pad: [16]u8,
     };
     comptime {
-        std.debug.assert(@sizeOf(COMPOSITE_GetOverlayWindow) == 24);
+        std.debug.assert(@sizeOf(composite_GetOverlayWindow) == 24);
     }
-    pub const COMPOSITE_GetOverlayWindow = extern struct {
+    pub const composite_GetOverlayWindow = extern struct {
         overlay_window_id: u32,
         unused_pad: [20]u8,
     };
@@ -5426,7 +5426,7 @@ pub const Read3Header = enum {
     ListFonts, // 50
     GetImage, // 73
 
-    RENDER_QueryPictFormats,
+    render_QueryPictFormats,
     pub fn Type(self: Read3Header) type {
         return switch (self) {
             inline else => |tag| @field(stage3, @tagName(tag)),
@@ -5439,10 +5439,10 @@ const Read3Full = enum {
     QueryTextExtents,
     QueryExtension,
 
-    XTEST_GetVersion,
-    RENDER_QueryVersion,
-    SHAPE_QueryVersion,
-    COMPOSITE_QueryVersion,
+    tst_GetVersion,
+    render_QueryVersion,
+    shape_QueryVersion,
+    composite_QueryVersion,
     pub fn Type(self: Read3Full) type {
         return switch (self) {
             inline else => |tag| @field(stage3, @tagName(tag)),
