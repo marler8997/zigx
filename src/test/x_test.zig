@@ -423,3 +423,30 @@ const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;
 const x11 = @import("../x.zig");
+
+test "ReadFormatter - all ServerMsgKind values" {
+    var kind_byte: u8 = 0;
+    while (true) {
+        var buffer: [32]u8 = undefined;
+        @memset(&buffer, 0);
+        buffer[0] = kind_byte;
+
+        var buffer_reader: x11.Reader = .fixed(&buffer);
+        var source: x11.Source = .initAfterSetup(&buffer_reader);
+
+        var output_buffer: [512]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&output_buffer);
+
+        // This should not panic for any message kind
+        std.debug.print("--------v\n", .{});
+        try fbs.writer().print("{f}", .{source.readFmt()});
+        std.debug.print("--------^\n", .{});
+        std.debug.print(
+            "Test Byte {}: '{s}'\n",
+            .{ kind_byte, output_buffer[0..fbs.pos] },
+        );
+
+        if (kind_byte == 255) break;
+        kind_byte += 1;
+    }
+}
