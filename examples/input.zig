@@ -343,9 +343,9 @@ fn handleReply(
             return true; // handled
         },
         .get_version => |info| if (reply.sequence == info.sequence) {
-            if (reply.flexible != @intFromEnum(x11.input.ExtOpcode.get_extension_version)) std.debug.panic(
+            if (reply.flexible != @intFromEnum(x11.input.Opcode.get_extension_version)) std.debug.panic(
                 "expected reply opcode(flexible) {} but got {}",
-                .{ @intFromEnum(x11.input.ExtOpcode.get_extension_version), reply },
+                .{ @intFromEnum(x11.input.Opcode.get_extension_version), reply },
             );
             if (remaining_size != @sizeOf(x11.input.stage3.GetExtensionVersion)) std.debug.panic(
                 "expected size {} but got {}",

@@ -4,7 +4,7 @@ const x11 = @import("../x.zig");
 
 pub const name: x11.Slice(u16, [*]const u8) = .initComptime("XTEST");
 
-pub const ExtOpcode = enum(u8) {
+pub const Opcode = enum(u8) {
     get_version = 0,
     // compare_cursor = 1,
     fake_input = 2,
@@ -47,7 +47,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode_base,
-            @intFromEnum(ExtOpcode.get_version),
+            @intFromEnum(Opcode.get_version),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeAll(sink.writer, &offset, &[_]u8{
@@ -84,7 +84,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(ExtOpcode.fake_input),
+            @intFromEnum(Opcode.fake_input),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         switch (args) {

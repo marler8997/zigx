@@ -43,7 +43,7 @@ pub const PictureFormat = enum(u32) {
     }
 };
 
-pub const ExtOpcode = enum(u8) {
+pub const Opcode = enum(u8) {
     query_version = 0,
     query_pict_formats = 1,
     // opcode 3 reserved for QueryDithers
@@ -170,7 +170,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(ExtOpcode.query_version),
+            @intFromEnum(Opcode.query_version),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeInt(sink.writer, &offset, u32, major_version);
@@ -244,7 +244,7 @@ pub fn CreatePicture(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.create_picture),
+        @intFromEnum(Opcode.create_picture),
     });
     try x11.writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
     try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(picture_id));
@@ -367,7 +367,7 @@ pub fn Composite(sink: *x11.RequestSink, ext_opcode: u8, named: struct {
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.composite),
+        @intFromEnum(Opcode.composite),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeAll(sink.writer, &offset, &[_]u8{
@@ -402,7 +402,7 @@ pub fn QueryPictFormats(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.query_pict_formats),
+        @intFromEnum(Opcode.query_pict_formats),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     std.debug.assert(offset == msg_len);

@@ -4,7 +4,7 @@ const x11 = @import("../x.zig");
 
 pub const name: x11.Slice(u16, [*]const u8) = .initComptime("SHAPE");
 
-pub const ExtOpcode = enum(u8) {
+pub const Opcode = enum(u8) {
     query_version = 0,
     rectangles = 1,
     // mask = 2,
@@ -48,7 +48,7 @@ pub fn QueryVersion(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.query_version),
+        @intFromEnum(Opcode.query_version),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     std.debug.assert(offset == msg_len);
@@ -81,7 +81,7 @@ pub const rectangles = struct {
     };
     pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) void {
         buf[0] = ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.rectangles);
+        buf[1] = @intFromEnum(Opcode.rectangles);
         const len = getLen(@intCast(args.rectangles.len));
         x11.writeIntNative(u16, buf + 2, len >> 2);
         buf[4] = @intFromEnum(args.operation);

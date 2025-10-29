@@ -6,7 +6,7 @@ pub const name = x11.Slice(u16, [*]const u8).initComptime("XInputExtension");
 
 pub const ListInputDevicesReplyKind = enum(u8) { opcode = 2 };
 
-pub const ExtOpcode = enum(u8) {
+pub const Opcode = enum(u8) {
     get_extension_version = 1,
     list_input_devices = @intFromEnum(ListInputDevicesReplyKind.opcode),
     open_device = 3,
@@ -118,7 +118,7 @@ pub const query_version = struct {
     };
     pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) void {
         buf[0] = ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.query_version);
+        buf[1] = @intFromEnum(Opcode.query_version);
         std.debug.assert(len & 0x3 == 0);
         x11.writeIntNative(u16, buf + 2, len >> 2);
         x11.writeIntNative(u16, buf + 4, args.major_version);
@@ -142,7 +142,7 @@ pub const list_input_devices = struct {
     pub const len = 4;
     pub fn serialize(buf: [*]u8, input_ext_opcode: u8) void {
         buf[0] = input_ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.list_input_devices);
+        buf[1] = @intFromEnum(Opcode.list_input_devices);
         x11.writeIntNative(u16, buf + 2, len >> 2);
     }
 };
@@ -177,7 +177,7 @@ pub const change_property = struct {
             };
             pub fn serialize(buf: [*]u8, input_ext_opcode: u8, args: Args) void {
                 buf[0] = input_ext_opcode;
-                buf[1] = @intFromEnum(ExtOpcode.change_property);
+                buf[1] = @intFromEnum(Opcode.change_property);
                 const request_len = getLen(args.values.len);
                 std.debug.assert(request_len & 0x3 == 0);
                 x11.writeIntNative(u16, buf + 2, request_len >> 2);
@@ -205,7 +205,7 @@ pub const get_property = struct {
     };
     pub fn serialize(buf: [*]u8, input_ext_opcode: u8, args: Args) void {
         buf[0] = input_ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.get_property);
+        buf[1] = @intFromEnum(Opcode.get_property);
         x11.writeIntNative(u16, buf + 2, len >> 2);
         x11.writeIntNative(u16, buf + 4, args.device_id);
         x11.writeIntNative(u8, buf + 6, @intFromBool(args.delete));
@@ -521,7 +521,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(ExtOpcode.get_extension_version),
+            @intFromEnum(Opcode.get_extension_version),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeInt(sink.writer, &offset, u32, ext_name.len);
@@ -540,7 +540,7 @@ pub fn ListInputDevices(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.list_input_devices),
+        @intFromEnum(Opcode.list_input_devices),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     std.debug.assert(offset == msg_len);
@@ -556,7 +556,7 @@ pub fn GetProperty(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.get_property),
+        @intFromEnum(Opcode.get_property),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeInt(sink.writer, &offset, u16, args.device_id);
@@ -583,7 +583,7 @@ pub fn ChangeProperty(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.change_property),
+        @intFromEnum(Opcode.change_property),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeInt(sink.writer, &offset, u16, args.device_id);
@@ -630,7 +630,7 @@ pub fn SelectEvents(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.select_events),
+        @intFromEnum(Opcode.select_events),
     });
     try x11.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
     try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(window));

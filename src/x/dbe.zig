@@ -4,7 +4,7 @@ const x11 = @import("../x.zig");
 
 pub const name: x11.Slice(u16, [*]const u8) = .initComptime("DOUBLE-BUFFER");
 
-pub const ExtOpcode = enum(u8) {
+pub const Opcode = enum(u8) {
     get_version = 0,
     allocate = 1,
     deallocate = 2,
@@ -29,7 +29,7 @@ pub const get_version = struct {
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
         buf[0] = args.ext_opcode;
-        buf[1] = @intFromEnum(ExtOpcode.get_version);
+        buf[1] = @intFromEnum(Opcode.get_version);
         comptime {
             std.debug.assert(len & 0x3 == 0);
         }
@@ -76,7 +76,7 @@ pub fn Allocate(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.allocate),
+        @intFromEnum(Opcode.allocate),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(window));
@@ -100,7 +100,7 @@ pub fn Deallocate(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.deallocate),
+        @intFromEnum(Opcode.deallocate),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(backbuffer));
@@ -126,7 +126,7 @@ pub fn Swap(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(ExtOpcode.swap),
+        @intFromEnum(Opcode.swap),
     });
     try x11.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
     try x11.writeInt(sink.writer, &offset, u32, swap_infos.len);
