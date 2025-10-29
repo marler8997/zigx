@@ -470,6 +470,47 @@ test "readFmt" {
     }
 }
 
+test "calcScanline" {
+    // Bitmap: 16 bits wide, no left pad
+    // 16 bits padded to 32 bits = 4 bytes per scanline
+    try std.testing.expectEqual(@as(u32, 4), x11.calcScanline(.@"32", 1, 16, .{ .bit_or_xy = 0 }));
+    // Bitmap: 10 bits wide, 2 bits left pad = 12 bits total
+    // 12 bits padded to 32 bits = 4 bytes per scanline
+    try std.testing.expectEqual(@as(u32, 4), x11.calcScanline(.@"32", 1, 10, .{ .bit_or_xy = 2 }));
+    // Bitmap: 17 bits wide, no left pad
+    // 17 bits padded to 32 bits = 4 bytes per scanline (fits in one 32-bit unit)
+    try std.testing.expectEqual(@as(u32, 4), x11.calcScanline(.@"32", 1, 17, .{ .bit_or_xy = 0 }));
+    // Bitmap: 8 bits wide with 8-bit padding
+    // 8 bits padded to 8 bits = 1 byte
+    try std.testing.expectEqual(@as(u32, 1), x11.calcScanline(.@"8", 1, 8, .{ .bit_or_xy = 0 }));
+
+    // 16 pixels * 1 byte = 16 bytes = 128 bits
+    // Padded to 32 bits: ((128 + 32 - 1) / 32) * 4 = 4 * 4 = 16 bytes
+    try std.testing.expectEqual(@as(u32, 16), x11.calcScanline(.@"32", 8, 16, .z_pixmap));
+
+    // 10 pixels * 1 byte = 10 bytes = 80 bits
+    // Padded to 32 bits: ((80 + 32 - 1) / 32) * 4 = 3 * 4 = 12 bytes
+    try std.testing.expectEqual(@as(u32, 12), x11.calcScanline(.@"32", 8, 10, .z_pixmap));
+
+    // 100 pixels * 4 bytes = 400 bytes = 3200 bits
+    // Padded to 32 bits: ((3200 + 32 - 1) / 32) * 4 = 100 * 4 = 400 bytes
+    try std.testing.expectEqual(@as(u32, 400), x11.calcScanline(.@"32", 24, 100, .z_pixmap));
+}
+
+// ensures that the u18 return type for calcScanline doesn't overflow
+test "max calcScanline" {
+    for (std.enums.values(x11.ScanlinePad)) |pad| {
+        try std.testing.expectEqual(
+            @as(u18, 262140),
+            x11.calcScanline(pad, 0xff, 0xffff, .z_pixmap),
+        );
+        try std.testing.expectEqual(
+            @as(u18, 8224),
+            x11.calcScanline(pad, 0xff, 0xffff, .{ .bit_or_xy = 0xff }),
+        );
+    }
+}
+
 const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;

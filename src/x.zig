@@ -1999,7 +1999,7 @@ pub const RequestSink = struct {
     // get_font_path = 52,
 
     pub fn CreatePixmap(sink: *RequestSink, id: Pixmap, drawable: Drawable, named: struct {
-        depth: u8,
+        depth: Depth,
         width: u16,
         height: u16,
     }) error{WriteFailed}!void {
@@ -2007,7 +2007,7 @@ pub const RequestSink = struct {
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
             @intFromEnum(Opcode.create_pixmap),
-            named.depth,
+            named.depth.byte(),
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try writeInt(sink.writer, &offset, u32, @intFromEnum(id));
@@ -2227,10 +2227,20 @@ pub const RequestSink = struct {
 
     pub fn PutImageStart(
         sink: *RequestSink,
+        scanline_pad: ScanlinePad,
         args: put_image.Args,
-        data_len: u18,
-    ) error{WriteFailed}!usize {
-        const msg_len = put_image.getLen(data_len);
+    ) error{WriteFailed}!u2 {
+        const data_len: u18 = @as(u18, args.height) * calcScanline(
+            scanline_pad,
+            args.depth.byte(),
+            args.width,
+            switch (args.format) {
+                .bitmap, .xy_pixmap => |left_pad| .{ .bit_or_xy = left_pad },
+                .z_pixmap => .z_pixmap,
+            },
+        );
+        const pad_len: u2 = pad4Len(@truncate(data_len));
+        const msg_len: u18 = put_image.non_list_len + data_len + @as(u18, pad_len);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
             @intFromEnum(Opcode.put_image),
@@ -2244,25 +2254,21 @@ pub const RequestSink = struct {
         try writeInt(sink.writer, &offset, i16, args.x);
         try writeInt(sink.writer, &offset, i16, args.y);
         try writeAll(sink.writer, &offset, &[_]u8{
-            args.left_pad,
-            args.depth,
+            switch (args.format) {
+                .bitmap, .xy_pixmap => |left_pad| left_pad,
+                .z_pixmap => 0,
+            },
+            args.depth.byte(),
             0, // unused
             0, // unused
         });
         std.debug.assert((offset & 0x3) == 0);
         std.debug.assert(offset == put_image.non_list_len);
-        return offset;
+        return pad_len;
     }
 
-    pub fn PutImageFinish(
-        sink: *RequestSink,
-        data_len: u18,
-        msg_offset: usize,
-    ) error{WriteFailed}!void {
-        const msg_len = put_image.getLen(data_len);
-        var offset = msg_offset;
-        try writePad4(sink.writer, &offset);
-        std.debug.assert(msg_len == offset);
+    pub fn PutImageFinish(sink: *RequestSink, pad_len: u2) error{WriteFailed}!void {
+        try sink.writer.splatByteAll(0, pad_len);
         sink.sequence +%= 1;
     }
 
@@ -3368,6 +3374,100 @@ comptime {
     std.debug.assert(@sizeOf(Rectangle) == 8);
 }
 
+pub const ScanlinePad = enum {
+    @"8",
+    @"16",
+    @"32",
+    pub fn fromByte(byte: u8) ?ScanlinePad {
+        return switch (byte) {
+            8 => .@"8",
+            16 => .@"16",
+            32 => .@"32",
+            else => null,
+        };
+    }
+    pub fn bitCount(pad: ScanlinePad, comptime T: type) T {
+        return switch (pad) {
+            .@"8" => 8,
+            .@"16" => 16,
+            .@"32" => 32,
+        };
+    }
+    pub fn byteCount(pad: ScanlinePad, comptime T: type) T {
+        return switch (pad) {
+            .@"8" => 1,
+            .@"16" => 2,
+            .@"32" => 4,
+        };
+    }
+};
+
+pub const PixelSize = enum {
+    @"1",
+    @"2",
+    @"4",
+    pub fn fromByte(depth: u8) PixelSize {
+        return switch (depth) {
+            0...8 => .@"1",
+            9...16 => .@"2",
+            else => .@"4",
+        };
+    }
+    pub fn fromDepth(depth: Depth) PixelSize {
+        return switch (depth) {
+            .@"1", .@"4", .@"8" => .@"1",
+            .@"15", .@"16" => .@"2",
+            .@"24" => .@"4",
+            .@"32" => .@"4",
+        };
+    }
+    pub fn byteCount(s: PixelSize, comptime T: type) T {
+        return switch (s) {
+            .@"1" => 1,
+            .@"2" => 2,
+            .@"4" => 4,
+        };
+    }
+    pub fn bitCount(s: PixelSize, comptime T: type) T {
+        return switch (s) {
+            .@"1" => 8,
+            .@"2" => 16,
+            .@"4" => 32,
+        };
+    }
+};
+
+pub const ImageFormat = union(enum) {
+    bitmap: u8, // the left-pad
+    xy_pixmap: u8, // the left-pad
+    z_pixmap,
+};
+
+/// returns the size of a scanline
+/// max possible return value fits within a u18 which is verified by the "max calcScanline" test
+pub fn calcScanline(
+    pad: ScanlinePad,
+    depth: u8,
+    width: u16,
+    format: union(enum) {
+        bit_or_xy: u8, // the left-pad
+        z_pixmap,
+    },
+) u18 {
+    const content_bit_count: u32 = switch (format) {
+        // For bitmap and XY format, each bit plane is padded separately
+        // The scanline contains (width + left_pad) bits
+        .bit_or_xy => |left_pad| @as(u32, width) + @as(u32, left_pad),
+        .z_pixmap => @as(u32, width) * PixelSize.fromByte(depth).bitCount(u32),
+    };
+    switch (pad) {
+        inline else => |pad_ct| {
+            const numerator: u32 = (content_bit_count + pad_ct.bitCount(comptime_int) - 1) / pad_ct.bitCount(comptime_int);
+            return @intCast(numerator * pad.byteCount(u32));
+        },
+    }
+}
+
 pub const put_image = struct {
     pub const non_list_len =
         2 // opcode and format
@@ -3382,19 +3482,14 @@ pub const put_image = struct {
         return non_list_len + std.mem.alignForward(u18, data_len, 4);
     }
     pub const Args = struct {
-        format: enum(u8) {
-            bitmap = 0,
-            xy_pixmap = 1,
-            z_pixmap = 2,
-        },
+        format: ImageFormat,
         drawable: Drawable,
         gc_id: GraphicsContext,
         width: u16,
         height: u16,
         x: i16,
         y: i16,
-        left_pad: u8,
-        depth: u8,
+        depth: Depth,
     };
 };
 
@@ -3989,8 +4084,8 @@ pub const Depth = enum {
     /// same as 24-bit but with an 8-bit alpha or just padding
     @"32",
 
-    pub fn init(byte: u8) ?Depth {
-        return switch (byte) {
+    pub fn init(b: u8) ?Depth {
+        return switch (b) {
             1 => .@"1",
             4 => .@"4",
             8 => .@"8",
@@ -3999,6 +4094,18 @@ pub const Depth = enum {
             24 => .@"24",
             32 => .@"32",
             else => null,
+        };
+    }
+
+    pub fn byte(depth: Depth) u8 {
+        return switch (depth) {
+            .@"1" => 1,
+            .@"4" => 4,
+            .@"8" => 8,
+            .@"15" => 15,
+            .@"16" => 16,
+            .@"24" => 24,
+            .@"32" => 32,
         };
     }
 

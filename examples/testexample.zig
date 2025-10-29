@@ -43,18 +43,22 @@ pub const Ids = struct {
 //     scanline-pad: 8, 16, 32
 const ImageFormat = struct {
     endian: Endian,
-    depth: u8,
+    depth: x11.Depth,
     bits_per_pixel: u8,
-    scanline_pad: u8,
+    scanline_pad: x11.ScanlinePad,
 };
 fn getImageFormat(
     endian: Endian,
     formats: []const x11.Format,
-    root_depth: u8,
+    root_depth: x11.Depth,
 ) !ImageFormat {
     var opt_match_index: ?usize = null;
     for (formats, 0..) |format, i| {
-        if (format.depth == root_depth) {
+        const format_depth = x11.Depth.init(format.depth) orelse std.debug.panic(
+            "format {} has invalid depth {}",
+            .{ i, format.depth },
+        );
+        if (format_depth == root_depth) {
             if (opt_match_index) |_|
                 return error.MultiplePixmapFormatsSameDepth;
             opt_match_index = i;
@@ -66,7 +70,10 @@ fn getImageFormat(
         .endian = endian,
         .depth = root_depth,
         .bits_per_pixel = formats[match_index].bits_per_pixel,
-        .scanline_pad = formats[match_index].scanline_pad,
+        .scanline_pad = x11.ScanlinePad.fromByte(formats[match_index].scanline_pad) orelse std.debug.panic(
+            "invalid scanline pad {}",
+            .{formats[match_index].scanline_pad},
+        ),
     };
 }
 
@@ -151,7 +158,7 @@ pub fn main() !u8 {
             getImageFormat(
                 image_endian,
                 formats,
-                screen.root_depth,
+                x11.Depth.init(screen.root_depth) orelse std.debug.panic("screen has invalid depth {}", .{screen.root_depth}),
             ) catch |err| {
                 std.log.err("can't resolve root depth {} format: {s}", .{ screen.root_depth, @errorName(err) });
                 return 0xff;
@@ -549,15 +556,6 @@ fn queryExtensionVersions(
 const test_image = struct {
     pub const width = 15;
     pub const height = 15;
-
-    pub const max_bytes_per_pixel = 4;
-    const max_scanline_pad = 32;
-    pub const max_scanline_len = std.mem.alignForward(
-        u16,
-        max_bytes_per_pixel * width,
-        max_scanline_pad / 8, // max scanline pad
-    );
-    const max_data_len = height * max_scanline_len;
 };
 
 const FontDims = struct {
@@ -644,20 +642,9 @@ fn render(
         }),
     );
     try sink.writer.flush();
-    const test_image_scanline_len = blk: {
-        const bytes_per_pixel = image_format.bits_per_pixel / 8;
-        std.debug.assert(bytes_per_pixel <= test_image.max_bytes_per_pixel);
-        break :blk std.mem.alignForward(
-            u16,
-            bytes_per_pixel * test_image.width,
-            image_format.scanline_pad / 8,
-        );
-    };
-    const test_image_data_len: u18 = @intCast(test_image.height * test_image_scanline_len);
-    std.debug.assert(test_image_data_len <= test_image.max_data_len);
 
     {
-        var offset = try sink.PutImageStart(.{
+        const pad_len = try sink.PutImageStart(image_format.scanline_pad, .{
             .format = .z_pixmap,
             .drawable = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
@@ -665,18 +652,15 @@ fn render(
             .height = test_image.height,
             .x = 100,
             .y = 20,
-            .left_pad = 0,
             .depth = image_format.depth,
-        }, test_image_data_len);
+        });
         try writeTestImage(
             image_format,
             test_image.width,
             test_image.height,
-            test_image_scanline_len,
             sink.writer,
         );
-        offset += @as(usize, test_image.height) * @as(usize, test_image_scanline_len);
-        try sink.PutImageFinish(test_image_data_len, offset);
+        try sink.PutImageFinish(pad_len);
     }
 
     // test a pixmap
@@ -687,7 +671,7 @@ fn render(
     });
 
     {
-        var offset = try sink.PutImageStart(.{
+        const pad_len = try sink.PutImageStart(image_format.scanline_pad, .{
             .format = .z_pixmap,
             .drawable = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
@@ -695,18 +679,15 @@ fn render(
             .height = test_image.height,
             .x = 0,
             .y = 0,
-            .left_pad = 0,
             .depth = image_format.depth,
-        }, test_image_data_len);
+        });
         try writeTestImage(
             image_format,
             test_image.width,
             test_image.height,
-            test_image_scanline_len,
             sink.writer,
         );
-        offset += @as(usize, test_image.height) * @as(usize, test_image_scanline_len);
-        try sink.PutImageFinish(test_image_data_len, offset);
+        try sink.PutImageFinish(pad_len);
     }
 
     try sink.CopyArea(.{
@@ -753,37 +734,38 @@ fn writeTestImage(
     image_format: ImageFormat,
     width: u16,
     height: u16,
-    stride: usize,
     writer: *x11.Writer,
 ) error{WriteFailed}!void {
-    if ((image_format.bits_per_pixel % 8) != 0) @panic("todo");
-    const row_pixel_size = @divExact(image_format.bits_per_pixel, 8) * width;
-    std.debug.assert(stride >= row_pixel_size);
-    const row_padding = stride - row_pixel_size;
-
-    const pixel_padding_size = (image_format.bits_per_pixel - image_format.depth) / 8;
+    const pixel_size: x11.PixelSize = .fromDepth(image_format.depth);
+    const pixel_padding_size = (pixel_size.bitCount(u8) - image_format.depth.byte()) / 8;
+    const scanline = x11.calcScanline(
+        image_format.scanline_pad,
+        image_format.depth.byte(),
+        width,
+        .z_pixmap,
+    );
+    const row_padding = scanline - (pixel_size.byteCount(u18) * @as(u18, width));
 
     var row: usize = 0;
     while (row < height) : (row += 1) {
         const color: u24 = getTestImagePixel(row);
-
         var col: usize = 0;
         while (col < width) : (col += 1) {
             switch (image_format.depth) {
                 // currently assumes bpp is 16
-                16 => try writer.writeInt(
+                .@"16" => try writer.writeInt(
                     u16,
                     x11.rgb16From24(color),
                     image_format.endian,
                 ),
                 // currently assumes bpp is 24
-                24 => try writer.writeInt(
+                .@"24" => try writer.writeInt(
                     u24,
                     color,
                     image_format.endian,
                 ),
                 // currently assumes bpp is 32
-                32 => try writer.writeInt(
+                .@"32" => try writer.writeInt(
                     u32,
                     x11.rgb32From24(color),
                     image_format.endian,
@@ -803,7 +785,7 @@ fn checkTestImageIsDrawnToWindow(
     reply: x11.servermsg.Reply,
     image_format: ImageFormat,
 ) !void {
-    std.debug.assert(reply.flexible == image_format.depth);
+    std.debug.assert(reply.flexible == image_format.depth.byte());
 
     const image = try source.read3Header(.GetImage);
     _ = image;
