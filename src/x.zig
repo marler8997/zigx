@@ -3483,6 +3483,17 @@ pub const put_image = struct {
         y: i16,
         depth: Depth,
     };
+    /// Calculate the max height for PutImage based on the given scanline.
+    /// Scanline is the return value of calcScanline which is guaranteed to
+    /// be 4-byte aligned.
+    pub fn calcMaxHeight(scanline: u18) u16 {
+        std.debug.assert((scanline & 3) == 0);
+        if (scanline == 0) return std.math.maxInt(u16);
+        const max_request_bytes: u18 = std.math.maxInt(u16) * 4;
+        const max_data_bytes: u18 = max_request_bytes - put_image.non_list_len;
+        // with scanline being >= 4, this division should always fit in a u16
+        return @intCast(@divTrunc(max_data_bytes, scanline));
+    }
 };
 
 pub const TextItem8 = union(enum) {

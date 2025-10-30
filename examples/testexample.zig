@@ -649,6 +649,8 @@ fn render(
         test_image.width,
         .z_pixmap,
     );
+    // our test image is small enough that this should always be true
+    std.debug.assert(test_image.height <= x11.put_image.calcMaxHeight(test_image_scanline));
     const test_image_size: u18 = test_image.height * test_image_scanline;
 
     {
