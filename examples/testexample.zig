@@ -643,8 +643,16 @@ fn render(
     );
     try sink.writer.flush();
 
+    const test_image_scanline: u18 = x11.calcScanline(
+        image_format.scanline_pad,
+        image_format.depth.byte(),
+        test_image.width,
+        .z_pixmap,
+    );
+    const test_image_size: u18 = test_image.height * test_image_scanline;
+
     {
-        const pad_len = try sink.PutImageStart(image_format.scanline_pad, .{
+        const pad_len = try sink.PutImageStart(test_image_size, .{
             .format = .z_pixmap,
             .drawable = ids.window().drawable(),
             .gc_id = ids.fg_gc(),
@@ -671,7 +679,7 @@ fn render(
     });
 
     {
-        const pad_len = try sink.PutImageStart(image_format.scanline_pad, .{
+        const pad_len = try sink.PutImageStart(test_image_size, .{
             .format = .z_pixmap,
             .drawable = ids.window().drawable(),
             .gc_id = ids.fg_gc(),

@@ -2227,20 +2227,12 @@ pub const RequestSink = struct {
 
     pub fn PutImageStart(
         sink: *RequestSink,
-        scanline_pad: ScanlinePad,
+        /// image_size is calculated by height * calcScanline(...)
+        image_size: u18,
         args: put_image.Args,
     ) error{WriteFailed}!u2 {
-        const data_len: u18 = @as(u18, args.height) * calcScanline(
-            scanline_pad,
-            args.depth.byte(),
-            args.width,
-            switch (args.format) {
-                .bitmap, .xy_pixmap => |left_pad| .{ .bit_or_xy = left_pad },
-                .z_pixmap => .z_pixmap,
-            },
-        );
-        const pad_len: u2 = pad4Len(@truncate(data_len));
-        const msg_len: u18 = put_image.non_list_len + data_len + @as(u18, pad_len);
+        const pad_len: u2 = pad4Len(@truncate(image_size));
+        const msg_len: u18 = put_image.non_list_len + image_size + @as(u18, pad_len);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
             @intFromEnum(Opcode.put_image),
