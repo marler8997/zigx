@@ -112,6 +112,7 @@ pub fn main() !void {
     var point_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     var points: x11.ArrayListManaged(XY(i16)) = .init(point_arena.allocator());
     var mouse_state: MouseState = .{};
+    var mode: Mode = .line;
 
     while (true) {
         try sink.writer.flush();
@@ -132,22 +133,54 @@ pub fn main() !void {
         var do_render = false;
         switch (msg_kind) {
             .ButtonPress => {
-                std.log.info("ButtonPress", .{});
                 const msg = try source.read2(.ButtonPress);
-                do_render = onMouseEvent(&points, &mouse_state, msg.asCommon());
-                if (msg.button == 3) {
-                    points.clearRetainingCapacity();
-                    do_render = true;
+                std.log.info("ButtonPress {}", .{msg.button});
+                const button1_down = (msg.button == 1) or msg.state.button1;
+                do_render = onMouseEvent(
+                    &points,
+                    &mouse_state,
+                    .{ .x = msg.event_x, .y = msg.event_y },
+                    button1_down,
+                );
+                switch (msg.button) {
+                    1 => {},
+                    3 => {
+                        // usually right click
+                        points.clearRetainingCapacity();
+                        do_render = true;
+                    },
+                    2, 5 => {
+                        // usually middle button and scroll
+                        mode = mode.next();
+                        do_render = true;
+                    },
+                    4 => {
+                        // usually the other scroll direction
+                        mode = mode.prev();
+                        do_render = true;
+                    },
+                    else => {},
                 }
             },
             .ButtonRelease => {
-                std.log.info("ButtonRelease", .{});
-                try source.discardRemaining();
-                mouse_state.buttonRelease();
+                const msg = try source.read2(.ButtonRelease);
+                std.log.info("ButtonRelease {}", .{msg.button});
+                const button1_down = (msg.button != 1) and msg.state.button1;
+                do_render = onMouseEvent(
+                    &points,
+                    &mouse_state,
+                    .{ .x = msg.event_x, .y = msg.event_y },
+                    button1_down,
+                );
             },
             .MotionNotify => {
                 const msg = try source.read2(.MotionNotify);
-                do_render = onMouseEvent(&points, &mouse_state, msg.asCommon());
+                do_render = onMouseEvent(
+                    &points,
+                    &mouse_state,
+                    .{ .x = msg.event_x, .y = msg.event_y },
+                    msg.state.button1,
+                );
             },
             .Expose => {
                 const expose = try source.read2(.Expose);
@@ -180,22 +213,37 @@ pub fn main() !void {
                 dbe,
                 window_size,
                 points.items,
+                mode,
             );
         }
     }
 }
 
+const Mode = enum {
+    line,
+    fill_complex,
+    fill_non_convex,
+    fill_convex,
+
+    fn add(mode: Mode, value: u32) Mode {
+        return @enumFromInt((@as(u32, @intFromEnum(mode)) + value) % std.meta.fields(Mode).len);
+    }
+    pub fn next(mode: Mode) Mode {
+        return mode.add(1);
+    }
+    pub fn prev(mode: Mode) Mode {
+        return mode.add(std.meta.fields(Mode).len - 1);
+    }
+};
+
 fn onMouseEvent(
     points: *x11.ArrayListManaged(XY(i16)),
     mouse_state: *MouseState,
-    event: x11.CommonEvent,
+    pos: XY(i16),
+    button1_down: bool,
 ) bool {
     const len_before = points.items.len;
-    mouse_state.update(
-        points,
-        event.state.button1,
-        .{ .x = event.event_x, .y = event.event_y },
-    );
+    mouse_state.update(points, button1_down, pos);
     return len_before != points.items.len;
 }
 
@@ -221,10 +269,10 @@ const MouseState = struct {
     pub fn update(
         state: *MouseState,
         points: *x11.ArrayListManaged(XY(i16)),
-        button_down: bool,
+        button1_down: bool,
         new_pos: XY(i16),
     ) void {
-        if (!button_down) {
+        if (!button1_down) {
             state.last_down_position = null;
             return;
         }
@@ -262,6 +310,7 @@ fn render(
     dbe: Dbe,
     window_size: XY(u16),
     lines: []const XY(i16),
+    mode: Mode,
 ) !void {
     if (null == dbe.backBuffer()) {
         try sink.ClearArea(
@@ -276,7 +325,6 @@ fn render(
         );
     }
     const drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
-    try renderLines(sink, drawable, gc, lines);
 
     const text = "Draw on me!";
     const text_width = font_dims.width * text.len;
@@ -289,6 +337,12 @@ fn render(
         },
         .initComptime(text),
     );
+    try renderLines(sink, drawable, gc, lines, mode);
+    try sink.PolyText8(drawable, gc, .{ .x = 5, .y = 5 + font_dims.height }, &[_]x11.TextItem8{
+        .{ .text_element = .{ .delta = 0, .string = switch (mode) {
+            inline else => |name| .initComptime(@tagName(name)),
+        } } },
+    });
     switch (dbe) {
         .unsupported => {},
         .enabled => |enabled| try x11.dbe.Swap(sink, enabled.opcode_base, .initAssume(&.{
@@ -302,6 +356,7 @@ fn renderLines(
     drawable: x11.Drawable,
     gc: x11.GraphicsContext,
     lines: []const XY(i16),
+    mode: Mode,
 ) error{WriteFailed}!void {
     if (lines.len == 0) return;
     var i: usize = 0;
@@ -311,7 +366,12 @@ fn renderLines(
         std.debug.assert(!lines[i].eql(lift_pen));
         std.debug.assert(!lines[i + 1].eql(lift_pen));
         var point_sink: x11.PolyPointSink = .{
-            .kind = .Line,
+            .kind = switch (mode) {
+                .line => .line,
+                .fill_complex => .{ .fill = .complex },
+                .fill_non_convex => .{ .fill = .non_convex },
+                .fill_convex => .{ .fill = .convex },
+            },
             .coordinate_mode = .origin,
             .drawable = drawable,
             .gc = gc,

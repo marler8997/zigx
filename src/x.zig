@@ -2837,6 +2837,7 @@ pub const Opcode = enum(u8) {
     copy_area = 62,
     poly_line = 65,
     poly_rectangle = 67,
+    fill_poly = 69,
     poly_fill_rectangle = 70,
     put_image = 72,
     get_image = 73,
@@ -5691,11 +5692,20 @@ pub const KeyboardMappingIterator = struct {
 };
 
 pub const CoordinateMode = enum(u8) { origin = 0, previous = 1 };
+pub const FillShape = enum(u8) { complex = 0, non_convex = 1, convex = 2 };
+
 const poly_line_header_size: u18 =
     2 // opcode and coordinate-mode
     + 2 // request length
     + 4 // drawable id
     + 4 // gc id
+;
+const fill_poly_header_size: u18 =
+    2 // opcode
+    + 2 // request length
+    + 4 // drawable id
+    + 4 // gc id
+    + 4 // coorindate-mode and shape
 ;
 const point_size = 4; // points are 4 bytes (two i16's)
 
@@ -5707,12 +5717,7 @@ const point_size = 4; // points are 4 bytes (two i16's)
 /// Caller must guarantee that the sink writer buffer is at least min_buffer.
 /// (big enough to hold the header and at least two points).
 pub const PolyPointSink = struct {
-    // buffer must fit at least the header and two points
-    pub const min_buffer = poly_line_header_size + 2 * point_size;
-    kind: enum {
-        Line,
-        // Segment,
-    },
+    kind: Kind,
     coordinate_mode: CoordinateMode,
     drawable: Drawable,
     gc: GraphicsContext,
@@ -5722,6 +5727,19 @@ pub const PolyPointSink = struct {
             start_offset: usize,
         },
     } = .initial,
+
+    pub const Kind = union(enum) {
+        line, // PolyLine
+        fill: FillShape, // FillPoly
+    };
+
+    // buffer must fit at least the header and two points
+    pub fn minBuffer(kind: Kind) usize {
+        return switch (kind) {
+            .line => poly_line_header_size + 2 * point_size,
+            .fill => fill_poly_header_size + 2 * point_size,
+        };
+    }
 
     // updates the write buffer with the actual length of the message
     pub fn endSetMsgSize(point_sink: *PolyPointSink, writer: *Writer) void {
@@ -5739,7 +5757,7 @@ pub const PolyPointSink = struct {
         std.mem.writeInt(u16, writer.buffer[state.start_offset + 2 ..][0..2], @intCast(msg_len >> 2), native_endian);
     }
     pub fn write(point_sink: *PolyPointSink, msg_sink: *RequestSink, p: XY(i16)) error{WriteFailed}!void {
-        std.debug.assert(msg_sink.writer.buffer.len >= min_buffer);
+        std.debug.assert(msg_sink.writer.buffer.len >= minBuffer(point_sink.kind));
         var write_header = false;
         var maybe_previous_point: ?XY(i16) = null;
         switch (point_sink.state) {
@@ -5763,18 +5781,33 @@ pub const PolyPointSink = struct {
         if (write_header) {
             std.debug.assert(point_sink.state == .initial);
             const available = msg_sink.writer.buffer.len - msg_sink.writer.end;
-            if (available < min_buffer) {
+            if (available < minBuffer(point_sink.kind)) {
                 try msg_sink.writer.flush();
             }
             const start_offset = msg_sink.writer.end;
             writeAllNoFlush(msg_sink.writer, &[_]u8{
-                @intFromEnum(Opcode.poly_line),
-                @intFromEnum(point_sink.coordinate_mode),
+                @intFromEnum(switch (point_sink.kind) {
+                    .line => Opcode.poly_line,
+                    .fill => Opcode.fill_poly,
+                }),
+                switch (point_sink.kind) {
+                    .line => @intFromEnum(point_sink.coordinate_mode),
+                    .fill => 0,
+                },
             });
             // the message length (filled in at the end)
             writeIntNoFlush(msg_sink.writer, u16, undefined);
             writeIntNoFlush(msg_sink.writer, u32, @intFromEnum(point_sink.drawable));
             writeIntNoFlush(msg_sink.writer, u32, @intFromEnum(point_sink.gc));
+            switch (point_sink.kind) {
+                .line => {},
+                .fill => |fill_shape| writeAllNoFlush(msg_sink.writer, &[_]u8{
+                    @intFromEnum(fill_shape),
+                    @intFromEnum(point_sink.coordinate_mode),
+                    0,
+                    0,
+                }),
+            }
             point_sink.state = .{ .header_written = .{
                 .start_offset = start_offset,
             } };
