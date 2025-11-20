@@ -121,7 +121,12 @@ pub fn readSetupDynamic(
     setup: *const x11.Setup,
     opt: struct {
         log_vendor: bool = true,
-        log_visuals: bool = false,
+        on_visual: ?*const fn (
+            screen_index: u8,
+            depth_index: u8,
+            visual_index: u16,
+            visual: *const x11.VisualType,
+        ) void = null,
     },
 ) (x11.ProtocolError || x11.Reader.Error)!?x11.ScreenHeader {
     try source.requireReplyAtLeast(setup.required());
@@ -177,9 +182,7 @@ pub fn readSetupDynamic(
             for (0..depth.visual_type_count) |visual_index| {
                 var visual: x11.VisualType = undefined;
                 try source.readReply(std.mem.asBytes(&visual));
-                if (opt.log_visuals) {
-                    x11.log.info("screen {} | depth {} | visual {} | {}\n", .{ screen_index, depth_index, visual_index, visual });
-                }
+                if (opt.on_visual) |f| f(@intCast(screen_index), @intCast(depth_index), @intCast(visual_index), &visual);
             }
         }
     }
