@@ -123,7 +123,7 @@ pub fn readSetupDynamic(
         log_vendor: bool = true,
         on_visual: ?*const fn (
             screen_index: u8,
-            depth_index: u8,
+            depth: u8,
             visual_index: u16,
             visual: *const x11.VisualType,
         ) void = null,
@@ -182,7 +182,7 @@ pub fn readSetupDynamic(
             for (0..depth.visual_type_count) |visual_index| {
                 var visual: x11.VisualType = undefined;
                 try source.readReply(std.mem.asBytes(&visual));
-                if (opt.on_visual) |f| f(@intCast(screen_index), @intCast(depth_index), @intCast(visual_index), &visual);
+                if (opt.on_visual) |f| f(@intCast(screen_index), depth.depth, @intCast(visual_index), &visual);
             }
         }
     }
