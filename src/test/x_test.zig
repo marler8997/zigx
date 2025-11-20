@@ -85,7 +85,7 @@ pub const test_data = struct {
             1, 4 => {
                 std.debug.assert(visual_index <= 4);
                 try testing.expectEqual(x11.Visual.fromInt(0), visual.id);
-                try testing.expectEqual(x11.VisualType.Class.static_gray, visual.class);
+                try testing.expectEqual(x11.NonExhaustive(x11.VisualType.Class).static_gray, visual.class);
                 try testing.expectEqual(@as(u8, 0), visual.bits_per_rgb_value);
                 try testing.expectEqual(@as(u16, 0), visual.colormap_entries);
                 try testing.expectEqual(@as(u32, 0), visual.red_mask);
@@ -96,7 +96,7 @@ pub const test_data = struct {
             24 => switch (visual_index) {
                 0 => {
                     try testing.expectEqual(x11.Visual.fromInt(33), visual.id);
-                    try testing.expectEqual(x11.VisualType.Class.true_color, visual.class);
+                    try testing.expectEqual(x11.NonExhaustive(x11.VisualType.Class).true_color, visual.class);
                     try testing.expectEqual(@as(u8, 8), visual.bits_per_rgb_value);
                     try testing.expectEqual(@as(u16, 256), visual.colormap_entries);
                     try testing.expectEqual(@as(u32, 0xff0000), visual.red_mask);
@@ -109,14 +109,14 @@ pub const test_data = struct {
                 },
                 2 => {
                     try testing.expectEqual(x11.Visual.fromInt(1946), visual.id);
-                    try testing.expectEqual(x11.VisualType.Class.direct_color, visual.class);
+                    try testing.expectEqual(x11.NonExhaustive(x11.VisualType.Class).direct_color, visual.class);
                 },
                 else => unreachable,
             },
             32 => switch (visual_index) {
                 0 => {
                     try testing.expectEqual(x11.Visual.fromInt(124), visual.id);
-                    try testing.expectEqual(x11.VisualType.Class.true_color, visual.class);
+                    try testing.expectEqual(x11.NonExhaustive(x11.VisualType.Class).true_color, visual.class);
                     try testing.expectEqual(@as(u8, 8), visual.bits_per_rgb_value);
                     try testing.expectEqual(@as(u16, 256), visual.colormap_entries);
                     try testing.expectEqual(@as(u32, 0xff0000), visual.red_mask);
