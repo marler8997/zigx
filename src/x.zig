@@ -2722,14 +2722,17 @@ pub const Visual = enum(u32) {
     copy_from_parent = 0,
     _,
 
-    pub fn format(v: Visual, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .copy_from_parent) {
-            try writer.writeAll("Visual(<copy-from-parent>)");
-        } else {
-            try writer.print("Visual({})", .{@intFromEnum(v)});
-        }
+    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
+    fn formatNew(visual: Visual, writer: *std.Io.Writer) error{WriteFailed}!void {
+        try fmtEnum(visual).format(writer);
+    }
+    fn formatLegacy(
+        visual: Visual,
+        comptime fmt: []const u8,
+        opt: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        try fmtEnum(visual).format(fmt, opt, writer);
     }
 };
 
