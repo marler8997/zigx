@@ -2410,7 +2410,27 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    // create_colormap = 78,
+    pub fn CreateColormap(
+        sink: *RequestSink,
+        alloc: enum(u8) { none = 0, all = 1 },
+        id: Colormap,
+        window_id: Window,
+        visual: Visual,
+    ) error{WriteFailed}!void {
+        const msg_len = 16;
+        var offset: usize = 0;
+        try writeAll(sink.writer, &offset, &[_]u8{
+            @intFromEnum(Opcode.create_colormap),
+            @intFromEnum(alloc),
+        });
+        try writeInt(sink.writer, &offset, u16, msg_len >> 2);
+        try writeInt(sink.writer, &offset, u32, @intFromEnum(id));
+        try writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
+        try writeInt(sink.writer, &offset, u32, @intFromEnum(visual));
+        std.debug.assert(msg_len == offset);
+        sink.sequence +%= 1;
+    }
+
     // free_colormap = 79,
     pub fn QueryExtension(sink: *RequestSink, name: Slice(u16, [*]const u8)) error{WriteFailed}!void {
         const non_list_len = 8;
@@ -2555,6 +2575,10 @@ pub const Resource = enum(u32) {
         return @enumFromInt(@intFromEnum(r));
     }
 
+    pub fn colormap(r: Resource) Colormap {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
     pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
         formatLegacy
     else
@@ -2695,21 +2719,21 @@ pub const Fontable = enum(u32) {
     }
 };
 
-pub const ColorMap = enum(u32) {
+pub const Colormap = enum(u32) {
     copy_from_parent = 0,
     _,
 
-    pub fn fromInt(i: u32) ColorMap {
+    pub fn fromInt(i: u32) Colormap {
         return @enumFromInt(i);
     }
 
-    pub fn format(v: ColorMap, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(v: Colormap, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = opt;
         if (v == .copy_from_parent) {
-            try writer.writeAll("ColorMap(<copy from parent>)");
+            try writer.writeAll("Colormap(<copy from parent>)");
         } else {
-            try writer.print("ColorMap({})", .{@intFromEnum(v)});
+            try writer.print("Colormap({})", .{@intFromEnum(v)});
         }
     }
 };
@@ -3011,7 +3035,7 @@ pub const window = struct {
         save_under: bool = false,
         event_mask: EventMask = .{},
         dont_propagate: u32 = 0,
-        colormap: ColorMap = .copy_from_parent,
+        colormap: Colormap = .copy_from_parent,
         cursor: Cursor = .none,
     };
 };
@@ -3306,7 +3330,7 @@ const GcVariant = union(enum) {
 pub const create_colormap = struct {
     pub const len = 16;
     pub const Args = struct {
-        id: ColorMap,
+        id: Colormap,
         window_id: Window,
         visual_id: Visual,
         alloc: enum(u8) { none, all },
@@ -3323,7 +3347,7 @@ pub const create_colormap = struct {
 
 pub const free_colormap = struct {
     pub const len = 8;
-    pub fn serialize(buf: [*]u8, id: ColorMap) void {
+    pub fn serialize(buf: [*]u8, id: Colormap) void {
         buf[0] = @intFromEnum(Opcode.free_colormap);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
@@ -3928,7 +3952,7 @@ comptime {
 }
 pub const ScreenHeader = extern struct {
     root: Window,
-    colormap: ColorMap,
+    colormap: Colormap,
     white_pixel: u32,
     black_pixel: u32,
     input_masks: u32,
@@ -5292,7 +5316,7 @@ pub const servermsg = struct {
         unused: u8,
         sequence: u16,
         window: Window,
-        colormap: ColorMap,
+        colormap: Colormap,
         new: NonExhaustive(enum(u8) {
             no = 0,
             yes = 1,

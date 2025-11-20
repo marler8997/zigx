@@ -12,6 +12,7 @@ const examples = [_][]const u8{
     "keys",
     "input",
     "draw",
+    "transparent",
     "testexample",
 };
 

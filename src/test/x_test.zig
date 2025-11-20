@@ -230,7 +230,7 @@ test "parse setup reply" {
         var screen: x11.ScreenHeader = undefined;
         try source.readReply(std.mem.asBytes(&screen));
         try testing.expectEqual(x11.Window.fromInt(1971), screen.root);
-        try testing.expectEqual(x11.ColorMap.fromInt(32), screen.colormap);
+        try testing.expectEqual(x11.Colormap.fromInt(32), screen.colormap);
         try testing.expectEqual(@as(u32, 0xffffff), screen.white_pixel);
         try testing.expectEqual(@as(u32, 0x000000), screen.black_pixel);
         try testing.expectEqual(@as(u32, 16416831), screen.input_masks);
@@ -260,7 +260,7 @@ test "parse setup reply" {
         var screen: x11.ScreenHeader = undefined;
         try source.readReply(std.mem.asBytes(&screen));
         try testing.expectEqual(x11.Window.fromInt(1972), screen.root);
-        try testing.expectEqual(x11.ColorMap.fromInt(32), screen.colormap);
+        try testing.expectEqual(x11.Colormap.fromInt(32), screen.colormap);
         try testing.expectEqual(@as(u32, 0xffffff), screen.white_pixel);
         try testing.expectEqual(@as(u32, 0x000000), screen.black_pixel);
         try testing.expectEqual(@as(u32, 16416831), screen.input_masks);
