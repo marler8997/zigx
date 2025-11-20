@@ -3979,7 +3979,7 @@ pub const VisualType = extern struct {
     };
 
     id: Visual,
-    class: Class,
+    class: NonExhaustive(Class),
     bits_per_rgb_value: u8,
     colormap_entries: u16,
     red_mask: u32,
