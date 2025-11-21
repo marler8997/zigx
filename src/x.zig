@@ -44,7 +44,7 @@ pub const shape = @import("x/shape.zig");
 pub const tst = @import("x/tst.zig");
 pub const composite = @import("x/composite.zig");
 pub const randr = @compileError("todo");
-pub const fixes = @compileError("todo");
+pub const fixes = @import("x/fixes.zig");
 pub const damage = @compileError("todo");
 pub const shm = @compileError("todo");
 pub const sync = @compileError("todo");
@@ -2576,6 +2576,10 @@ pub const Resource = enum(u32) {
     }
 
     pub fn colormap(r: Resource) Colormap {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
+    pub fn fixesRegion(r: Resource) fixes.Region {
         return @enumFromInt(@intFromEnum(r));
     }
 
@@ -5555,6 +5559,14 @@ pub const stage3 = struct {
         overlay_window_id: u32,
         unused_pad: [20]u8,
     };
+    comptime {
+        std.debug.assert(@sizeOf(fixes_QueryVersion) == 24);
+    }
+    pub const fixes_QueryVersion = extern struct {
+        major: u32,
+        minor: u32,
+        unused: [16]u8,
+    };
 };
 
 pub const Read3Header = enum {
@@ -5581,6 +5593,7 @@ const Read3Full = enum {
     render_QueryVersion,
     shape_QueryVersion,
     composite_QueryVersion,
+    fixes_QueryVersion,
     pub fn Type(self: Read3Full) type {
         return switch (self) {
             inline else => |tag| @field(stage3, @tagName(tag)),

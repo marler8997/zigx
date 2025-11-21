@@ -19,6 +19,9 @@ const Ids = struct {
     pub fn colormap(self: Ids) x11.Colormap {
         return self.base.add(3).colormap();
     }
+    pub fn region(self: Ids) x11.fixes.Region {
+        return self.base.add(4).fixesRegion();
+    }
 };
 
 pub fn main() !void {
@@ -57,6 +60,17 @@ pub fn main() !void {
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .initAfterSetup(socket_reader.interface());
 
+    const fixes: Fixes = blk: {
+        const ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.fixes.name) orelse break :blk .unsupported;
+        // need at leaset 2.0 for regions
+        try x11.fixes.request.QueryVersion(&sink, ext.opcode_base, 2, 0);
+        try sink.writer.flush();
+        const version, _ = try source.readSynchronousReplyFull(sink.sequence, .fixes_QueryVersion);
+        std.log.info("XFIXES version {}.{}", .{ version.major, version.minor });
+        if (version.major < 2) break :blk .unsupported;
+        break :blk .{ .enabled = .{ .opcode_base = ext.opcode_base } };
+    };
+
     if (global.transparent_visual == .copy_from_parent) {
         std.log.info("TransparentVisual: none", .{});
     } else {
@@ -69,6 +83,8 @@ pub fn main() !void {
         root_window,
         global.transparent_visual,
     );
+
+    const make_overlay = false;
 
     try sink.CreateWindow(
         .{
@@ -88,6 +104,8 @@ pub fn main() !void {
             .border_pixel = 0, // transparent border
             .colormap = ids.colormap(),
             .event_mask = .{ .Exposure = 1 },
+            // circumvents the window manager, no title bar, allows input passthrough
+            .override_redirect = make_overlay,
         },
     );
 
@@ -105,6 +123,22 @@ pub fn main() !void {
             .font_ascent = extents.font_ascent,
         };
     };
+
+    switch (fixes) {
+        .unsupported => {},
+        .enabled => |enabled| {
+            try x11.fixes.request.CreateRegion(&sink, enabled.opcode_base, ids.region(), &.{});
+            try x11.fixes.request.SetWindowShapeRegion(
+                &sink,
+                enabled.opcode_base,
+                ids.window(),
+                .input, // shape kind for input
+                0, // x offset
+                0, // y offset
+                ids.region(),
+            );
+        },
+    }
 
     try sink.MapWindow(ids.window());
 
@@ -133,6 +167,13 @@ pub fn main() !void {
         }
     }
 }
+
+const Fixes = union(enum) {
+    unsupported,
+    enabled: struct {
+        opcode_base: u8,
+    },
+};
 
 fn onVisual(
     screen_index: u8,
