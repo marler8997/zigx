@@ -12,6 +12,7 @@ const Key = enum {
     g,
     c,
     l,
+    p,
 };
 
 const bg_color = 0x231a20;
@@ -31,6 +32,9 @@ const Ids = struct {
     }
     pub fn childWindow(self: Ids) x11.Window {
         return self.base.add(3).window();
+    }
+    pub fn region(self: Ids) x11.fixes.Region {
+        return self.base.add(4).fixesRegion();
     }
 };
 
@@ -94,6 +98,7 @@ pub fn main() !u8 {
                     .latin_c,
                     => .c,
                     .latin_l => .l,
+                    .latin_p => .p,
                     else => null,
                 })) |key| {
                     if (keycode_map[keycode]) |existing| {
@@ -169,6 +174,11 @@ pub fn main() !u8 {
         .sequence = sink.sequence,
     } };
 
+    try sink.QueryExtension(x11.fixes.name);
+    state.xfixes = .{ .sent_extension_query = .{
+        .sequence = sink.sequence,
+    } };
+
     while (true) {
         try sink.writer.flush();
         const msg_kind = source.readKind() catch |err| return switch (err) {
@@ -198,6 +208,7 @@ pub fn main() !u8 {
                     ids.bg(),
                     ids.fg(),
                     font_dims,
+                    ids,
                 );
                 if (!handled) {
                     std.log.info("unexpected X11 reply: {}", .{reply});
@@ -230,6 +241,9 @@ pub fn main() !u8 {
                     },
                     .l => {
                         try listenToRawEvents(&sink, &state, screen.window);
+                    },
+                    .p => {
+                        try togglePassthrough(&sink, &state, ids.window(), ids);
                     },
                     .escape => {
                         std.log.info("ESC pressed, exiting loop...", .{});
@@ -299,6 +313,7 @@ fn handleReply(
     bg_gc_id: x11.GraphicsContext,
     fg_gc_id: x11.GraphicsContext,
     font_dims: FontDims,
+    ids: Ids,
 ) !bool {
     const remaining_size = reply.remainingSize();
     switch (state.grab) {
@@ -367,6 +382,49 @@ fn handleReply(
                 try listenToRawEvents(sink, state, root_window_id);
             }
 
+            return true; // handled
+        },
+    }
+
+    switch (state.xfixes) {
+        .initial, .extension_missing, .enabled => {},
+        .sent_extension_query => |query| if (reply.sequence == query.sequence) {
+            if (remaining_size != @sizeOf(x11.stage3.QueryExtension)) std.debug.panic(
+                "expected size {} but got {}",
+                .{ @sizeOf(x11.stage3.QueryExtension), remaining_size },
+            );
+            const maybe_ext: ?x11.Extension = try .init(try source.read3Full(.QueryExtension));
+            std.log.info("extension '{s}': {?}", .{ x11.fixes.name.nativeSlice(), maybe_ext });
+            if (maybe_ext) |ext| {
+                // Query version - we need at least version 2.0 for regions
+                try x11.fixes.request.QueryVersion(sink, ext.opcode_base, 5, 0);
+                state.xfixes = .{ .get_version = .{
+                    .sequence = sink.sequence,
+                    .extension = ext,
+                } };
+            } else {
+                state.xfixes = .extension_missing;
+            }
+            return true; // handled
+        },
+        .get_version => |info| if (reply.sequence == info.sequence) {
+            if (remaining_size != @sizeOf(x11.stage3.fixes_QueryVersion)) std.debug.panic(
+                "expected size {} but got {}",
+                .{ @sizeOf(x11.stage3.fixes_QueryVersion), remaining_size },
+            );
+            const version = try source.read3Full(.fixes_QueryVersion);
+            std.log.info("XFixes version: {}.{}", .{ version.major, version.minor });
+            if (version.major < 2) {
+                std.log.warn("XFixes version {}.{} too old, need at least 2.0 for regions", .{ version.major, version.minor });
+                state.xfixes = .extension_missing;
+            } else {
+                state.xfixes = .{ .enabled = info.extension };
+
+                // Resume any operations waiting for xfixes
+                if (state.passthrough == .extension_not_available_yet) {
+                    try togglePassthrough(sink, state, window_id, ids);
+                }
+            }
             return true; // handled
         },
     }
@@ -580,6 +638,59 @@ fn disableInputDevice(sink: *x11.RequestSink, state: *State) !void {
     }
 }
 
+fn togglePassthrough(sink: *x11.RequestSink, state: *State, window_id: x11.Window, ids: Ids) !void {
+    const extension_missing_fmt = "can't toggle passthrough, XFixes extension is missing";
+    switch (state.passthrough) {
+        .initial, .extension_not_available_yet, .disabled => {
+            if (state.xfixes == .extension_missing) {
+                std.log.info(extension_missing_fmt, .{});
+                state.passthrough = .extension_missing;
+                return;
+            } else if (state.xfixes != .enabled) {
+                std.log.info("can't toggle passthrough at this moment, waiting for the XFixes extension before continuing.", .{});
+                state.passthrough = .extension_not_available_yet;
+                return;
+            }
+
+            const opcode_base = state.xfixes.enabled.opcode_base;
+
+            // empty region (no rectangles)
+            try x11.fixes.request.CreateRegion(sink, opcode_base, ids.region(), &.{});
+            try x11.fixes.request.SetWindowShapeRegion(
+                sink,
+                opcode_base,
+                window_id,
+                .input, // shape kind for input
+                0, // x offset
+                0, // y offset
+                ids.region(),
+            );
+            state.passthrough = .enabled;
+        },
+        .extension_missing => std.log.info(extension_missing_fmt, .{}),
+        .enabled => {
+            // Disable passthrough by resetting the input shape to none (default rectangular)
+            const opcode_base = state.xfixes.enabled.opcode_base;
+
+            try x11.fixes.request.SetWindowShapeRegion(
+                sink,
+                opcode_base,
+                window_id,
+                .input,
+                0,
+                0,
+                .none, // none = reset to default rectangular shape
+            );
+
+            // Destroy the region we created
+            try x11.fixes.request.DestroyRegion(sink, opcode_base, ids.region());
+
+            std.log.info("passthrough disabled - normal input handling", .{});
+            state.passthrough = .disabled;
+        },
+    }
+}
+
 const FontDims = struct {
     width: u8,
     height: u8,
@@ -650,6 +761,27 @@ const State = struct {
         },
     } = .initial,
     window_created: bool = false,
+
+    xfixes: union(enum) {
+        initial: void,
+        sent_extension_query: struct {
+            sequence: u16,
+        },
+        extension_missing: void,
+        get_version: struct {
+            sequence: u16,
+            extension: x11.Extension,
+        },
+        enabled: x11.Extension,
+    } = .initial,
+
+    passthrough: union(enum) {
+        initial: void,
+        extension_not_available_yet: void,
+        extension_missing: void,
+        enabled: void, // passthrough is active, input goes through window
+        disabled: void, // passthrough is not active, normal input handling
+    } = .initial,
 
     fn toggleGrab(self: *State, sink: *x11.RequestSink, grab_window: x11.Window) !void {
         switch (self.grab) {
@@ -832,6 +964,26 @@ fn render(
                 .y = font_dims.font_ascent + (7 * font_dims.height),
             },
             "(L)isten to raw events{s}",
+            .{suffix},
+        );
+    }
+    {
+        const suffix: []const u8 = switch (state.passthrough) {
+            .initial => "",
+            .extension_not_available_yet => " (waiting for XFixes...)",
+            .extension_missing => " (XFixes is missing)",
+            .enabled => " (enabled - input passes through)",
+            .disabled => " (disabled)",
+        };
+        try renderString(
+            sink,
+            window_id.drawable(),
+            fg_gc_id,
+            .{
+                .x = font_dims.font_left,
+                .y = font_dims.font_ascent + (8 * font_dims.height),
+            },
+            "(P)assthrough{s}",
             .{suffix},
         );
     }
