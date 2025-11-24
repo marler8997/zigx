@@ -1,5 +1,5 @@
 const std = @import("std");
-const x11 = @import("x.zig");
+const x11 = @import("x11");
 
 const global = struct {
     pub var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
