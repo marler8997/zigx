@@ -4,7 +4,12 @@
     .fingerprint = 0x3220e772e6b06bc9,
     .zig_version = "0.15.2",
     .minimum_zig_version = "0.14.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .iobackport = .{
+            .url = "git+https://github.com/marler8997/zig-io-backport#16d6621a2b42874dc3a4822be48dbf7e3e7b50ff",
+            .hash = "iobackport-0.0.0-KeWQeDGeAwA_MbngHydEnyLQQuQ4V05Y-KQQSMEte7gw",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

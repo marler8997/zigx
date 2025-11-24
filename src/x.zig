@@ -68,7 +68,7 @@ pub const log = std.log.scoped(.x11);
 pub const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
 pub const zig_atleast_15_3 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 3 }) != .lt;
 
-const std15 = if (zig_atleast_15) std else @import("15/std.zig");
+const std15 = if (zig_atleast_15) std else @import("std15");
 const Stream15 = if (zig_atleast_15) std.net.Stream else std15.net.Stream15;
 const File15 = if (zig_atleast_15) std.fs.File else std15.fs.File15;
 
