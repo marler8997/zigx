@@ -247,7 +247,7 @@ pub fn main() !u8 {
     }
 }
 
-fn pollSocketReader(socket_reader: *x11.SocketReader, timeout_ms: i32) !enum { ready, timeout } {
+fn pollSocketReader(socket_reader: *x11.Stream15.Reader, timeout_ms: i32) !enum { ready, timeout } {
     if (socket_reader.interface().bufferedLen() > 0) return .ready;
     var poll_fds = [_]std.posix.pollfd{
         .{

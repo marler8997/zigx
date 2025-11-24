@@ -52,7 +52,7 @@ pub fn main() !void {
     try sink.QueryFont(font_id.fontable());
 
     var stdout_buffer: [1000]u8 = undefined;
-    var stdout_writer: x11.FileWriter = .init(x11.stdout(), &stdout_buffer);
+    var stdout_writer: x11.File15.Writer = .init(x11.stdoutFile(), &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     try sink.writer.flush();
