@@ -16,6 +16,7 @@ const examples = [_][]const u8{
     "draw",
     "transparent",
     "testexample",
+    "text",
 };
 
 pub fn build(b: *std.Build) void {
