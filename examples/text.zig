@@ -106,8 +106,16 @@ pub fn main() !void {
 
     try sink.MapWindow(ids.window());
 
-    var glyphs: Glyph.Set = try .init(std.heap.page_allocator);
-    defer glyphs.deinit(std.heap.page_allocator, &sink, ids) catch |err| @panic(@errorName(err));
+    var font: Font = try .init(
+        std.heap.page_allocator,
+        @embedFile("notosanssymbols2-regular.ttf"),
+        .{
+            .size = 80,
+            .color = 0xffffff,
+        },
+    );
+    defer font.deinit(std.heap.page_allocator, &sink, ids) catch |err| @panic(@errorName(err));
+    var glyph_arena: ArenaAllocator = .init(std.heap.page_allocator);
 
     while (true) {
         try sink.writer.flush();
@@ -152,10 +160,11 @@ pub fn main() !void {
         }
         if (do_render) {
             try render(
+                &glyph_arena,
                 &sink,
                 ids,
                 dbe,
-                &glyphs,
+                &font,
                 window_size,
             );
         }
@@ -163,10 +172,11 @@ pub fn main() !void {
 }
 
 fn render(
+    glyph_arena: *ArenaAllocator,
     sink: *x11.RequestSink,
     ids: Ids,
     dbe: Dbe,
-    glyphs: *Glyph.Set,
+    font: *Font,
     window_size: XY(u16),
 ) !void {
     const window = ids.window();
@@ -186,17 +196,32 @@ fn render(
     }
     const drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
 
-    const glyph = try glyphs.get(sink, ids, 'a');
+    const glyph_a = try font.get(glyph_arena.allocator(), sink, ids, 'a');
+    _ = glyph_arena.reset(.retain_capacity);
     try sink.CopyArea(.{
-        .src_drawable = glyph.pixmap.drawable(),
+        .src_drawable = glyph_a.pixmap.drawable(),
         .dst_drawable = drawable,
         .gc = gc,
         .src_x = 0,
         .src_y = 0,
         .dst_x = 0,
         .dst_y = 0,
-        .width = glyph.width,
-        .height = glyph.height,
+        .width = glyph_a.width,
+        .height = glyph_a.height,
+    });
+
+    const glyph_b = try font.get(glyph_arena.allocator(), sink, ids, 'b');
+    _ = glyph_arena.reset(.retain_capacity);
+    try sink.CopyArea(.{
+        .src_drawable = glyph_b.pixmap.drawable(),
+        .dst_drawable = drawable,
+        .gc = gc,
+        .src_x = 0,
+        .src_y = 0,
+        .dst_x = 100,
+        .dst_y = 0,
+        .width = glyph_b.width,
+        .height = glyph_b.height,
     });
 
     switch (dbe) {
@@ -207,81 +232,151 @@ fn render(
     }
 }
 
-const Glyph = struct {
-    pixmap: x11.Pixmap,
-    width: u16,
-    height: u16,
+pub const Font = struct {
+    ttf: TrueType,
+    cache: DynamicBitSetUnmanaged,
+    size: f32,
+    color: u32,
 
-    pub const Set = struct {
-        cached: std.bit_set.DynamicBitSetUnmanaged,
+    const Glyph = struct {
+        pixmap: x11.Pixmap,
+        width: u16,
+        height: u16,
+    };
 
-        pub fn init(gpa: Allocator) !Set {
+    pub const Options = struct {
+        size: f32,
+        color: u32,
+    };
+
+    pub fn init(gpa: Allocator, ttf_bytes: []const u8, options: Options) !Font {
+        var cache: DynamicBitSetUnmanaged = try .initEmpty(gpa, std.math.maxInt(u21));
+        errdefer cache.deinit(gpa);
+        return .{
+            .cache = cache,
+            .ttf = try .load(ttf_bytes),
+            .size = options.size,
+            .color = options.color,
+        };
+    }
+
+    pub fn deinit(self: *Font, gpa: Allocator, sink: *x11.RequestSink, ids: Ids) !void {
+        var iter = self.cache.iterator(.{});
+        while (iter.next()) |codepoint| {
+            try sink.FreePixmap(ids.glyphPixmap(@intCast(codepoint)));
+        }
+        self.cache.deinit(gpa);
+        self.* = undefined;
+    }
+
+    // Fast but exact unorm to float.
+    fn unormToFloat(u: u8) f32 {
+        const max: f32 = @floatFromInt(255);
+        const r: f32 = 1.0 / (3.0 * max);
+        return @as(f32, @floatFromInt(u)) * 3.0 * r;
+    }
+
+    // Exact float to unorm.
+    fn floatToUnorm(f: f32) u8 {
+        return @intFromFloat(f * 255 + 0.5);
+    }
+
+    pub fn get(
+        self: *Font,
+        gpa: Allocator,
+        sink: *x11.RequestSink,
+        ids: Ids,
+        codepoint: u21,
+    ) !Glyph {
+        // Get the glyph info
+        const glyph_index = self.ttf.codepointGlyphIndex(codepoint) orelse {
+            @panic("unimplemented");
+        };
+        const scale = self.ttf.scaleForPixelHeight(self.size);
+        const pixmap = ids.glyphPixmap(codepoint);
+
+        // Check if the glyph is already in the cache
+        if (self.cache.isSet(codepoint)) {
+            const box = self.ttf.glyphBitmapBox(glyph_index, scale, scale);
             return .{
-                .cached = try .initEmpty(gpa, std.math.maxInt(u21)),
+                .pixmap = pixmap,
+                .width = @intCast(box.x1 - box.x0),
+                .height = @intCast(box.y1 - box.y0),
             };
         }
 
-        pub fn deinit(self: *Set, gpa: Allocator, sink: *x11.RequestSink, ids: Ids) !void {
-            var iter = self.cached.iterator(.{});
-            while (iter.next()) |codepoint| {
-                try sink.FreePixmap(ids.glyphPixmap(@intCast(codepoint)));
-            }
-            self.cached.deinit(gpa);
-            self.* = undefined;
-        }
-
-        pub fn get(self: *Set, sink: *x11.RequestSink, ids: Ids, codepoint: u21) !Glyph {
-            // Check if the glyph is already in the cache
-            const w = 255;
-            const h = 255;
-            const glyph: Glyph = .{
-                .pixmap = ids.glyphPixmap(codepoint),
-                .width = w,
-                .height = h,
+        // If not, add it to the cache
+        {
+            // Rasterize the glyph
+            var r8: std.ArrayListUnmanaged(u8) = .empty;
+            const dims = self.ttf.glyphBitmap(
+                gpa,
+                &r8,
+                glyph_index,
+                scale,
+                scale,
+            ) catch |err| switch (err) {
+                error.GlyphNotFound => @panic("unimplemented"),
+                else => |e| return e,
             };
-            if (self.cached.isSet(codepoint)) {
-                return glyph;
-            }
+            defer r8.deinit(gpa);
 
-            // If not, add it to the cache
-            try sink.CreatePixmap(glyph.pixmap, ids.window().drawable(), .{
-                .depth = .@"24",
-                .width = glyph.width,
-                .height = glyph.height,
-            });
-
-            const gc = ids.glyphGc();
-            try sink.CreateGc(gc, glyph.pixmap.drawable(), .{});
-
-            var image: [w * h * 4]u8 = undefined;
-            for (0..glyph.height) |y| {
-                for (0..glyph.width) |x| {
-                    image[(y * glyph.width + x) * 4 ..][0..4].* = .{
-                        @intCast(x),
-                        @intCast(y),
-                        0,
+            // Transcode and color the rasterized glyph
+            const z_pixmap_24 = try gpa.alloc(
+                u8,
+                @as(usize, @intCast(dims.width)) * @as(usize, @intCast(dims.height)) * 4,
+            );
+            defer gpa.free(z_pixmap_24);
+            const color_unorm = std.mem.asBytes(&self.color);
+            const color_float: [3]f32 = .{
+                unormToFloat(color_unorm[0]),
+                unormToFloat(color_unorm[1]),
+                unormToFloat(color_unorm[2]),
+            };
+            for (0..dims.height) |y| {
+                for (0..dims.width) |x| {
+                    const a_unorm = r8.items[x + y * @as(usize, @intCast(dims.width))];
+                    const a_float = unormToFloat(a_unorm);
+                    z_pixmap_24[(y * dims.width + x) * 4 ..][0..4].* = .{
+                        floatToUnorm(color_float[0] * a_float),
+                        floatToUnorm(color_float[1] * a_float),
+                        floatToUnorm(color_float[2] * a_float),
                         255,
                     };
                 }
             }
+
+            // Create the pixmap
+            const gc = ids.glyphGc();
+            try sink.CreatePixmap(pixmap, ids.window().drawable(), .{
+                .depth = .@"24",
+                .width = dims.width,
+                .height = dims.height,
+            });
+            try sink.CreateGc(gc, pixmap.drawable(), .{});
             try sink.PutImage(.{
                 .format = .z_pixmap,
-                .drawable = glyph.pixmap.drawable(),
+                .drawable = pixmap.drawable(),
                 .gc_id = gc,
-                .width = glyph.width,
-                .height = glyph.height,
+                .width = dims.width,
+                .height = dims.height,
                 .x = 0,
                 .y = 0,
                 .depth = .@"24",
-            }, .init(&image, image.len));
-
+            }, .init(z_pixmap_24.ptr, @intCast(z_pixmap_24.len)));
             try sink.FreeGc(ids.glyphGc());
 
-            self.cached.set(codepoint);
+            // Add the glyph to the cache
+            self.cache.set(codepoint);
 
-            return glyph;
+            // Return the glyph
+            return .{
+                .pixmap = pixmap,
+                .width = dims.width,
+                .height = dims.height,
+            };
         }
-    };
+    }
 };
 
 const Dbe = union(enum) {
@@ -306,4 +401,8 @@ const std = @import("std");
 const x11 = @import("x11");
 const XY = x11.XY;
 const assert = std.debug.assert;
+const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const Allocator = std.mem.Allocator;
+const ArenaAllocator = std.heap.ArenaAllocator;
+const FixedBufferAllocator = std.heap.FixedBufferAllocator;
+const TrueType = @import("TrueType");

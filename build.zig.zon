@@ -10,6 +10,10 @@
             .hash = "iobackport-0.0.0-KeWQeDGeAwA_MbngHydEnyLQQuQ4V05Y-KQQSMEte7gw",
             .lazy = true,
         },
+        .TrueType = .{
+            .url = "git+https://codeberg.org/MasonRemaley/TrueType#9aceb6c12ff26f547a7cb3d496a1ae568c9b45e4",
+            .hash = "TrueType-0.0.0-Ne-mWMFwAQDtdfMV5mftB2cDILeevwnRjnZkUPsRHwo7",
+        },
     },
     .paths = .{
         "build.zig",
