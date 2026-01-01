@@ -11,8 +11,8 @@
             .lazy = true,
         },
         .TrueType = .{
-            .url = "git+https://codeberg.org/MasonRemaley/TrueType#9aceb6c12ff26f547a7cb3d496a1ae568c9b45e4",
-            .hash = "TrueType-0.0.0-Ne-mWMFwAQDtdfMV5mftB2cDILeevwnRjnZkUPsRHwo7",
+            .url = "git+https://codeberg.org/MasonRemaley/TrueType#0649a7be6c6aa9512276856ac740bf391c47122a",
+            .hash = "TrueType-0.0.0-Ne-mWONwAQAGC2Wlh2rTZH8H1mGRy-qriy_CXBsZf0Pf",
         },
     },
     .paths = .{

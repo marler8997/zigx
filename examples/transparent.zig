@@ -22,12 +22,6 @@ const Ids = struct {
     pub fn region(self: Ids) x11.fixes.Region {
         return self.base.add(4).fixesRegion();
     }
-    pub fn glyphGc(self: Ids) x11.GraphicsContext {
-        return self.base.add(5).graphicsContext();
-    }
-    pub fn glyphPixmap(self: Ids) x11.Pixmap {
-        return self.base.add(6).pixmap();
-    }
 };
 
 pub fn main() !void {
@@ -115,10 +109,7 @@ pub fn main() !void {
         },
     );
 
-    try sink.CreateGc(ids.gc(), ids.window().drawable(), .{
-        // prevent NoExposure events when we send CopyArea
-        .graphics_exposures = false,
-    });
+    try sink.CreateGc(ids.gc(), ids.window().drawable(), .{});
 
     const font_dims: FontDims = blk: {
         try sink.QueryTextExtents(ids.gc().fontable(), .initComptime(&[_]u16{'m'}));
@@ -170,7 +161,7 @@ pub fn main() !void {
             .Expose => {
                 const expose = try source.read2(.Expose);
                 std.log.info("X11 {}", .{expose});
-                try render(&sink, ids.window(), ids.gc(), font_dims, ids);
+                try render(&sink, ids.window(), ids.gc(), font_dims);
             },
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }
@@ -227,90 +218,17 @@ const FontDims = struct {
     font_ascent: i16, // pixels up from the text basepoint to the top of the text
 };
 
-var created = false;
 fn render(
     sink: *x11.RequestSink,
     window_id: x11.Window,
     gc: x11.GraphicsContext,
     font_dims: FontDims,
-    ids: Ids,
 ) !void {
-    {
-        const w = 255;
-        const h = 255;
-        const pixmap = ids.glyphPixmap();
-
-        // XXX: the bgr thing maybe window specific?
-
-        const glyph_gc = ids.glyphGc();
-        if (!created) {
-            created = true;
-            try sink.CreatePixmap(pixmap, window_id.drawable(), .{
-                .depth = .@"32",
-                .width = w,
-                .height = h,
-            });
-            try sink.CreateGc(glyph_gc, pixmap.drawable(), .{});
-
-            var image: [w * h * 4]u8 = undefined;
-            for (0..h) |y| {
-                for (0..h) |x| {
-                    const xf: f32 = (@as(f32, @floatFromInt(x)) / 255.0) - 0.5;
-                    const yf: f32 = (@as(f32, @floatFromInt(y)) / 255.0) - 0.5;
-                    const r = @sqrt(xf * xf + yf * yf);
-                    const a: u8 = if (r < 0.3) 255 else 0;
-                    image[(y * h + x) * 4 ..][0..4].* = .{
-                        255,
-                        255,
-                        255,
-                        a,
-                    };
-                }
-            }
-            try sink.PutImage(.{
-                .format = .z_pixmap,
-                .drawable = pixmap.drawable(),
-                .gc_id = glyph_gc,
-                .width = h,
-                .height = h,
-                .x = 0,
-                .y = 0,
-                .depth = .@"32",
-            }, .init(&image, image.len));
-        }
-
-        // try sink.FreeGc(glyph_gc);
-
-        try sink.CopyArea(.{
-            .src_drawable = pixmap.drawable(),
-            .dst_drawable = window_id.drawable(),
-            .gc = gc,
-            .src_x = 0,
-            .src_y = 0,
-            .dst_x = 0,
-            .dst_y = 0,
-            .width = h,
-            .height = h,
-        });
-        try sink.CopyArea(.{
-            .src_drawable = pixmap.drawable(),
-            .dst_drawable = window_id.drawable(),
-            .gc = gc,
-            .src_x = 0,
-            .src_y = 0,
-            .dst_x = 128,
-            .dst_y = 100,
-            .width = h,
-            .height = h,
-        });
-        // try sink.FreePixmap(pixmap);
-    }
-
     try sink.ChangeGc(gc, .{
-        .background = 0x000000ff,
-        .foreground = 0xffffffff,
+        .background = 0,
+        .foreground = 0xffffff,
     });
-    const text = "ImageText8(...)";
+    const text = "Hello X!";
     const text_width = font_dims.width * text.len;
     try sink.ImageText8(
         window_id.drawable(),
@@ -320,22 +238,5 @@ fn render(
             .y = @divTrunc((window_height - @as(i16, @intCast(font_dims.height))), 2) + font_dims.font_ascent,
         },
         .initComptime(text),
-    );
-
-    try sink.ChangeGc(gc, .{
-        .background = 0x000000ff,
-        .foreground = 0xff0000ff,
-    });
-    const foo = x11.SliceWithMaxLen(u8, [*]const u8, 254).initComptime("PolyText8(...)");
-    try sink.PolyText8(
-        window_id.drawable(),
-        gc,
-        .{
-            .x = 128 - 50,
-            .y = 128,
-        },
-        &[_]x11.TextItem8{
-            .{ .text_element = .{ .delta = 0, .string = foo } },
-        },
     );
 }
