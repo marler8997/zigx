@@ -201,7 +201,7 @@ fn render(
         ids,
         gc,
         drawable,
-        "Hello, World!",
+        "Hello, World! These glyphs are missing: こんにちは",
         &x,
         &y,
         true,
@@ -284,9 +284,7 @@ pub const Font = struct {
         var prev_glyph_index: ?GlyphIndex = null;
         while (codepoints.nextCodepoint()) |codepoint| {
             // Draw the glyph
-            const glyph_index = self.ttf.codepointGlyphIndex(codepoint) orelse {
-                @panic("unimplemented");
-            };
+            const glyph_index = self.ttf.codepointGlyphIndex(codepoint);
             const glyph = try self.getGlyph(gpa, sink, ids, glyph_index);
             if (glyph.pixmap) |pixmap| {
                 try sink.CopyArea(.{
