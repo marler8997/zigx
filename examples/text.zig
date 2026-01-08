@@ -193,7 +193,8 @@ fn render(
     }
     const drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
 
-    var x: i16 = 0;
+    const left_margin = 50;
+    var x: i16 = left_margin;
     var y: i16 = 80;
     try font.draw(
         glyph_arena.allocator(),
@@ -202,6 +203,20 @@ fn render(
         gc,
         drawable,
         "Hello, World! These glyphs are missing: こんにちは",
+        &x,
+        &y,
+        true,
+    );
+
+    font.advanceLine(&x, &y, .{ .left_margin = left_margin });
+
+    try font.draw(
+        glyph_arena.allocator(),
+        sink,
+        ids,
+        gc,
+        drawable,
+        "This is a new line!",
         &x,
         &y,
         true,
@@ -238,10 +253,11 @@ pub const Font = struct {
     pub fn init(gpa: Allocator, ttf: *const TrueType, options: Options) !Font {
         var cache: DynamicBitSetUnmanaged = try .initEmpty(gpa, std.math.maxInt(u21));
         errdefer cache.deinit(gpa);
+        const scale = ttf.scaleForPixelHeight(options.size);
         return .{
             .cache = cache,
             .ttf = ttf,
-            .scale = ttf.scaleForPixelHeight(options.size),
+            .scale = scale,
             .color = options.color,
         };
     }
@@ -311,6 +327,22 @@ pub const Font = struct {
                 prev_glyph_index = glyph_index;
             }
         }
+    }
+
+    pub fn getLineAdvance(self: *const Font) i16 {
+        const metrics = self.ttf.verticalMetrics();
+        const unscaled_i = metrics.ascent - metrics.descent + metrics.line_gap;
+        const unscaled: f32 = @floatFromInt(unscaled_i);
+        return @intFromFloat(unscaled * self.scale);
+    }
+
+    pub const AdvanceLineOptions = struct {
+        left_margin: i16,
+    };
+
+    pub fn advanceLine(self: *const Font, x: *i16, y: *i16, options: AdvanceLineOptions) void {
+        x.* = options.left_margin;
+        y.* += self.getLineAdvance();
     }
 
     pub fn getGlyph(
