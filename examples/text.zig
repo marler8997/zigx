@@ -59,7 +59,7 @@ pub fn main() !void {
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .initAfterSetup(socket_reader.interface());
 
-    var window_size: XY(u16) = .{ .x = 400, .y = 400 };
+    var window_size: XY(u16) = .{ .x = 600, .y = 300 };
 
     try sink.CreateWindow(
         .{
@@ -108,7 +108,7 @@ pub fn main() !void {
 
     const ttf: TrueType = try .load(@embedFile("InterVariable.ttf"));
     var font: Font = try .init(std.heap.page_allocator, &ttf, .{
-        .size = 80,
+        .size = 24,
         .color = 0xffffff,
     });
     defer font.deinit(std.heap.page_allocator, &sink, ids) catch |err| @panic(@errorName(err));
@@ -195,7 +195,7 @@ fn render(
 
     const left_margin = 50;
     var x: i16 = left_margin;
-    var y: i16 = 80;
+    var y: i16 = 30;
     try font.draw(
         glyph_arena.allocator(),
         sink,
@@ -207,16 +207,41 @@ fn render(
         &y,
         true,
     );
-
+    x = left_margin;
     font.advanceLine(&x, &y, .{ .left_margin = left_margin });
-
     try font.draw(
         glyph_arena.allocator(),
         sink,
         ids,
         gc,
         drawable,
-        "This is a new line!",
+        "The quick brown fox jumped over the lazy dog",
+        &x,
+        &y,
+        true,
+    );
+    x = left_margin;
+    font.advanceLine(&x, &y, .{ .left_margin = left_margin });
+    try font.draw(
+        glyph_arena.allocator(),
+        sink,
+        ids,
+        gc,
+        drawable,
+        "0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        &x,
+        &y,
+        true,
+    );
+    x = left_margin;
+    font.advanceLine(&x, &y, .{ .left_margin = left_margin });
+    try font.draw(
+        glyph_arena.allocator(),
+        sink,
+        ids,
+        gc,
+        drawable,
+        "abcdefghijklmnopqrstuvwxyz",
         &x,
         &y,
         true,
