@@ -251,7 +251,10 @@ pub const Font = struct {
     };
 
     pub fn init(gpa: Allocator, ttf: *const TrueType, options: Options) !Font {
-        var cache: DynamicBitSetUnmanaged = try .initEmpty(gpa, std.math.maxInt(u21));
+        var cache: DynamicBitSetUnmanaged = try .initEmpty(
+            gpa,
+            std.math.maxInt(@typeInfo(GlyphIndex).@"enum".tag_type),
+        );
         errdefer cache.deinit(gpa);
         const scale = ttf.scaleForPixelHeight(options.size);
         return .{
