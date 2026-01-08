@@ -106,7 +106,7 @@ pub fn main() !void {
 
     try sink.MapWindow(ids.window());
 
-    const ttf: TrueType = try .load(@embedFile("notosanssymbols2-regular.ttf"));
+    const ttf: TrueType = try .load(@embedFile("InterVariable.ttf"));
     var font: Font = try .init(std.heap.page_allocator, &ttf, .{
         .size = 80,
         .color = 0xffffff,

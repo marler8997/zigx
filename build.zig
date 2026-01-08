@@ -5,7 +5,7 @@ pub const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .
 
 const Example = struct {
     name: []const u8,
-    needs_true_type: bool = false,
+    needs_text: bool = false,
 };
 
 const examples = [_]Example{
@@ -21,7 +21,7 @@ const examples = [_]Example{
     .{ .name = "draw" },
     .{ .name = "transparent" },
     .{ .name = "testexample" },
-    .{ .name = "text", .needs_true_type = true },
+    .{ .name = "text", .needs_text = true },
 };
 
 pub fn build(b: *std.Build) void {
@@ -65,8 +65,13 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "x11", .module = x_mod },
             },
         });
-        if (example.needs_true_type) {
+        if (example.needs_text) {
             example_mod.addImport("TrueType", true_type_mod);
+
+            const inter = b.dependency("inter", .{});
+            example_mod.addImport("InterVariable.ttf", b.createModule(.{
+                .root_source_file = inter.path("InterVariable.ttf"),
+            }));
         }
 
         const exe = b.addExecutable(.{

@@ -14,6 +14,11 @@
             .url = "git+https://codeberg.org/andrewrk/TrueType#4758e2e67c2660d6b56c7b5776212619dd47505e",
             .hash = "TrueType-0.0.0-Ne-mWA1xAQAmNjoE1yrgyWn3DbkNaBCGPeKzFGcxnJMA",
         },
+        // Used by examples
+        .inter = .{
+            .url = "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+            .hash = "N-V-__8AAAv-sAOXPycbcfSerQ5vsDx3k-PZC5fy2p9ScNi8",
+        },
     },
     .paths = .{
         "build.zig",
