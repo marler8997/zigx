@@ -2216,10 +2216,10 @@ pub const RequestSink = struct {
         args: put_image.Args,
         data: Slice(u18, [*]const u8),
     ) error{WriteFailed}!void {
-        var offset = try PutImageStart(sink, args, data.len);
+        var offset: usize = try PutImageStart(sink, data.len, args);
         try writeAll(sink.writer, &offset, data.nativeSlice());
         offset += data.len;
-        try PutImageFinish(sink, args, data.len, offset);
+        try PutImageFinish(sink, 0);
     }
 
     pub fn PutImageStart(

@@ -10,6 +10,15 @@
             .hash = "iobackport-0.0.0-KeWQeDGeAwA_MbngHydEnyLQQuQ4V05Y-KQQSMEte7gw",
             .lazy = true,
         },
+        .TrueType = .{
+            .url = "git+https://codeberg.org/andrewrk/TrueType#9b9e6bb31b68ebbd5a819dd4628cea1a6b05c1d6",
+            .hash = "TrueType-0.0.0-Ne-mWEVyAQB-2nuvSOhvXGPzCRuebWrePnA9juSDdPRm",
+        },
+        // Used by examples
+        .inter = .{
+            .url = "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+            .hash = "N-V-__8AAAv-sAOXPycbcfSerQ5vsDx3k-PZC5fy2p9ScNi8",
+        },
     },
     .paths = .{
         "build.zig",

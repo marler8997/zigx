@@ -3,19 +3,25 @@ const std = @import("std");
 
 pub const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
 
-const examples = [_][]const u8{
+const Example = struct {
+    name: []const u8,
+    needs_text: bool = false,
+};
+
+const examples = [_]Example{
     // ordered by what's easier to test first
-    "getserverfontnames",
-    "queryfont",
-    "hello",
-    "graphics",
-    "fontviewer",
-    "dbe",
-    "keys",
-    "input",
-    "draw",
-    "transparent",
-    "testexample",
+    .{ .name = "getserverfontnames" },
+    .{ .name = "queryfont" },
+    .{ .name = "hello" },
+    .{ .name = "graphics" },
+    .{ .name = "fontviewer" },
+    .{ .name = "dbe" },
+    .{ .name = "keys" },
+    .{ .name = "input" },
+    .{ .name = "draw" },
+    .{ .name = "transparent" },
+    .{ .name = "testexample" },
+    .{ .name = "text", .needs_text = true },
 };
 
 pub fn build(b: *std.Build) void {
@@ -48,25 +54,35 @@ pub fn build(b: *std.Build) void {
 
     const build_examples_step = b.step("build-examples", "");
 
-    inline for (examples) |example_name| {
+    const true_type_mod = b.dependency("TrueType", .{}).module("TrueType");
+
+    inline for (examples) |example| {
         const example_mod = b.createModule(.{
-            .root_source_file = b.path("examples/" ++ example_name ++ ".zig"),
+            .root_source_file = b.path("examples/" ++ example.name ++ ".zig"),
             .optimize = optimize,
             .target = target,
             .imports = &.{
                 .{ .name = "x11", .module = x_mod },
             },
         });
+        if (example.needs_text) {
+            example_mod.addImport("TrueType", true_type_mod);
+
+            const inter = b.dependency("inter", .{});
+            example_mod.addImport("InterVariable.ttf", b.createModule(.{
+                .root_source_file = inter.path("InterVariable.ttf"),
+            }));
+        }
 
         const exe = b.addExecutable(.{
-            .name = example_name,
+            .name = example.name,
             .root_module = example_mod,
         });
 
         const install = b.addInstallArtifact(exe, .{});
         build_examples_step.dependOn(&install.step);
         b.getInstallStep().dependOn(&install.step);
-        b.step("build-" ++ example_name, "").dependOn(&install.step);
+        b.step("build-" ++ example.name, "").dependOn(&install.step);
 
         run_examples.addArtifactArg(exe);
         run_examples.step.dependOn(&install.step);
@@ -76,7 +92,7 @@ pub fn build(b: *std.Build) void {
         if (b.args) |args| {
             run.addArgs(args);
         }
-        b.step(example_name, "").dependOn(&run.step);
+        b.step(example.name, "").dependOn(&run.step);
     }
 
     // This library is for C programs, not Zig programs
