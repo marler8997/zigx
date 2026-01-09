@@ -56,6 +56,7 @@ pub fn build(b: *std.Build) void {
 
     const true_type_mod = b.dependency("TrueType", .{}).module("TrueType");
 
+    const check = b.step("check", "Check if all examples compile");
     inline for (examples) |example| {
         const example_mod = b.createModule(.{
             .root_source_file = b.path("examples/" ++ example.name ++ ".zig"),
@@ -78,6 +79,12 @@ pub fn build(b: *std.Build) void {
             .name = example.name,
             .root_module = example_mod,
         });
+
+        const exe_check = b.addExecutable(.{
+            .name = b.fmt("{s}_check", .{example.name}),
+            .root_module = example_mod,
+        });
+        check.dependOn(&exe_check.step);
 
         const install = b.addInstallArtifact(exe, .{});
         build_examples_step.dependOn(&install.step);
