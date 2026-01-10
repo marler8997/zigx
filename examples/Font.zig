@@ -24,8 +24,8 @@ pub const Ids = struct {
     /// The max number of glyphs supported.
     glyphs_len: u16,
 
-    pub fn glyphPixmap(self: Ids, index: Font.GlyphIndex) x11.Pixmap {
-        assert(@intFromEnum(index) < self.glyphs_len);
+    pub fn glyphPixmap(self: Ids, index: Font.GlyphIndex) ?x11.Pixmap {
+        if (@intFromEnum(index) >= self.glyphs_len) return null;
         return self.glyphs_base.add(@intFromEnum(index)).pixmap();
     }
 };
@@ -50,7 +50,8 @@ pub fn init(
     ids: Ids,
     options: Options,
 ) !Font {
-    if (ttf.glyphs_len > ids.glyphs_len) return error.OutOfMemory;
+    // We later on will assume that there's at least space for the .notdef glyph at 0
+    if (ttf.glyphs_len == 0) return error.OutOfMemory;
     _ = try std.math.add(u32, @intFromEnum(ids.glyphs_base), ids.glyphs_len);
     var cache: DynamicBitSetUnmanaged = try .initEmpty(
         gpa,
@@ -70,7 +71,8 @@ pub fn init(
 pub fn deinit(self: *Font, gpa: Allocator, sink: *x11.RequestSink) !void {
     var iter = self.cache.iterator(.{});
     while (iter.next()) |glyph_index| {
-        try sink.FreePixmap(self.ids.glyphPixmap(@enumFromInt(glyph_index)));
+        const pixmap = self.ids.glyphPixmap(@enumFromInt(glyph_index)).?;
+        try sink.FreePixmap(pixmap);
     }
     self.cache.deinit(gpa);
     self.* = undefined;
@@ -172,6 +174,13 @@ pub fn getGlyph(
 
     // If not, add it to the cache
     const pixmap = rasterize: {
+        // Find the pixmap ID. If there's no pixmap reserved for this glyph,
+        // return this notdef glyph instead.
+        const pixmap = self.ids.glyphPixmap(glyph_index) orelse {
+            assert(glyph_index != .notdef); // Unreachable
+            return self.getGlyph(gpa, sink, .notdef);
+        };
+
         // Rasterize the glyph
         var r8: std.ArrayListUnmanaged(u8) = .empty;
         defer r8.deinit(gpa);
@@ -213,9 +222,6 @@ pub fn getGlyph(
                 };
             }
         }
-
-        // Create the pixmap
-        const pixmap = self.ids.glyphPixmap(glyph_index);
 
         const gc = self.ids.glyph_gc;
         try sink.CreatePixmap(pixmap, self.ids.window.drawable(), .{
