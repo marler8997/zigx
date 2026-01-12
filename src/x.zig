@@ -3540,6 +3540,7 @@ pub fn XY(comptime T: type) type {
         x: T,
         y: T,
         const Self = @This();
+        pub const zero: Self = .{ .x = 0, .y = 0 };
         pub fn eql(self: Self, other: Self) bool {
             return std.meta.eql(self.x, other.x) and std.meta.eql(self.y, other.y);
         }

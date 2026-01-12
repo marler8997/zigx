@@ -201,53 +201,61 @@ fn render(
         );
     }
     const drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
-    const left_margin = 50;
-    var x: i16 = left_margin;
-    var y: i16 = 30;
+    const margin = 50;
+    var cursor: x11.XY(i16) = .{
+        .x = margin,
+        .y = 30,
+    };
     try font.draw(
         glyph_arena.allocator(),
         sink,
         gc,
         drawable,
         "Hello, World! These glyphs are missing: こんにちは",
-        &x,
-        &y,
+        &cursor,
         true,
     );
-    x = left_margin;
-    font.advanceLine(&x, &y, .{ .left_margin = left_margin });
+    font.advanceLine(&cursor, .{ .left_margin = margin });
     try font.draw(
         glyph_arena.allocator(),
         sink,
         gc,
         drawable,
         "The quick brown fox jumped over the lazy dog",
-        &x,
-        &y,
+        &cursor,
         true,
     );
-    x = left_margin;
-    font.advanceLine(&x, &y, .{ .left_margin = left_margin });
+    font.advanceLine(&cursor, .{ .left_margin = margin });
     try font.draw(
         glyph_arena.allocator(),
         sink,
         gc,
         drawable,
         "0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-        &x,
-        &y,
+        &cursor,
         true,
     );
-    x = left_margin;
-    font.advanceLine(&x, &y, .{ .left_margin = left_margin });
+    font.advanceLine(&cursor, .{ .left_margin = margin });
     try font.draw(
         glyph_arena.allocator(),
         sink,
         gc,
         drawable,
         "abcdefghijklmnopqrstuvwxyz",
-        &x,
-        &y,
+        &cursor,
+        true,
+    );
+    const right_aligned_text = "This text is right aligned!";
+    const measurement = try font.measure(right_aligned_text, true);
+    cursor.x = @intCast(@as(i32, @intCast(window_size.x)) - measurement.advance.x);
+    cursor.x -= margin;
+    try font.draw(
+        glyph_arena.allocator(),
+        sink,
+        gc,
+        drawable,
+        right_aligned_text,
+        &cursor,
         true,
     );
 

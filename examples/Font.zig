@@ -31,12 +31,17 @@ pub const Ids = struct {
 };
 
 const Glyph = struct {
+    pub const Metrics = struct {
+        /// The bounding box of the rasterized glyph.
+        box: TrueType.BitmapBox,
+        /// How much to advance the cursor horizontally after drawing this glyph.
+        advance: i16,
+    };
+
     /// The rasterized glyph, or null if empty (e.g. for spaces.)
     pixmap: ?x11.Pixmap,
-    /// The bounding box of the rasterized glyph.
-    box: TrueType.BitmapBox,
-    /// How much to advance the cursor horizontally after drawing this glyph.
-    advance: i16,
+    /// The measurements for this glyph.
+    measurement: Glyph.Metrics,
 };
 
 pub const Options = struct {
@@ -97,41 +102,118 @@ pub fn draw(
     gc: x11.GraphicsContext,
     drawable: x11.Drawable,
     utf8: []const u8,
-    x: *i16,
-    y: *i16,
+    cursor: *x11.XY(i16),
     kerning: bool,
+) !void {
+    try drawOrMeasure(
+        .draw,
+        self,
+        utf8,
+        cursor,
+        kerning,
+        .{
+            .gpa = gpa,
+            .sink = sink,
+            .gc = gc,
+            .drawable = drawable,
+        },
+    );
+}
+
+pub const Metrics = struct {
+    advance: x11.XY(i16),
+};
+
+pub fn measure(self: *const Font, utf8: []const u8, kerning: bool) !Metrics {
+    var cursor: x11.XY(i16) = .zero;
+    try drawOrMeasure(
+        .measure,
+        self,
+        utf8,
+        &cursor,
+        kerning,
+        .{},
+    );
+    return .{
+        .advance = cursor,
+    };
+}
+
+const DrawOptions = struct {
+    gpa: Allocator,
+    sink: *x11.RequestSink,
+    gc: x11.GraphicsContext,
+    drawable: x11.Drawable,
+};
+
+const MeasureOptions = struct {};
+
+/// We've combined this functionality into a single call so that we don't forget to keep measure in
+/// sync with draw.
+fn drawOrMeasure(
+    comptime mode: enum { draw, measure },
+    self: switch (mode) {
+        .draw => *Font,
+        .measure => *const Font,
+    },
+    utf8: []const u8,
+    cursor: *x11.XY(i16),
+    kerning: bool,
+    options: switch (mode) {
+        .draw => DrawOptions,
+        .measure => MeasureOptions,
+    },
 ) !void {
     var view: std.unicode.Utf8View = try .init(utf8);
     var codepoints = view.iterator();
     var prev_glyph_index: ?GlyphIndex = null;
     while (codepoints.nextCodepoint()) |codepoint| {
-        // Draw the glyph
+        // Get the glyph index
         const glyph_index = self.ttf.codepointGlyphIndex(codepoint);
-        const glyph = try self.getGlyph(gpa, sink, glyph_index);
-        if (glyph.pixmap) |pixmap| {
-            try sink.CopyArea(.{
-                .src_drawable = pixmap.drawable(),
-                .dst_drawable = drawable,
-                .gc = gc,
-                .src_x = 0,
-                .src_y = 0,
-                .dst_x = @intCast(x.* + glyph.box.x0),
-                .dst_y = @intCast(y.* + glyph.box.y0),
-                .width = @intCast(glyph.box.x1 - glyph.box.x0),
-                .height = @intCast(glyph.box.y1 - glyph.box.y0),
-            });
-        }
-        x.* += glyph.advance;
 
-        // Apply kerning
+        // Apply kerning if requested
         if (kerning) {
-            if (prev_glyph_index) |prev| {
-                const kern = self.ttf.glyphKernAdvance(prev, glyph_index);
-                const kern_f: f32 = @floatFromInt(kern);
-                x.* += @intFromFloat(kern_f * self.scale);
-            }
+            self.kern(prev_glyph_index, glyph_index, cursor);
             prev_glyph_index = glyph_index;
         }
+
+        // Measure the glyph, and optionally draw it
+        const measurement = switch (mode) {
+            .draw => b: {
+                const glyph = try self.getGlyph(options.gpa, options.sink, glyph_index);
+                if (glyph.pixmap) |pixmap| {
+                    try options.sink.CopyArea(.{
+                        .src_drawable = pixmap.drawable(),
+                        .dst_drawable = options.drawable,
+                        .gc = options.gc,
+                        .src_x = 0,
+                        .src_y = 0,
+                        .dst_x = @intCast(cursor.x + glyph.measurement.box.x0),
+                        .dst_y = @intCast(cursor.y + glyph.measurement.box.y0),
+                        .width = @intCast(glyph.measurement.box.x1 - glyph.measurement.box.x0),
+                        .height = @intCast(glyph.measurement.box.y1 - glyph.measurement.box.y0),
+                    });
+                }
+                break :b glyph.measurement;
+            },
+            .measure => try self.getGlyphMetrics(glyph_index),
+        };
+
+        // Advance to the starting position of the next glyph
+        cursor.x += measurement.advance;
+    }
+}
+
+pub fn kern(
+    self: *const Font,
+    maybe_prev: ?GlyphIndex,
+    curr: GlyphIndex,
+    cursor: *x11.XY(i16),
+) void {
+    if (maybe_prev) |prev| {
+        const kerning = self.ttf.glyphKernAdvance(prev, curr);
+        const kerning_f: f32 = @floatFromInt(kerning);
+        cursor.x += @intFromFloat(kerning_f * self.scale);
     }
 }
 
@@ -146,9 +228,20 @@ pub const AdvanceLineOptions = struct {
     left_margin: i16,
 };
 
-pub fn advanceLine(self: *const Font, x: *i16, y: *i16, options: AdvanceLineOptions) void {
-    x.* = options.left_margin;
-    y.* += self.getLineAdvance();
+pub fn advanceLine(self: *const Font, cursor: *x11.XY(i16), options: AdvanceLineOptions) void {
+    cursor.x = options.left_margin;
+    cursor.y += self.getLineAdvance();
+}
+
+pub fn getGlyphMetrics(self: *const Font, glyph_index: GlyphIndex) !Glyph.Metrics {
+    const box = self.ttf.glyphBitmapBox(glyph_index, self.scale, self.scale);
+    const h_metrics = self.ttf.glyphHMetrics(glyph_index);
+    const advance_unscaled: f32 = @floatFromInt(h_metrics.advance_width);
+    const advance: i16 = @intFromFloat(self.scale * advance_unscaled);
+    return .{
+        .box = box,
+        .advance = advance,
+    };
 }
 
 pub fn getGlyph(
@@ -158,17 +251,13 @@ pub fn getGlyph(
     glyph_index: GlyphIndex,
 ) !Glyph {
     // Get the glyph info
-    const box = self.ttf.glyphBitmapBox(glyph_index, self.scale, self.scale);
-    const h_metrics = self.ttf.glyphHMetrics(glyph_index);
-    const advance_unscaled: f32 = @floatFromInt(h_metrics.advance_width);
-    const advance: i16 = @intFromFloat(self.scale * advance_unscaled);
+    const measurement = try self.getGlyphMetrics(glyph_index);
 
     // Check if the glyph is already in the cache
     if (self.cache.isSet(@intFromEnum(glyph_index))) {
         return .{
             .pixmap = self.ids.glyphPixmap(glyph_index),
-            .box = box,
-            .advance = advance,
+            .measurement = measurement,
         };
     }
 
@@ -196,7 +285,8 @@ pub fn getGlyph(
         };
 
         // Check the dimensions, they should match the box
-        assert(dims.width == box.x1 - box.x0 and dims.height == box.y1 - box.y0);
+        assert(dims.width == measurement.box.x1 - measurement.box.x0 and
+            dims.height == measurement.box.y1 - measurement.box.y0);
 
         // Transcode and color the rasterized glyph
         const z_pixmap_24 = try gpa.alloc(
@@ -251,7 +341,6 @@ pub fn getGlyph(
     // Return the glyph
     return .{
         .pixmap = pixmap,
-        .box = box,
-        .advance = advance,
+        .measurement = measurement,
     };
 }
