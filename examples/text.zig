@@ -113,7 +113,6 @@ pub fn main() !void {
     );
 
     try sink.MapWindow(ids.window());
-
     const font_ids = ids.font();
     const ttf: TrueType = try .load(@embedFile("InterVariable.ttf"));
     var font: Font = try .init(std.heap.page_allocator, &ttf, font_ids, .{
@@ -160,6 +159,7 @@ pub fn main() !void {
             .ButtonPress,
             .ButtonRelease,
             .MapNotify,
+            .MappingNotify,
             .ReparentNotify,
             => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
