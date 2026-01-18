@@ -202,62 +202,33 @@ fn render(
     }
     const drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
     const margin = 50;
-    var cursor: x11.XY(i16) = .{
-        .x = margin,
-        .y = 30,
+
+    var tc: Font.TextContext = .{
+        .font = font,
+        .gpa = glyph_arena.allocator(),
+        .sink = sink,
+        .gc = gc,
+        .drawable = drawable,
+        .cursor = .{
+            .x = margin,
+            .y = 30,
+        },
+        .left_margin = margin,
     };
-    try font.draw(
-        glyph_arena.allocator(),
-        sink,
-        gc,
-        drawable,
-        "Hello, World! These glyphs are missing: こんにちは",
-        &cursor,
-        true,
-    );
-    font.advanceLine(&cursor, .{ .left_margin = margin });
-    try font.draw(
-        glyph_arena.allocator(),
-        sink,
-        gc,
-        drawable,
-        "The quick brown fox jumped over the lazy dog",
-        &cursor,
-        true,
-    );
-    font.advanceLine(&cursor, .{ .left_margin = margin });
-    try font.draw(
-        glyph_arena.allocator(),
-        sink,
-        gc,
-        drawable,
-        "0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-        &cursor,
-        true,
-    );
-    font.advanceLine(&cursor, .{ .left_margin = margin });
-    try font.draw(
-        glyph_arena.allocator(),
-        sink,
-        gc,
-        drawable,
-        "abcdefghijklmnopqrstuvwxyz",
-        &cursor,
-        true,
-    );
+
+    try tc.draw("Hello, World! These glyphs are missing: こんにちは");
+    tc.newline();
+    try tc.draw("The quick brown fox jumped over the lazy dog");
+    tc.newline();
+    try tc.draw("0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    tc.newline();
+    try tc.draw("abcdefghijklmnopqrstuvwxyz");
     const right_aligned_text = "This text is right aligned!";
-    const measurement = try font.measure(right_aligned_text, true);
-    cursor.x = @intCast(@as(i32, @intCast(window_size.x)) - measurement.advance.x);
-    cursor.x -= margin;
-    try font.draw(
-        glyph_arena.allocator(),
-        sink,
-        gc,
-        drawable,
-        right_aligned_text,
-        &cursor,
-        true,
-    );
+    const measurement = try tc.measure(right_aligned_text);
+    // XXX: make a right aligned and center helper?
+    tc.cursor.x = @intCast(@as(i32, @intCast(window_size.x)) - measurement.advance.x);
+    tc.cursor.x -= margin;
+    try tc.draw(right_aligned_text);
 
     switch (dbe) {
         .unsupported => {},
