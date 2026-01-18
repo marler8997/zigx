@@ -14,6 +14,7 @@ scale: f32,
 color: u32,
 ids: Ids,
 
+/// X11 IDs necessary to render the font.
 pub const Ids = struct {
     /// The window the font will eventually be rendered to.
     window: x11.Window,
@@ -24,12 +25,14 @@ pub const Ids = struct {
     /// The max number of glyphs supported.
     glyphs_len: u16,
 
+    /// Returns the pixmap for a given glyph, or `null` if out of range.
     pub fn glyphPixmap(self: Ids, index: Font.GlyphIndex) ?x11.Pixmap {
         if (@intFromEnum(index) >= self.glyphs_len) return null;
         return self.glyphs_base.add(@intFromEnum(index)).pixmap();
     }
 };
 
+/// Information on a glyph.
 const Glyph = struct {
     pub const Metrics = struct {
         /// The bounding box of the rasterized glyph.
@@ -42,6 +45,68 @@ const Glyph = struct {
     pixmap: ?x11.Pixmap,
     /// The measurements for this glyph.
     measurement: Glyph.Metrics,
+};
+
+pub const TextContext = struct {
+    /// The font to render.
+    font: *Font,
+    /// Used for temporary allocations.
+    gpa: Allocator,
+    /// A sink for the X11 commands.
+    sink: *x11.RequestSink,
+    /// The graphics context to draw with.
+    gc: x11.GraphicsContext,
+    /// The drawable to draw to.
+    drawable: x11.Drawable,
+    /// The initial position to write text at.
+    cursor: x11.XY(i16),
+    /// Whether or not to enable kerning.
+    kerning: bool = true,
+    /// The left margin to reset to after a newline.
+    left_margin: i16,
+    /// The last glyph drawn. Used for kerning. Cleared automatically by `setCursor`, if you set the
+    /// cursor position manually you should clear this value.
+    last_glyph: ?GlyphIndex = null,
+
+    /// Draws the given utf8 string at the current cursor position.
+    pub fn draw(self: *TextContext, utf8: []const u8) !void {
+        try self.font.draw(.{
+            .gpa = self.gpa,
+            .sink = self.sink,
+            .gc = self.gc,
+            .drawable = self.drawable,
+            .utf8 = utf8,
+            .cursor = &self.cursor,
+            .kerning = self.kerning,
+            .last_glyph = &self.last_glyph,
+        });
+    }
+
+    /// Measures how much the cursor would advance if you were to pass the given string to `draw`
+    /// without changing any other state.
+    pub fn measure(self: *const TextContext, utf8: []const u8) !Metrics {
+        var last_glyph = self.last_glyph;
+        return self.font.measure(utf8, .{
+            .kerning = self.kerning,
+            .last_glyph = &last_glyph,
+        });
+    }
+
+    /// Advances the cursor by a newline.
+    pub fn newline(self: *TextContext) void {
+        self.cursor.x = self.left_margin;
+        self.cursor.y += self.font.getLineAdvance();
+        self.setCursor(.{
+            .x = self.left_margin,
+            .y = self.cursor.y + self.font.getLineAdvance(),
+        });
+    }
+
+    /// Sets a new cursor position.
+    pub fn setCursor(self: *TextContext, cursor: x11.XY(i16)) void {
+        self.cursor = cursor;
+        self.last_glyph = null;
+    }
 };
 
 pub const Options = struct {
@@ -83,52 +148,6 @@ pub fn deinit(self: *Font, gpa: Allocator, sink: *x11.RequestSink) !void {
     self.* = undefined;
 }
 
-// Fast but exact unorm to float.
-fn unormToFloat(u: u8) f32 {
-    const max: f32 = @floatFromInt(255);
-    const r: f32 = 1.0 / (3.0 * max);
-    return @as(f32, @floatFromInt(u)) * 3.0 * r;
-}
-
-// Exact float to unorm.
-fn floatToUnorm(f: f32) u8 {
-    return @intFromFloat(f * 255 + 0.5);
-}
-
-pub const TextContext = struct {
-    font: *Font,
-    gpa: Allocator,
-    sink: *x11.RequestSink,
-    gc: x11.GraphicsContext,
-    drawable: x11.Drawable,
-    cursor: x11.XY(i16),
-    kerning: bool = true,
-    left_margin: i16,
-    // XXX: need a "setcursor" that clears this
-    // last_glyph_index: ?GlyphIndex = null,
-
-    pub fn draw(self: *TextContext, utf8: []const u8) !void {
-        try self.font.draw(.{
-            .gpa = self.gpa,
-            .sink = self.sink,
-            .gc = self.gc,
-            .drawable = self.drawable,
-            .utf8 = utf8,
-            .cursor = &self.cursor,
-            .kerning = self.kerning,
-        });
-    }
-
-    pub fn measure(self: *const TextContext, utf8: []const u8) !Metrics {
-        return self.font.measure(utf8, .{ .kerning = self.kerning });
-    }
-
-    pub fn newline(self: *TextContext) void {
-        self.cursor.x = self.left_margin;
-        self.cursor.y += self.font.getLineAdvance();
-    }
-};
-
 pub const DrawOptions = struct {
     gpa: Allocator,
     sink: *x11.RequestSink,
@@ -137,6 +156,7 @@ pub const DrawOptions = struct {
     utf8: []const u8,
     cursor: *x11.XY(i16),
     kerning: bool = true,
+    last_glyph: *?GlyphIndex,
 };
 
 /// Low level text drawing. Prefer `TextContext.draw`.
@@ -147,6 +167,7 @@ pub fn draw(self: *Font, options: DrawOptions) !void {
         options.utf8,
         options.cursor,
         options.kerning,
+        options.last_glyph,
         .{
             .gpa = options.gpa,
             .sink = options.sink,
@@ -163,6 +184,7 @@ pub const Metrics = struct {
 
 pub const MeasureOptions = struct {
     kerning: bool = true,
+    last_glyph: *?GlyphIndex,
 };
 
 /// Low level text measurement. Prefer `TextContent.measure`.
@@ -174,6 +196,7 @@ pub fn measure(self: *const Font, utf8: []const u8, options: MeasureOptions) !Me
         utf8,
         &cursor,
         options.kerning,
+        options.last_glyph,
         .{},
     );
     return .{ .advance = cursor };
@@ -190,6 +213,7 @@ fn drawOrMeasure(
     utf8: []const u8,
     cursor: *x11.XY(i16),
     kerning: bool,
+    last_glyph: *?GlyphIndex,
     options: switch (mode) {
         .draw => struct {
             gpa: Allocator,
@@ -202,15 +226,14 @@ fn drawOrMeasure(
 ) !void {
     var view: std.unicode.Utf8View = try .init(utf8);
     var codepoints = view.iterator();
-    var prev_glyph_index: ?GlyphIndex = null;
     while (codepoints.nextCodepoint()) |codepoint| {
         // Get the glyph index
         const glyph_index = self.ttf.codepointGlyphIndex(codepoint);
 
         // Apply kerning if requested
         if (kerning) {
-            self.kern(prev_glyph_index, glyph_index, cursor);
-            prev_glyph_index = glyph_index;
+            self.kern(last_glyph.*, glyph_index, cursor);
+            last_glyph.* = glyph_index;
         }
 
         // Measure the glyph, and optionally draw it
@@ -254,6 +277,7 @@ pub fn kern(
     }
 }
 
+/// Returns the amount the cursor should be advanced vertically for a newline.
 pub fn getLineAdvance(self: *const Font) i16 {
     const metrics = self.ttf.verticalMetrics();
     const unscaled_i = metrics.ascent - metrics.descent + metrics.line_gap;
@@ -261,6 +285,7 @@ pub fn getLineAdvance(self: *const Font) i16 {
     return @intFromFloat(unscaled * self.scale);
 }
 
+/// Gets metrics for a glyph.
 pub fn getGlyphMetrics(self: *const Font, glyph_index: GlyphIndex) Glyph.Metrics {
     const box = self.ttf.glyphBitmapBox(glyph_index, self.scale, self.scale);
     const h_metrics = self.ttf.glyphHMetrics(glyph_index);
@@ -272,6 +297,7 @@ pub fn getGlyphMetrics(self: *const Font, glyph_index: GlyphIndex) Glyph.Metrics
     };
 }
 
+/// Gets a glyph, rasterizign it and adding it to the caceh if necessary.
 pub fn getGlyph(
     self: *Font,
     gpa: Allocator,
@@ -371,4 +397,16 @@ pub fn getGlyph(
         .pixmap = pixmap,
         .measurement = measurement,
     };
+}
+
+// Fast but exact unorm to float.
+fn unormToFloat(u: u8) f32 {
+    const max: f32 = @floatFromInt(255);
+    const r: f32 = 1.0 / (3.0 * max);
+    return @as(f32, @floatFromInt(u)) * 3.0 * r;
+}
+
+// Exact float to unorm.
+fn floatToUnorm(f: f32) u8 {
+    return @intFromFloat(f * 255 + 0.5);
 }
