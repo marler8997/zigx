@@ -223,12 +223,27 @@ fn render(
     try tc.draw("0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ");
     tc.newline();
     try tc.draw("abcdefghijklmnopqrstuvwxyz");
-    const right_aligned_text = "This text is right aligned!";
-    const measurement = try tc.measure(right_aligned_text);
-    // XXX: make a right aligned and center helper?
-    tc.cursor.x = @intCast(@as(i32, @intCast(window_size.x)) - measurement.advance.x);
-    tc.cursor.x -= margin;
-    try tc.draw(right_aligned_text);
+
+    tc.left_margin = 300;
+    tc.newline();
+    try tc.drawAligned("This text is not centered -- ", .right);
+    try tc.drawAligned("it", .left);
+    tc.newline();
+    try tc.drawAligned("is aligned -- ", .right);
+    try tc.drawAligned("so that", .left);
+    tc.newline();
+    try tc.drawAligned("all the -- ", .right);
+    try tc.drawAligned("line up.", .left);
+    tc.newline();
+
+    tc.newline();
+
+    try tc.drawAligned("On the other hand...", .center);
+    tc.newline();
+    try tc.drawAligned("this text", .center);
+    tc.newline();
+    try tc.drawAligned("is centered.", .center);
+    tc.newline();
 
     switch (dbe) {
         .unsupported => {},

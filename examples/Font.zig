@@ -82,14 +82,38 @@ pub const TextContext = struct {
         });
     }
 
+    const Alignment = enum {
+        left,
+        right,
+        center,
+    };
+
+    /// Similar to `draw`, but takes an arugment that controls alignment.
+    pub fn drawAligned(self: *TextContext, utf8: []const u8, alignment: Alignment) !void {
+        switch (alignment) {
+            .left => {},
+            .right => {
+                const metrics = try self.measure(utf8);
+                self.setCursor(.{
+                    .x = self.cursor.x - metrics.advance.x,
+                    .y = self.cursor.y - metrics.advance.y,
+                });
+            },
+            .center => {
+                const metrics = try self.measure(utf8);
+                self.setCursor(.{
+                    .x = self.cursor.x - @divTrunc(metrics.advance.x, 2),
+                    .y = self.cursor.y - metrics.advance.y,
+                });
+            },
+        }
+        try self.draw(utf8);
+    }
+
     /// Measures how much the cursor would advance if you were to pass the given string to `draw`
     /// without changing any other state.
     pub fn measure(self: *const TextContext, utf8: []const u8) !Metrics {
-        var last_glyph = self.last_glyph;
-        return self.font.measure(utf8, .{
-            .kerning = self.kerning,
-            .last_glyph = &last_glyph,
-        });
+        return self.font.measure(utf8, .{ .kerning = self.kerning });
     }
 
     /// Advances the cursor by a newline.
@@ -184,19 +208,19 @@ pub const Metrics = struct {
 
 pub const MeasureOptions = struct {
     kerning: bool = true,
-    last_glyph: *?GlyphIndex,
 };
 
 /// Low level text measurement. Prefer `TextContent.measure`.
 pub fn measure(self: *const Font, utf8: []const u8, options: MeasureOptions) !Metrics {
     var cursor: x11.XY(i16) = .zero;
+    var last_glyph: ?GlyphIndex = null;
     try drawOrMeasure(
         .measure,
         self,
         utf8,
         &cursor,
         options.kerning,
-        options.last_glyph,
+        &last_glyph,
         .{},
     );
     return .{ .advance = cursor };
