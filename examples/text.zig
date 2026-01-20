@@ -293,5 +293,5 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
-const TrueType = @import("TrueType");
-const Font = @import("Font.zig");
+const Font = @import("Font");
+const TrueType = Font.TrueType;

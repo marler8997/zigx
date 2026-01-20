@@ -1,13 +1,14 @@
 const std = @import("std");
 const x11 = @import("x11");
 const assert = std.debug.assert;
-const TrueType = @import("TrueType");
 const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const Allocator = std.mem.Allocator;
 const GlyphIndex = TrueType.GlyphIndex;
 
 const Reader = x11.Reader;
 const Writer = x11.Writer;
+
+pub const TrueType = @import("TrueType");
 
 const Font = @This();
 
