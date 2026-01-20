@@ -6,6 +6,11 @@ const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const Allocator = std.mem.Allocator;
 const GlyphIndex = TrueType.GlyphIndex;
 
+const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
+const std15 = if (zig_atleast_15) std else @import("std15");
+
+const Io = std15.Io;
+
 const Font = @This();
 
 ttf: *const TrueType,
@@ -13,6 +18,8 @@ cache: DynamicBitSetUnmanaged,
 scale: f32,
 color: u32,
 ids: Ids,
+
+const Error = Io.Writer.Error || TrueType.GlyphBitmapError || error{InvalidUtf8};
 
 /// X11 IDs necessary to render the font.
 pub const Ids = struct {
@@ -47,29 +54,157 @@ const Glyph = struct {
     measurement: Glyph.Metrics,
 };
 
-pub const TextContext = struct {
-    /// The font to render.
+/// A writer that draws utf8 using X11. All substrings passed to the writer must individually be
+/// valid UTF8.
+pub const TextWriter = struct {
     font: *Font,
-    /// Used for temporary allocations.
     gpa: Allocator,
-    /// A sink for the X11 commands.
     sink: *x11.RequestSink,
-    /// The graphics context to draw with.
     gc: x11.GraphicsContext,
-    /// The drawable to draw to.
     drawable: x11.Drawable,
-    /// The initial position to write text at.
     cursor: x11.XY(i16),
-    /// Whether or not to enable kerning.
     kerning: bool = true,
-    /// The left margin to reset to after a newline.
     left_margin: i16,
     /// The last glyph drawn. Used for kerning. Cleared automatically by `setCursor`, if you set the
     /// cursor position manually you should clear this value.
     last_glyph: ?GlyphIndex = null,
+    interface: Io.Writer,
+    err: ?Error = null,
+    alignment: Alignment = .left,
+    needs_flush: bool = false,
 
-    /// Draws the given utf8 string at the current cursor position.
-    pub fn draw(self: *TextContext, utf8: []const u8) !void {
+    pub const Alignment = enum {
+        left,
+        right,
+        center,
+    };
+
+    pub const Options = struct {
+        /// The font to render.
+        font: *Font,
+        /// Used for temporary allocations.
+        gpa: Allocator,
+        /// A sink for the X11 commands.
+        sink: *x11.RequestSink,
+        /// The graphics context to draw with.
+        gc: x11.GraphicsContext,
+        /// The drawable to draw to.
+        drawable: x11.Drawable,
+        /// The initial position to write text at.
+        cursor: x11.XY(i16),
+        /// Whether or not to enable kerning.
+        kerning: bool = true,
+        /// The left margin to reset to after a newline.
+        left_margin: i16,
+        /// The buffer to format text to.
+        buffer: []u8,
+    };
+
+    pub fn init(options: TextWriter.Options) TextWriter {
+        return .{
+            .font = options.font,
+            .gpa = options.gpa,
+            .sink = options.sink,
+            .gc = options.gc,
+            .drawable = options.drawable,
+            .cursor = options.cursor,
+            .kerning = options.kerning,
+            .left_margin = options.left_margin,
+            .interface = .{
+                .vtable = &.{
+                    .drain = drain,
+                    .flush = flush,
+                },
+                .buffer = options.buffer,
+            },
+        };
+    }
+
+    /// Flushes and then advances the cursor by a newline.
+    pub fn newline(self: *TextWriter) Error!void {
+        try self.interface.flush();
+        self.cursor.x = self.left_margin;
+        self.cursor.y += self.font.getLineAdvance();
+        try self.setCursor(.{
+            .x = self.left_margin,
+            .y = self.cursor.y + self.font.getLineAdvance(),
+        });
+    }
+
+    /// Flushes and then sets a new cursor position.
+    pub fn setCursor(self: *TextWriter, cursor: x11.XY(i16)) Error!void {
+        try self.interface.flush();
+        self.cursor = cursor;
+        self.last_glyph = null;
+    }
+
+    /// Flushes then sets the alignment for upcoming text. Keep in mind that different alignments
+    /// have different minimum buffer sizes.
+    ///
+    /// Left alignment puts not requirements on the buffer size.
+    ///
+    /// Right and center alignment require an explicit flush to free up the buffer. This is because
+    /// when center or right aligning text, the full string needs to be known before any of it can
+    /// be drawn. As a result, the buffer must be large enough to avoid calls to drain in between
+    /// flushes. You can still make arbitrarily large writes with a small buffer (see `writeVec`),
+    /// they must be followeod by an explicit flush.
+    pub fn setAlignment(self: *TextWriter, alignment: Alignment) Error!void {
+        try self.interface.flush();
+        self.alignment = alignment;
+    }
+
+    fn flush(writer: *Io.Writer) Io.Writer.Error!void {
+        const tw: *TextWriter = @fieldParentPtr("interface", writer);
+        try writer.defaultFlush();
+        tw.needs_flush = false;
+    }
+
+    fn drain(writer: *Io.Writer, data: []const []const u8, splat: usize) Io.Writer.Error!usize {
+        // Gather information for the write
+        const tw: *TextWriter = @fieldParentPtr("interface", writer);
+        if (tw.err != null) return error.WriteFailed;
+        if (tw.needs_flush) return tw.fail(error.OutOfMemory);
+
+        const buffered = writer.buffered();
+        _ = writer.consumeAll();
+        const slice = data[0 .. data.len - 1];
+        const pattern = data[data.len - 1];
+
+        // Measure the text to be written and offset the cursor if necessary
+        switch (tw.alignment) {
+            .left => {},
+            .right, .center => {
+                var advance: i16 = 0;
+                var last_glyph: ?GlyphIndex = null;
+                const font = tw.font;
+                const options: MeasureOptions = .{
+                    .kerning = tw.kerning,
+                    .last_glyph = &last_glyph,
+                };
+                advance += (try tw.mapErr(font.measure(buffered, options))).advance.x;
+                for (slice) |bytes| advance += (try tw.mapErr(font.measure(bytes, options))).advance.x;
+                for (0..splat) |_| advance += (try tw.mapErr(font.measure(pattern, options))).advance.x;
+
+                switch (tw.alignment) {
+                    .left => unreachable,
+                    .right => tw.cursor.x -= advance,
+                    .center => tw.cursor.x -= @divTrunc(advance, 2),
+                }
+                tw.last_glyph = null;
+                tw.needs_flush = true;
+            },
+        }
+
+        // Write the text
+        try tw.mapErr(tw.writeAll(buffered));
+        for (slice) |bytes| try tw.mapErr(tw.writeAll(bytes));
+        for (0..splat) |_| try tw.mapErr(tw.writeAll(pattern));
+
+        // Indicate to the caller that we wrote everything we had
+        return Io.Writer.countSplat(data, splat);
+    }
+
+    fn writeAll(self: *TextWriter, utf8: []const u8) Error!void {
         try self.font.draw(.{
             .gpa = self.gpa,
             .sink = self.sink,
@@ -82,54 +217,16 @@ pub const TextContext = struct {
         });
     }
 
-    const Alignment = enum {
-        left,
-        right,
-        center,
-    };
-
-    /// Similar to `draw`, but takes an arugment that controls alignment.
-    pub fn drawAligned(self: *TextContext, utf8: []const u8, alignment: Alignment) !void {
-        switch (alignment) {
-            .left => {},
-            .right => {
-                const metrics = try self.measure(utf8);
-                self.setCursor(.{
-                    .x = self.cursor.x - metrics.advance.x,
-                    .y = self.cursor.y - metrics.advance.y,
-                });
-            },
-            .center => {
-                const metrics = try self.measure(utf8);
-                self.setCursor(.{
-                    .x = self.cursor.x - @divTrunc(metrics.advance.x, 2),
-                    .y = self.cursor.y - metrics.advance.y,
-                });
-            },
-        }
-        try self.draw(utf8);
+    fn mapErr(
+        self: *TextWriter,
+        res: anytype,
+    ) Io.Writer.Error!@typeInfo(@TypeOf(res)).error_union.payload {
+        return res catch |err| return self.fail(err);
     }
 
-    /// Measures how much the cursor would advance if you were to pass the given string to `draw`
-    /// without changing any other state.
-    pub fn measure(self: *const TextContext, utf8: []const u8) !Metrics {
-        return self.font.measure(utf8, .{ .kerning = self.kerning });
-    }
-
-    /// Advances the cursor by a newline.
-    pub fn newline(self: *TextContext) void {
-        self.cursor.x = self.left_margin;
-        self.cursor.y += self.font.getLineAdvance();
-        self.setCursor(.{
-            .x = self.left_margin,
-            .y = self.cursor.y + self.font.getLineAdvance(),
-        });
-    }
-
-    /// Sets a new cursor position.
-    pub fn setCursor(self: *TextContext, cursor: x11.XY(i16)) void {
-        self.cursor = cursor;
-        self.last_glyph = null;
+    fn fail(self: *TextWriter, err: Error) Io.Writer.Error {
+        self.err = err;
+        return error.WriteFailed;
     }
 };
 
@@ -183,8 +280,8 @@ pub const DrawOptions = struct {
     last_glyph: *?GlyphIndex,
 };
 
-/// Low level text drawing. Prefer `TextContext.draw`.
-pub fn draw(self: *Font, options: DrawOptions) !void {
+/// Low level text drawing. See also `TextWriter`.
+pub fn draw(self: *Font, options: DrawOptions) Error!void {
     try drawOrMeasure(
         .draw,
         self,
@@ -208,19 +305,24 @@ pub const Metrics = struct {
 
 pub const MeasureOptions = struct {
     kerning: bool = true,
+    /// The last glyph drawn, used for kerning.
+    last_glyph: *?GlyphIndex,
 };
 
-/// Low level text measurement. Prefer `TextContent.measure`.
-pub fn measure(self: *const Font, utf8: []const u8, options: MeasureOptions) !Metrics {
+/// Measures the given text.
+pub fn measure(
+    self: *const Font,
+    utf8: []const u8,
+    options: MeasureOptions,
+) error{InvalidUtf8}!Metrics {
     var cursor: x11.XY(i16) = .zero;
-    var last_glyph: ?GlyphIndex = null;
     try drawOrMeasure(
         .measure,
         self,
         utf8,
         &cursor,
         options.kerning,
-        &last_glyph,
+        options.last_glyph,
         .{},
     );
     return .{ .advance = cursor };
@@ -287,7 +389,7 @@ fn drawOrMeasure(
     }
 }
 
-/// Low level kerning. Prefer `TextContext.draw`/`TextContext.measure` with kerning enabled.
+/// Low level kerning. Prefer `TextWriter.draw`/`TextWriter.measure` with kerning enabled.
 pub fn kern(
     self: *const Font,
     maybe_prev: ?GlyphIndex,
@@ -327,7 +429,7 @@ pub fn getGlyph(
     gpa: Allocator,
     sink: *x11.RequestSink,
     glyph_index: GlyphIndex,
-) !Glyph {
+) Error!Glyph {
     // Get the glyph info
     const measurement = self.getGlyphMetrics(glyph_index);
 

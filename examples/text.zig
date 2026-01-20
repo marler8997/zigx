@@ -203,7 +203,8 @@ fn render(
     const drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
     const margin = 50;
 
-    var tc: Font.TextContext = .{
+    var writer_buf: [16]u8 = undefined;
+    var writer: Font.TextWriter = .init(.{
         .font = font,
         .gpa = glyph_arena.allocator(),
         .sink = sink,
@@ -214,36 +215,50 @@ fn render(
             .y = 30,
         },
         .left_margin = margin,
-    };
+        .buffer = &writer_buf,
+    });
 
-    try tc.draw("Hello, World! These glyphs are missing: こんにちは");
-    tc.newline();
-    try tc.draw("The quick brown fox jumped over the lazy dog");
-    tc.newline();
-    try tc.draw("0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-    tc.newline();
-    try tc.draw("abcdefghijklmnopqrstuvwxyz");
+    try writer.interface.print("Hello, {s}! These glyphs are missing: こんにちは", .{"World"});
+    try writer.newline();
+    try writer.interface.writeAll("The quick brown fox jumped over the lazy dog");
+    try writer.newline();
+    try writer.interface.writeAll("0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    try writer.newline();
+    try writer.interface.writeAll("abcdefghijklmnopqrstuvwxyz");
+    try writer.newline();
 
-    tc.left_margin = 300;
-    tc.newline();
-    try tc.drawAligned("This text is not centered -- ", .right);
-    try tc.drawAligned("it", .left);
-    tc.newline();
-    try tc.drawAligned("is aligned -- ", .right);
-    try tc.drawAligned("so that", .left);
-    tc.newline();
-    try tc.drawAligned("all the -- ", .right);
-    try tc.drawAligned("line up.", .left);
-    tc.newline();
+    writer.left_margin = 300;
+    try writer.newline();
 
-    tc.newline();
+    try writer.setAlignment(.right);
+    try writer.interface.writeAll("This text is not");
+    try writer.interface.writeAll(" centered -- ");
+    try writer.setAlignment(.left);
+    try writer.interface.writeAll("it");
+    try writer.newline();
 
-    try tc.drawAligned("On the other hand...", .center);
-    tc.newline();
-    try tc.drawAligned("this text", .center);
-    tc.newline();
-    try tc.drawAligned("is centered.", .center);
-    tc.newline();
+    try writer.setAlignment(.right);
+    try writer.interface.print("is {s} -- ", .{"aligned"});
+    try writer.setAlignment(.left);
+    try writer.interface.writeAll("so that");
+    try writer.newline();
+
+    try writer.setAlignment(.right);
+    try writer.interface.writeAll("all the -- ");
+    try writer.setAlignment(.left);
+    try writer.interface.writeAll("line up.");
+    try writer.newline();
+
+    try writer.newline();
+
+    try writer.setAlignment(.center);
+    try writer.interface.writeAll("On the other");
+    try writer.interface.writeAll("hand...");
+    try writer.newline();
+    try writer.interface.print("this {s}", .{"text"});
+    try writer.newline();
+    try writer.interface.writeAll("is centered, and also the last bit is longer than the buffer.");
+    try writer.newline();
 
     switch (dbe) {
         .unsupported => {},
