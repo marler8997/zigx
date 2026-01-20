@@ -6,10 +6,8 @@ const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const Allocator = std.mem.Allocator;
 const GlyphIndex = TrueType.GlyphIndex;
 
-const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
-const std15 = if (zig_atleast_15) std else @import("std15");
-
-const Io = std15.Io;
+const Reader = x11.Reader;
+const Writer = x11.Writer;
 
 const Font = @This();
 
@@ -19,7 +17,7 @@ scale: f32,
 color: u32,
 ids: Ids,
 
-const Error = Io.Writer.Error || TrueType.GlyphBitmapError || error{InvalidUtf8};
+const Error = Writer.Error || TrueType.GlyphBitmapError || error{InvalidUtf8};
 
 /// X11 IDs necessary to render the font.
 pub const Ids = struct {
@@ -68,7 +66,7 @@ pub const TextWriter = struct {
     /// The last glyph drawn. Used for kerning. Cleared automatically by `setCursor`, if you set the
     /// cursor position manually you should clear this value.
     last_glyph: ?GlyphIndex = null,
-    interface: Io.Writer,
+    interface: Writer,
     err: ?Error = null,
     alignment: Alignment = .left,
     needs_flush: bool = false,
@@ -153,13 +151,13 @@ pub const TextWriter = struct {
         self.alignment = alignment;
     }
 
-    fn flush(writer: *Io.Writer) Io.Writer.Error!void {
+    fn flush(writer: *Writer) Writer.Error!void {
         const tw: *TextWriter = @fieldParentPtr("interface", writer);
         try writer.defaultFlush();
         tw.needs_flush = false;
     }
 
-    fn drain(writer: *Io.Writer, data: []const []const u8, splat: usize) Io.Writer.Error!usize {
+    fn drain(writer: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
         // Gather information for the write
         const tw: *TextWriter = @fieldParentPtr("interface", writer);
         if (tw.err != null) return error.WriteFailed;
@@ -201,7 +199,7 @@ pub const TextWriter = struct {
         for (0..splat) |_| try tw.mapErr(tw.writeAll(pattern));
 
         // Indicate to the caller that we wrote everything we had
-        return Io.Writer.countSplat(data, splat);
+        return Writer.countSplat(data, splat);
     }
 
     fn writeAll(self: *TextWriter, utf8: []const u8) Error!void {
@@ -220,11 +218,11 @@ pub const TextWriter = struct {
     fn mapErr(
         self: *TextWriter,
         res: anytype,
-    ) Io.Writer.Error!@typeInfo(@TypeOf(res)).error_union.payload {
+    ) Writer.Error!@typeInfo(@TypeOf(res)).error_union.payload {
         return res catch |err| return self.fail(err);
     }
 
-    fn fail(self: *TextWriter, err: Error) Io.Writer.Error {
+    fn fail(self: *TextWriter, err: Error) Writer.Error {
         self.err = err;
         return error.WriteFailed;
     }
