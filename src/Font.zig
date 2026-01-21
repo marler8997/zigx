@@ -258,34 +258,48 @@ pub fn init(
     };
 }
 
-pub fn deinit(self: *Font, gpa: Allocator, sink: *x11.RequestSink) !void {
+fn freePixmaps(self: *Font, sink: *x11.RequestSink) !void {
     var iter = self.cache.iterator(.{});
     while (iter.next()) |glyph_index| {
         const pixmap = self.ids.glyphPixmap(@enumFromInt(glyph_index)).?;
         try sink.FreePixmap(pixmap);
     }
+}
+
+pub fn deinit(self: *Font, gpa: Allocator, sink: *x11.RequestSink) !void {
+    try self.freePixmaps(sink);
     self.cache.deinit(gpa);
     self.* = undefined;
 }
 
-/// Frees all glyph pixmaps (sends FreePixmap to the server). Also allows
-/// the size/color to be updated.
-pub fn reset(self: *Font, sink: *x11.RequestSink, update: struct {
-    new_size: ?f32 = null,
-    new_color: ?u32 = null,
-}) !void {
-    var iter = self.cache.iterator(.{});
-    while (iter.next()) |glyph_index| {
-        const pixmap = self.ids.glyphPixmap(@enumFromInt(glyph_index)).?;
-        try sink.FreePixmap(pixmap);
-    }
+/// Invalidates the cached glyphs, and asks the server to release their pixmap memory.
+pub fn invalidateCache(self: *Font, sink: *x11.RequestSink) !void {
+    try self.freePixmaps(sink);
     self.cache.unsetAll();
-    if (update.new_size) |new_size| {
-        self.scale = self.ttf.scaleForPixelHeight(new_size);
-    }
-    if (update.new_color) |new_color| {
-        self.color = new_color;
-    }
+}
+
+pub const ChangeOptions = struct {
+    ttf: ?*const TrueType = null,
+    size: ?f32 = null,
+    color: ?u32 = null,
+};
+
+/// Change the font. Properties left null are unchanged. If any properties are changed, the cache
+/// will be invalidated. This has performance implications.
+pub fn change(self: *Font, sink: *x11.RequestSink, options: ChangeOptions) !void {
+    // Get the new values, early out if they haven't changed
+    const ttf = options.ttf orelse self.ttf;
+    const color = options.color orelse self.color;
+    const scale = if (options.size) |size| self.ttf.scaleForPixelHeight(size) else self.scale;
+
+    if (ttf == self.ttf and color == self.color and scale == self.scale) return;
+
+    // Update the cached options and invalidate the cached
+    self.ttf = ttf;
+    self.color = color;
+    self.scale = scale;
+
+    try self.invalidateCache(sink);
 }
 
 pub const DrawOptions = struct {

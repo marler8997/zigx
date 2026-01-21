@@ -259,7 +259,7 @@ fn updateFontSize(
         break :blk font_min + (ratio * (font_max - font_min));
     };
     if (new_font_size == font_size.*) return false;
-    try font.reset(sink, .{ .new_size = new_font_size });
+    try font.change(sink, .{ .size = new_font_size });
     font_size.* = new_font_size;
     return true;
 }
