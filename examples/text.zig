@@ -192,7 +192,7 @@ pub fn main() !void {
                     const pt: XY(i16) = .{ .x = msg.event_x, .y = msg.event_y };
                     if (rectContains(layout.slider, pt)) {
                         sliding = true;
-                        do_render = try updateFontSize(&sink, &ttf, font_ids, &font_size, &font, layout.slider, pt.x);
+                        do_render = try updateFontSize(&sink, &font_size, &font, layout.slider, pt.x);
                     }
                 }
             },
@@ -206,7 +206,7 @@ pub fn main() !void {
                 const msg = try source.read2(.MotionNotify);
                 if (sliding) {
                     const pt: XY(i16) = .{ .x = msg.event_x, .y = msg.event_y };
-                    do_render = try updateFontSize(&sink, &ttf, font_ids, &font_size, &font, layout.slider, pt.x);
+                    do_render = try updateFontSize(&sink, &font_size, &font, layout.slider, pt.x);
                 }
             },
             .Expose => {
@@ -247,8 +247,6 @@ pub fn main() !void {
 
 fn updateFontSize(
     sink: *x11.RequestSink,
-    ttf: *const TrueType,
-    font_ids: Font.Ids,
     font_size: *f32,
     font: *Font,
     slider_rect: x11.Rectangle,
@@ -261,11 +259,7 @@ fn updateFontSize(
         break :blk font_min + (ratio * (font_max - font_min));
     };
     if (new_font_size == font_size.*) return false;
-    try font.deinit(std.heap.page_allocator, sink);
-    font.* = try .init(std.heap.page_allocator, ttf, font_ids, .{
-        .size = new_font_size,
-        .color = 0xffffff,
-    });
+    try font.reset(sink, .{ .new_size = new_font_size });
     font_size.* = new_font_size;
     return true;
 }

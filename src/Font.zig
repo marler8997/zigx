@@ -268,6 +268,26 @@ pub fn deinit(self: *Font, gpa: Allocator, sink: *x11.RequestSink) !void {
     self.* = undefined;
 }
 
+/// Frees all glyph pixmaps (sends FreePixmap to the server). Also allows
+/// the size/color to be updated.
+pub fn reset(self: *Font, sink: *x11.RequestSink, update: struct {
+    new_size: ?f32 = null,
+    new_color: ?u32 = null,
+}) !void {
+    var iter = self.cache.iterator(.{});
+    while (iter.next()) |glyph_index| {
+        const pixmap = self.ids.glyphPixmap(@enumFromInt(glyph_index)).?;
+        try sink.FreePixmap(pixmap);
+    }
+    self.cache.unsetAll();
+    if (update.new_size) |new_size| {
+        self.scale = self.ttf.scaleForPixelHeight(new_size);
+    }
+    if (update.new_color) |new_color| {
+        self.color = new_color;
+    }
+}
+
 pub const DrawOptions = struct {
     gpa: Allocator,
     sink: *x11.RequestSink,
