@@ -265,7 +265,7 @@ fn updateFontSize(
 }
 
 const font_min: f32 = 1.0;
-const font_max: f32 = 100.0;
+const font_max: f32 = 200.0;
 
 fn rectContains(rect: x11.Rectangle, pt: XY(i16)) bool {
     return pt.x >= rect.x and
