@@ -11,8 +11,8 @@
             .lazy = true,
         },
         .TrueType = .{
-            .url = "git+https://codeberg.org/andrewrk/TrueType#9b9e6bb31b68ebbd5a819dd4628cea1a6b05c1d6",
-            .hash = "TrueType-0.0.0-Ne-mWEVyAQB-2nuvSOhvXGPzCRuebWrePnA9juSDdPRm",
+            .url = "git+https://codeberg.org/andrewrk/TrueType#48b2d71ed642ee86c129f78d5f8c0212bfd11756",
+            .hash = "TrueType-0.0.0-Ne-mWAtyAQAZWZQi35XSb-0PQKVdBRbNaTVDviDVtnnl",
         },
         // Used by examples
         .inter = .{

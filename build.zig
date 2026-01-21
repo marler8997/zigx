@@ -39,6 +39,16 @@ pub fn build(b: *std.Build) void {
         }
     }
 
+    const true_type_mod = b.dependency("TrueType", .{}).module("TrueType");
+
+    const font_mod = b.addModule("Font", .{
+        .root_source_file = b.path("src/Font.zig"),
+        .imports = &.{
+            .{ .name = "x11", .module = x_mod },
+            .{ .name = "TrueType", .module = true_type_mod },
+        },
+    });
+
     const examples_exe = b.addExecutable(.{
         .name = "examples",
         .root_module = b.createModule(.{
@@ -54,8 +64,6 @@ pub fn build(b: *std.Build) void {
 
     const build_examples_step = b.step("build-examples", "");
 
-    const true_type_mod = b.dependency("TrueType", .{}).module("TrueType");
-
     const check = b.step("check", "Check if all examples compile");
     inline for (examples) |example| {
         const example_mod = b.createModule(.{
@@ -67,7 +75,7 @@ pub fn build(b: *std.Build) void {
             },
         });
         if (example.needs_text) {
-            example_mod.addImport("TrueType", true_type_mod);
+            example_mod.addImport("Font", font_mod);
 
             const inter = b.dependency("inter", .{});
             example_mod.addImport("InterVariable.ttf", b.createModule(.{
