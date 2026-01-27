@@ -27,6 +27,23 @@ const Ids = struct {
     }
 };
 
+fn hasData(socket_reader: *x11.Stream15.Reader) !bool {
+    if (socket_reader.interface().seek > socket_reader.interface().end) return true;
+    var fds = [_]std.posix.pollfd{.{
+        .fd = socket_reader.getStream().handle,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    const result = try std.posix.poll(&fds, 0);
+    if (result == 0) return false;
+    if ((fds[0].revents & std.posix.POLL.IN) != 0) return true;
+    if ((fds[0].revents & std.posix.POLL.HUP) != 0) {
+        std.log.info("X11 connection closed (Hangup)", .{});
+        std.process.exit(0);
+    }
+    std.debug.panic("unknown poll revents 0x{}", .{fds[0].revents});
+}
+
 pub fn main() !void {
     var arena_instance: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     // no need to deinit
@@ -167,9 +184,10 @@ pub fn main() !void {
     var layout: Layout = .{
         .slider = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
     };
+    var do_render = false;
 
     while (true) {
-        try sink.writer.flush();
+        if (!do_render) try sink.writer.flush();
         const msg_kind = source.readKind() catch |err| return switch (err) {
             error.EndOfStream => {
                 std.log.info("X11 connection closed (EndOfStream)", .{});
@@ -184,7 +202,6 @@ pub fn main() !void {
             },
         };
 
-        var do_render = false;
         switch (msg_kind) {
             .ButtonPress => {
                 const msg = try source.read2(.ButtonPress);
@@ -231,16 +248,20 @@ pub fn main() !void {
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }
         if (do_render) {
-            layout = try render(
-                &glyph_arena,
-                &sink,
-                ids,
-                dbe,
-                &font,
-                window_size,
-                font_size,
-                opt.font_file,
-            );
+            // only render when socket is idle
+            if (!try hasData(&socket_reader)) {
+                layout = try render(
+                    &glyph_arena,
+                    &sink,
+                    ids,
+                    dbe,
+                    &font,
+                    window_size,
+                    font_size,
+                    opt.font_file,
+                );
+                do_render = false;
+            }
         }
     }
 }
