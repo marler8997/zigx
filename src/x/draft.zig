@@ -151,7 +151,10 @@ pub fn readSetupDynamic(
         }
         const vendor_written = old_remaining - source.replyRemainingSize();
         const vendor_remaining = setup.vendor_len - vendor_written;
-        try source.replyDiscard(vendor_remaining + x11.pad4Len(@truncate(setup.vendor_len)));
+        const vendor_remaining_bytes: usize = @intCast(
+            vendor_remaining + x11.pad4Len(@truncate(setup.vendor_len)),
+        );
+        try source.replyDiscard(vendor_remaining_bytes);
     }
 
     for (0..setup.format_count) |index| {
