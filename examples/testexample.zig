@@ -483,12 +483,12 @@ pub fn main() !u8 {
                     maybe_get_img_sequence = sink.sequence;
                 }
             },
-            .MappingNotify,
             .DestroyNotify,
             .UnmapNotify,
             .MapNotify,
             .ReparentNotify,
             .ConfigureNotify,
+            .MappingNotify,
             => {
                 std.log.info("X11 {f}", .{source.readFmt()});
                 // ensures we still discard the rest of the message if logging is disabled

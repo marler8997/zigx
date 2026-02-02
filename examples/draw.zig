@@ -199,6 +199,7 @@ pub fn main() !void {
             },
             .MapNotify,
             .ReparentNotify,
+            .MappingNotify,
             => {
                 try source.discardRemaining();
             },

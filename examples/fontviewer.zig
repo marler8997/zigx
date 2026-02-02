@@ -194,6 +194,7 @@ pub fn main() !u8 {
                 std.log.info("X11 {}", .{expose});
                 try state.onExpose(&expose, &sink, ids, fonts);
             },
+            .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }
     }

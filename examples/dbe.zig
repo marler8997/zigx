@@ -242,6 +242,7 @@ pub fn main() !u8 {
                     animate_frame_ms,
                 );
             },
+            .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected message {f}", .{source.readFmt()}),
         }
     }

@@ -167,6 +167,7 @@ pub fn main() !u8 {
                     key_log_next,
                 );
             },
+            .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }
     }

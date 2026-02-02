@@ -126,6 +126,10 @@ pub fn main() !void {
                 std.log.info("X11 {}", .{expose});
                 try render(&sink, ids.window(), ids.bg_gc(), ids.fg_gc(), font_dims);
             },
+            .MappingNotify => {
+                const notify = try source.read2(.MappingNotify);
+                std.log.info("ignoring {}", .{notify});
+            },
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }
     }

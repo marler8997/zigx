@@ -298,6 +298,7 @@ pub fn main() !u8 {
                     else => std.debug.panic("unexpected X11 extension event {}", .{event}),
                 }
             },
+            .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }
     }

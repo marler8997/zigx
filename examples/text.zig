@@ -242,8 +242,8 @@ pub fn main() !void {
                 }
             },
             .MapNotify,
-            .MappingNotify,
             .ReparentNotify,
+            .MappingNotify,
             => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }

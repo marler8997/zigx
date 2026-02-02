@@ -163,6 +163,7 @@ pub fn main() !void {
                 std.log.info("X11 {}", .{expose});
                 try render(&sink, ids.window(), ids.gc(), font_dims);
             },
+            .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }
     }
