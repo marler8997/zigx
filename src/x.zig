@@ -4323,7 +4323,7 @@ pub const Source = struct {
             .reply => |*reply_state| {
                 const remaining = reply_state.remaining();
                 std.debug.assert(remaining > 0);
-                try source.reader.discardAll(remaining);
+                try source.reader.discardAll(@intCast(remaining));
                 source.state = .kind;
             },
             .err => return,
