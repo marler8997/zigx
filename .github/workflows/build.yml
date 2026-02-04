@@ -1,0 +1,51 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows builds
+          - os: windows-latest
+            arch: aarch64
+          - os: windows-latest
+            arch: x86
+          - os: windows-latest
+            arch: x86_64
+          # macOS builds
+          - os: macos-latest
+            arch: aarch64
+          - os: macos-latest
+            arch: x86_64
+          # Linux builds
+          - os: ubuntu-latest
+            arch: aarch64
+          - os: ubuntu-latest
+            arch: armv7a
+          - os: ubuntu-latest
+            arch: powerpc64le
+          - os: ubuntu-latest
+            arch: riscv64
+          - os: ubuntu-latest
+            arch: x86
+          - os: ubuntu-latest
+            arch: x86_64
+
+    runs-on: ${{matrix.os}}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+
+      - name: Build
+        run: zig build --summary all install test-non-interactive
