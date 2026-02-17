@@ -5849,6 +5849,7 @@ pub const PolyPointSink = struct {
             point_sink.state = .{ .header_written = .{
                 .start_offset = start_offset,
             } };
+            msg_sink.sequence +%= 1;
         }
         if (maybe_previous_point) |p2| {
             writeIntNoFlush(msg_sink.writer, i16, p2.x);
