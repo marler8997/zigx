@@ -1642,9 +1642,23 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub fn ChangeWindowAttributes(sink: *RequestSink) error{WriteFailed}!void {
-        _ = sink;
-        @compileError("todo");
+    pub fn ChangeWindowAttributes(sink: *RequestSink, window_id: Window, options: window.Options) error{WriteFailed}!void {
+        const msg = inspectChangeWindowAttributes(&options);
+        var offset: usize = 0;
+        try writeAll(sink.writer, &offset, &[_]u8{
+            @intFromEnum(Opcode.change_window_attributes),
+            0, // unused
+        });
+        try writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
+        try writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
+        try writeInt(sink.writer, &offset, u32, @bitCast(msg.option_mask));
+        inline for (std.meta.fields(window.Options)) |field| {
+            if (!isDefaultValue(&options, field)) {
+                try writeInt(sink.writer, &offset, u32, optionToU32(@field(options, field.name)));
+            }
+        }
+        std.debug.assert(msg.len == offset);
+        sink.sequence +%= 1;
     }
 
     pub fn DestroyWindow(sink: *RequestSink, window_id: Window) error{WriteFailed}!void {
@@ -3066,6 +3080,27 @@ fn inspectCreateWindow(options: *const window.Options) struct {
         + 10 // 2 bytes each for x, y, width, height and border-width
         + 2 // window class
         + 4 // visual id
+        + 4 // window options value-mask
+    ;
+    var len: u18 = non_option_len;
+    var option_mask: window.OptionMask = .{};
+    inline for (std.meta.fields(window.Options)) |field| {
+        if (!isDefaultValue(options, field)) {
+            @field(option_mask, field.name) = 1;
+            len += 4;
+        }
+    }
+    return .{ .len = len, .option_mask = option_mask };
+}
+
+fn inspectChangeWindowAttributes(options: *const window.Options) struct {
+    len: u18,
+    option_mask: window.OptionMask,
+} {
+    const non_option_len: u18 =
+        2 // opcode and unused
+        + 2 // request length
+        + 4 // window id
         + 4 // window options value-mask
     ;
     var len: u18 = non_option_len;

@@ -13,6 +13,7 @@ const Key = enum {
     c,
     l,
     p,
+    r,
 };
 
 const bg_color = 0x231a20;
@@ -99,6 +100,7 @@ pub fn main() !u8 {
                     => .c,
                     .latin_l => .l,
                     .latin_p => .p,
+                    .latin_r => .r,
                     else => null,
                 })) |key| {
                     if (keycode_map[keycode]) |existing| {
@@ -245,6 +247,9 @@ pub fn main() !u8 {
                     .p => {
                         try togglePassthrough(&sink, &state, ids.window(), ids);
                     },
+                    .r => {
+                        try toggleResourceManagerWatch(&sink, &state, screen.window);
+                    },
                     .escape => {
                         std.log.info("ESC pressed, exiting loop...", .{});
                         return 0;
@@ -297,6 +302,15 @@ pub fn main() !u8 {
                     },
                     else => std.debug.panic("unexpected X11 extension event {}", .{event}),
                 }
+            },
+            .PropertyNotify => {
+                const event = try source.read2(.PropertyNotify);
+                if (event.atom == .RESOURCE_MANAGER) {
+                    std.log.info("PropertyNotify: RESOURCE_MANAGER changed on root window", .{});
+                } else {
+                    std.log.info("PropertyNotify: atom={any} window={any}", .{ event.atom, event.window });
+                }
+                try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
             },
             .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
@@ -692,6 +706,22 @@ fn togglePassthrough(sink: *x11.RequestSink, state: *State, window_id: x11.Windo
     }
 }
 
+fn toggleResourceManagerWatch(sink: *x11.RequestSink, state: *State, root_window_id: x11.Window) !void {
+    if (state.resource_manager_watch) {
+        std.log.info("stopping RESOURCE_MANAGER watch on root window", .{});
+        try sink.ChangeWindowAttributes(root_window_id, .{
+            .event_mask = .{},
+        });
+        state.resource_manager_watch = false;
+    } else {
+        std.log.info("watching RESOURCE_MANAGER on root window (try: xrdb -merge <<<'Xft.dpi: 192')", .{});
+        try sink.ChangeWindowAttributes(root_window_id, .{
+            .event_mask = .{ .PropertyChange = 1 },
+        });
+        state.resource_manager_watch = true;
+    }
+}
+
 const FontDims = struct {
     width: u8,
     height: u8,
@@ -783,6 +813,8 @@ const State = struct {
         enabled: void, // passthrough is active, input goes through window
         disabled: void, // passthrough is not active, normal input handling
     } = .initial,
+
+    resource_manager_watch: bool = false,
 
     fn toggleGrab(self: *State, sink: *x11.RequestSink, grab_window: x11.Window) !void {
         switch (self.grab) {
@@ -988,4 +1020,15 @@ fn render(
             .{suffix},
         );
     }
+    try renderString(
+        sink,
+        window_id.drawable(),
+        fg_gc_id,
+        .{
+            .x = font_dims.font_left,
+            .y = font_dims.font_ascent + (9 * font_dims.height),
+        },
+        "(R)ESOURCE_MANAGER watch{s}",
+        .{if (state.resource_manager_watch) " (enabled)" else ""},
+    );
 }
