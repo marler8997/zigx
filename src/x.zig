@@ -3607,6 +3607,7 @@ pub fn writeIntNative(comptime T: type, buf: [*]u8, value: T) void {
 }
 
 pub const Atom = enum(u32) {
+    None = 0,
     PRIMARY = 1,
     SECONDARY = 2,
     ARC = 3,
@@ -4461,17 +4462,26 @@ pub const Source = struct {
         source: *Source,
         sequence: u16,
     ) (error{UnexpectedMessage} || ProtocolError || Reader.Error)!servermsg.Reply {
-        const msg_kind = try source.readKind();
-        if (msg_kind != .Reply) {
-            log.err("expected Reply but got {f}", .{source.readFmt()});
-            return error.UnexpectedMessage;
-        }
-        const reply = try source.read2(.Reply);
-        if (reply.sequence != sequence) {
-            log.err("expected sequence {} but got {f}", .{ sequence, source.readFmt() });
-            return error.UnexpectedMessage;
-        }
-        return reply;
+        while (true) switch (try source.readKind()) {
+            .Reply => {
+                const reply = try source.read2(.Reply);
+                if (reply.sequence != sequence) {
+                    log.err("expected sequence {} but got {f}", .{ sequence, source.readFmt() });
+                    return error.UnexpectedMessage;
+                }
+                return reply;
+            },
+            // MappingNotify is delivered to all clients regardless of event masks
+            // and can arrive at any time, including during synchronous init.
+            .MappingNotify => {
+                log.debug("skipping MappingNotify during synchronous read", .{});
+                try source.discardRemaining();
+            },
+            else => {
+                log.err("expected Reply but got {f}", .{source.readFmt()});
+                return error.UnexpectedMessage;
+            },
+        };
     }
 
     pub fn read3Full(
@@ -5468,6 +5478,7 @@ pub const GrabResult = enum(u8) {
 };
 
 pub const stage3 = struct {
+    // QueryTree 15
     comptime {
         std.debug.assert(@sizeOf(QueryTree) == 24);
     }
@@ -5478,7 +5489,15 @@ pub const stage3 = struct {
         unused: [14]u8,
         // folowwed by LISTofWINDOW
     };
-
+    // InternAtom 16
+    comptime {
+        std.debug.assert(@sizeOf(InternAtom) == 24);
+    }
+    pub const InternAtom = extern struct {
+        atom: Atom,
+        unused: [20]u8,
+    };
+    // GetProperty 20
     comptime {
         std.debug.assert(@sizeOf(GetProperty) == 24);
     }
@@ -5491,10 +5510,12 @@ pub const stage3 = struct {
         unused: [12]u8,
         // followed by LISTofBYTE and pad
     };
+    // GrabPointer 26
     comptime {
         std.debug.assert(@sizeOf(GrabPointer) == 24);
     }
     pub const GrabPointer = [24]u8;
+    // QueryFont 47
     comptime {
         std.debug.assert(@sizeOf(QueryFont) == 52);
     }
@@ -5519,6 +5540,7 @@ pub const stage3 = struct {
             return body_size - (@sizeOf(QueryFont) - 24);
         }
     };
+    // QueryTextExtents 48
     comptime {
         std.debug.assert(@sizeOf(QueryTextExtents) == 24);
     }
@@ -5639,6 +5661,7 @@ pub const Read3Header = enum {
 
 const Read3Full = enum {
     GrabPointer,
+    InternAtom,
     QueryTextExtents,
     QueryExtension,
 
