@@ -4,10 +4,6 @@ const x11 = @import("x11");
 const window_width = 400;
 const window_height = 400;
 
-const global = struct {
-    var transparent_visual: x11.Visual = .copy_from_parent;
-};
-
 const Ids = struct {
     base: x11.ResourceBase,
     pub fn window(self: Ids) x11.Window {
@@ -27,7 +23,7 @@ const Ids = struct {
 pub fn main() !void {
     try x11.wsaStartup();
 
-    const stream: std.net.Stream, const ids: Ids, const root_window: x11.Window = blk: {
+    const stream: std.net.Stream, const ids: Ids, const root_window: x11.Window, const transparent_visual: x11.Visual = blk: {
         var read_buffer: [1000]u8 = undefined;
         var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
         errdefer x11.disconnect(socket_reader.getStream());
@@ -35,13 +31,14 @@ pub fn main() !void {
         const setup = try x11.readSetupSuccess(socket_reader.interface());
         std.log.info("setup reply {f}", .{setup});
         var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+        var on_visual: OnVisual = .{};
         const screen = try x11.draft.readSetupDynamic(&source, &setup, .{
-            .on_visual = onVisual,
+            .on_visual = &on_visual.base,
         }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
-        if (global.transparent_visual == .copy_from_parent) {
+        if (on_visual.transparent_visual == .copy_from_parent) {
             std.log.info("no visual compatible with transparency", .{});
             std.process.exit(0xff);
         }
@@ -49,6 +46,7 @@ pub fn main() !void {
             socket_reader.getStream(),
             .{ .base = setup.resource_id_base },
             screen.root,
+            on_visual.transparent_visual,
         };
     };
     defer x11.disconnect(stream);
@@ -71,17 +69,13 @@ pub fn main() !void {
         break :blk .{ .enabled = .{ .opcode_base = ext.opcode_base } };
     };
 
-    if (global.transparent_visual == .copy_from_parent) {
-        std.log.info("TransparentVisual: none", .{});
-    } else {
-        std.log.info("TransparentVisual: {}", .{@intFromEnum(global.transparent_visual)});
-    }
+    std.log.info("TransparentVisual: {}", .{@intFromEnum(transparent_visual)});
 
     try sink.CreateColormap(
         .none,
         ids.colormap(),
         root_window,
-        global.transparent_visual,
+        transparent_visual,
     );
 
     const make_overlay = false;
@@ -97,7 +91,7 @@ pub fn main() !void {
             .height = window_height,
             .border_width = 0,
             .class = .input_output,
-            .visual_id = global.transparent_visual,
+            .visual_id = transparent_visual,
         },
         .{
             .bg_pixel = 0, // fully transparent background
@@ -176,41 +170,49 @@ const Fixes = union(enum) {
     },
 };
 
-fn onVisual(
-    screen_index: u8,
-    depth: u8,
-    visual_index: u16,
-    visual: *const x11.VisualType,
-) void {
-    std.log.info(
-        "X11 Visual screen[{}] depth {} visual[{}] id={} class={f} bits-per-ch={} map_cnt={} red=0x{x} grn=0x{x} blu=0x{x}",
-        .{
-            screen_index,
-            depth,
-            visual_index,
-            @intFromEnum(visual.id),
-            x11.fmtEnum(visual.class),
-            visual.bits_per_rgb_value,
-            visual.colormap_entries,
-            visual.red_mask,
-            visual.green_mask,
-            visual.blue_mask,
-        },
-    );
-    if (global.transparent_visual == .copy_from_parent) {
-        if (screen_index == 0 and
-            depth == 32 and
-            visual.class == .true_color and
-            visual.bits_per_rgb_value == 8 and
-            visual.colormap_entries == 256 and
-            visual.red_mask == 0xff0000 and
-            visual.green_mask == 0xff00 and
-            visual.blue_mask == 0xff)
-        {
-            global.transparent_visual = visual.id;
+const OnVisual = struct {
+    base: x11.draft.OnVisual = .{ .func = onVisual },
+    transparent_visual: x11.Visual = .copy_from_parent,
+    fn onVisual(
+        base: *x11.draft.OnVisual,
+        screen_index: u8,
+        depth: u8,
+        visual_index: u16,
+        visual: *const x11.VisualType,
+    ) void {
+        std.log.info(
+            "X11 Visual screen[{}] depth {} visual[{}] id={} class={f} bits-per-ch={} map_cnt={} red=0x{x} grn=0x{x} blu=0x{x}",
+            .{
+                screen_index,
+                depth,
+                visual_index,
+                @intFromEnum(visual.id),
+                x11.fmtEnum(visual.class),
+                visual.bits_per_rgb_value,
+                visual.colormap_entries,
+                visual.red_mask,
+                visual.green_mask,
+                visual.blue_mask,
+            },
+        );
+
+        const on: *OnVisual = @fieldParentPtr("base", base);
+
+        if (on.transparent_visual == .copy_from_parent) {
+            if (screen_index == 0 and
+                depth == 32 and
+                visual.class == .true_color and
+                visual.bits_per_rgb_value == 8 and
+                visual.colormap_entries == 256 and
+                visual.red_mask == 0xff0000 and
+                visual.green_mask == 0xff00 and
+                visual.blue_mask == 0xff)
+            {
+                on.transparent_visual = visual.id;
+            }
         }
     }
-}
+};
 
 const FontDims = struct {
     width: u8,

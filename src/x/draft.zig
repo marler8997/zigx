@@ -116,17 +116,22 @@ pub fn authenticate(
     };
 }
 
+pub const OnVisual = struct {
+    func: *const fn (
+        *OnVisual,
+        screen_index: u8,
+        depth: u8,
+        visual_index: u16,
+        visual: *const x11.VisualType,
+    ) void,
+};
+
 pub fn readSetupDynamic(
     source: *x11.Source,
     setup: *const x11.Setup,
     opt: struct {
         log_vendor: bool = true,
-        on_visual: ?*const fn (
-            screen_index: u8,
-            depth: u8,
-            visual_index: u16,
-            visual: *const x11.VisualType,
-        ) void = null,
+        on_visual: ?*OnVisual = null,
     },
 ) (x11.ProtocolError || x11.Reader.Error)!?x11.ScreenHeader {
     try source.requireReplyAtLeast(setup.required());
@@ -182,7 +187,13 @@ pub fn readSetupDynamic(
             for (0..depth.visual_type_count) |visual_index| {
                 var visual: x11.VisualType = undefined;
                 try source.readReply(std.mem.asBytes(&visual));
-                if (opt.on_visual) |f| f(@intCast(screen_index), depth.depth, @intCast(visual_index), &visual);
+                if (opt.on_visual) |on_visual| on_visual.func(
+                    on_visual,
+                    @intCast(screen_index),
+                    depth.depth,
+                    @intCast(visual_index),
+                    &visual,
+                );
             }
         }
     }

@@ -247,8 +247,9 @@ pub const GetDisplayError = error{
     InvalidWtf8,
 };
 
-/// Returns the DISPLAY environment variable.
+/// Returns the DISPLAY environment variable for any platform.
 /// On windows it just uses the page allocator and leaks the result.
+/// Use getDisplayPosix which has no possible error for non-windows systems.
 pub fn getDisplay() GetDisplayError!Display {
     if (builtin.os.tag == .windows) {
         // we'll just make an allocator and never free it, no
@@ -261,6 +262,11 @@ pub fn getDisplay() GetDisplayError!Display {
             => |e| return e,
         } };
     }
+    return getDisplayPosix();
+}
+
+/// Posix-specific function to get DISPLAY which cannot fail.
+pub fn getDisplayPosix() Display {
     return .{ .string = posix.getenv("DISPLAY") };
 }
 
@@ -1687,6 +1693,19 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
+    pub fn UnmapWindow(sink: *RequestSink, w: Window) error{WriteFailed}!void {
+        const msg_len = 8;
+        var offset: usize = 0;
+        try writeAll(sink.writer, &offset, &[_]u8{
+            @intFromEnum(Opcode.unmap_window),
+            0, // unused
+        });
+        try writeInt(sink.writer, &offset, u16, msg_len >> 2);
+        try writeInt(sink.writer, &offset, u32, @intFromEnum(w));
+        std.debug.assert(offset == msg_len);
+        sink.sequence +%= 1;
+    }
+
     pub fn ConfigureWindow(
         sink: *RequestSink,
         window_id: Window,
@@ -2856,6 +2875,7 @@ pub const Opcode = enum(u8) {
     change_window_attributes = 2,
     destroy_window = 4,
     map_window = 8,
+    unmap_window = 10,
     configure_window = 12,
     query_tree = 15,
     intern_atom = 16,
