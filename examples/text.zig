@@ -28,7 +28,7 @@ const Ids = struct {
 };
 
 fn hasData(socket_reader: *x11.Stream15.Reader) !bool {
-    if (socket_reader.interface().seek > socket_reader.interface().end) return true;
+    if (socket_reader.interface().end > socket_reader.interface().seek) return true;
     var fds = [_]std.posix.pollfd{.{
         .fd = socket_reader.getStream().handle,
         .events = std.posix.POLL.IN,
