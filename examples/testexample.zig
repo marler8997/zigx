@@ -731,6 +731,44 @@ fn render(
             .width = 100,
             .height = 100,
         });
+
+        // Exercise FillRectangles: draw colored rectangles on the window
+        try x11.render.FillRectangles(sink, render_ext.opcode_base, .{
+            .picture_operation = .over,
+            .dst_picture = ids.picture_window(),
+            .color = x11.render.Color.fromRgb24(0xff0000),
+            .rects = .initComptime(&.{
+                .{ .x = 200, .y = 50, .width = 60, .height = 40 },
+                .{ .x = 270, .y = 50, .width = 60, .height = 40 },
+            }),
+        });
+        try x11.render.FillRectangles(sink, render_ext.opcode_base, .{
+            .picture_operation = .over,
+            .dst_picture = ids.picture_window(),
+            .color = .{ .red = 0, .green = 0xcccc, .blue = 0, .alpha = 0x8000 },
+            .rects = .initComptime(&.{
+                .{ .x = 230, .y = 70, .width = 80, .height = 40 },
+            }),
+        });
+
+        // Exercise CreateSolidFill: create a solid blue picture and composite it
+        const solid_blue = ids.base.add(6).picture();
+        try x11.render.CreateSolidFill(sink, render_ext.opcode_base, solid_blue, x11.render.Color.fromRgb24(0x0000ff));
+        try x11.render.Composite(sink, render_ext.opcode_base, .{
+            .picture_operation = .over,
+            .src_picture = solid_blue,
+            .mask_picture = x11.render.Picture.none,
+            .dst_picture = ids.picture_window(),
+            .src_x = 0,
+            .src_y = 0,
+            .mask_x = 0,
+            .mask_y = 0,
+            .dst_x = 200,
+            .dst_y = 120,
+            .width = 130,
+            .height = 30,
+        });
+        try x11.render.FreePicture(sink, render_ext.opcode_base, solid_blue);
     }
 }
 

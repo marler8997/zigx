@@ -43,6 +43,22 @@ pub const PictureFormat = enum(u32) {
     }
 };
 
+pub const Color = struct {
+    red: u16,
+    green: u16,
+    blue: u16,
+    alpha: u16,
+
+    pub fn fromRgb24(rgb: u24) Color {
+        return .{
+            .red = @as(u16, @as(u8, @truncate(rgb >> 16))) * 0x101,
+            .green = @as(u16, @as(u8, @truncate(rgb >> 8))) * 0x101,
+            .blue = @as(u16, @as(u8, @truncate(rgb))) * 0x101,
+            .alpha = 0xffff,
+        };
+    }
+};
+
 pub const Opcode = enum(u8) {
     query_version = 0,
     query_pict_formats = 1,
@@ -70,7 +86,7 @@ pub const Opcode = enum(u8) {
     // composite_glyphs_16 = 24,
     // composite_glyphs_32 = 25,
     // new in version 0.1
-    // fill_rectangles = 26,
+    fill_rectangles = 26,
     // new in version 0.5
     // create_cursor = 27,
     // new in version 0.6
@@ -82,7 +98,7 @@ pub const Opcode = enum(u8) {
     // new in version 0.9
     // add_traps = 32,
     // new in version 0.10
-    // create_solid_fill = 33,
+    create_solid_fill = 33,
     // create_linear_gradient = 34,
     // create_radial_gradient = 35,
     // create_conical_gradient = 36,
@@ -387,6 +403,98 @@ pub fn Composite(sink: *x11.RequestSink, ext_opcode: u8, named: struct {
     try x11.writeInt(sink.writer, &offset, i16, named.dst_y);
     try x11.writeInt(sink.writer, &offset, u16, named.width);
     try x11.writeInt(sink.writer, &offset, u16, named.height);
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+
+pub fn FreePicture(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    picture_id: Picture,
+) error{WriteFailed}!void {
+    const msg_len =
+        2 // extension and command opcodes
+        + 2 // request length
+        + 4 // picture ID
+    ;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(Opcode.free_picture),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(picture_id));
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+
+/// FillRectangles (opcode 26, version 0.1)
+/// Fills rectangles in a Picture with a solid color using the specified operation.
+pub fn FillRectangles(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    named: struct {
+        picture_operation: PictureOperation,
+        dst_picture: Picture,
+        color: Color,
+        rects: x11.Slice(u16, [*]const x11.Rectangle),
+    },
+) error{WriteFailed}!void {
+    const header_len = 20;
+    const rects_len: u32 = @as(u32, named.rects.len) * 8;
+    const msg_len: u32 = header_len + rects_len;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(Opcode.fill_rectangles),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        @intFromEnum(named.picture_operation),
+        0, 0, 0, // padding
+    });
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.dst_picture));
+    try x11.writeInt(sink.writer, &offset, u16, named.color.red);
+    try x11.writeInt(sink.writer, &offset, u16, named.color.green);
+    try x11.writeInt(sink.writer, &offset, u16, named.color.blue);
+    try x11.writeInt(sink.writer, &offset, u16, named.color.alpha);
+    std.debug.assert(offset == header_len);
+    for (0..named.rects.len) |i| {
+        const rect = named.rects.ptr[i];
+        try x11.writeInt(sink.writer, &offset, i16, rect.x);
+        try x11.writeInt(sink.writer, &offset, i16, rect.y);
+        try x11.writeInt(sink.writer, &offset, u16, rect.width);
+        try x11.writeInt(sink.writer, &offset, u16, rect.height);
+    }
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+
+/// CreateSolidFill (opcode 33, version 0.10)
+/// Creates a Picture filled with a solid color that can be used as a repeating source.
+pub fn CreateSolidFill(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    picture_id: Picture,
+    color: Color,
+) error{WriteFailed}!void {
+    const msg_len =
+        2 // extension and command opcodes
+        + 2 // request length
+        + 4 // picture ID
+        + 8 // color (4 x u16)
+    ;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(Opcode.create_solid_fill),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(picture_id));
+    try x11.writeInt(sink.writer, &offset, u16, color.red);
+    try x11.writeInt(sink.writer, &offset, u16, color.green);
+    try x11.writeInt(sink.writer, &offset, u16, color.blue);
+    try x11.writeInt(sink.writer, &offset, u16, color.alpha);
     std.debug.assert(offset == msg_len);
     sink.sequence +%= 1;
 }
