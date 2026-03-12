@@ -2061,39 +2061,38 @@ pub const RequestSink = struct {
         sink.sequence +%= 1;
     }
 
-    pub inline fn CreateGc(sink: *RequestSink, gc: GraphicsContext, drawable: Drawable, opt: GcOptions) error{WriteFailed}!void {
-        try sink.updateGc(gc, .{ .create = drawable }, &opt);
-    }
-    pub inline fn ChangeGc(sink: *RequestSink, gc: GraphicsContext, opt: GcOptions) error{WriteFailed}!void {
-        try sink.updateGc(gc, .change, &opt);
-    }
-    fn updateGc(
-        sink: *RequestSink,
-        gc: GraphicsContext,
-        variant: GcVariant,
-        options: *const GcOptions,
-    ) error{WriteFailed}!void {
-        const msg = inspectUpdateGc(variant, options);
+    pub fn CreateGc(sink: *RequestSink, gc: GraphicsContext, drawable: Drawable, opt: CreateGcOptions) error{WriteFailed}!void {
+        const msg = inspectCreateGc(&opt);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            switch (variant) {
-                .create => @intFromEnum(Opcode.create_gc),
-                .change => @intFromEnum(Opcode.change_gc),
-            },
+            @intFromEnum(Opcode.create_gc),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
         try writeInt(sink.writer, &offset, u32, @intFromEnum(gc));
-        switch (variant) {
-            .create => |drawable| {
-                try writeInt(sink.writer, &offset, u32, @intFromEnum(drawable));
-            },
-            .change => {},
-        }
+        try writeInt(sink.writer, &offset, u32, @intFromEnum(drawable));
         try writeInt(sink.writer, &offset, u32, @bitCast(msg.option_mask));
-        inline for (std.meta.fields(GcOptions)) |field| {
-            if (!isDefaultValue(options, field)) {
-                try writeInt(sink.writer, &offset, u32, optionToU32(@field(options, field.name)));
+        inline for (std.meta.fields(CreateGcOptions)) |field| {
+            if (!isDefaultValue(opt, field)) {
+                try writeInt(sink.writer, &offset, u32, optionToU32(@field(opt, field.name)));
+            }
+        }
+        std.debug.assert(msg.len == offset);
+        sink.sequence +%= 1;
+    }
+    pub fn ChangeGc(sink: *RequestSink, gc: GraphicsContext, opt: ChangeGcOptions) error{WriteFailed}!void {
+        const msg = inspectChangeGc(&opt);
+        var offset: usize = 0;
+        try writeAll(sink.writer, &offset, &[_]u8{
+            @intFromEnum(Opcode.change_gc),
+            0, // unused
+        });
+        try writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
+        try writeInt(sink.writer, &offset, u32, @intFromEnum(gc));
+        try writeInt(sink.writer, &offset, u32, @bitCast(msg.option_mask));
+        inline for (std.meta.fields(ChangeGcOptions)) |field| {
+            if (!isDefaultValue(opt, field)) {
+                try writeInt(sink.writer, &offset, u32, optionToU32(@field(opt, field.name)));
             }
         }
         std.debug.assert(msg.len == offset);
@@ -3349,7 +3348,7 @@ pub const GcOptionMask = packed struct(u32) {
     arc_mode: u1 = 0,
     _unused: u9 = 0,
 };
-pub const GcOptions = struct {
+pub const CreateGcOptions = struct {
     // TODO: add all the options
     // Here are the defaults:
     // function copy
@@ -3377,10 +3376,32 @@ pub const GcOptions = struct {
     // dash_offset 0
     // dashes the list 4, 4
 };
-
-const GcVariant = union(enum) {
-    create: Drawable,
-    change: void,
+pub const ChangeGcOptions = struct {
+    // TODO: add all the options
+    // function copy
+    // plane_mask all ones
+    foreground: ?u32 = null,
+    background: ?u32 = null,
+    line_width: ?u16 = null,
+    // line_style solid
+    // cap_style butt
+    // join_style miter
+    // fill_style solid
+    // fill_rule even_odd
+    // arc_mode pie_slice
+    // tile: ?Pixmap = null,
+    // stipple: ?Pixmap = null,
+    // tile_stipple_x_origin 0
+    // tile_stipple_y_origin 0
+    font: ?Font = null,
+    // font <server dependent>
+    subwindow_mode: ?SubWindowMode = null,
+    graphics_exposures: ?bool = null,
+    // clip_x_origin 0
+    // clip_y_origin 0
+    // clip_mask: ?Font = null,
+    // dash_offset 0
+    // dashes the list 4, 4
 };
 
 pub const create_colormap = struct {
@@ -3411,27 +3432,43 @@ pub const free_colormap = struct {
     }
 };
 
-fn inspectUpdateGc(variant: std.meta.Tag(GcVariant), options: *const GcOptions) struct {
+fn inspectCreateGc(options: *const CreateGcOptions) struct {
     len: u18,
     option_mask: GcOptionMask,
 } {
-    const non_option_len: u18 = switch (variant) {
-        .create => 2 // opcode and unused
+    const non_option_len: u18 =
+        2 // opcode and unused
         + 2 // request length
         + 4 // gc id
         + 4 // drawable id
         + 4 // option mask
-        ,
-        .change => 2 // opcode and unused
-        + 2 // request length
-        + 4 // gc id
-        + 4 // option mask
-        ,
-    };
+    ;
 
     var len: u18 = non_option_len;
     var option_mask: GcOptionMask = .{};
-    inline for (std.meta.fields(GcOptions)) |field| {
+    inline for (std.meta.fields(CreateGcOptions)) |field| {
+        if (!isDefaultValue(options, field)) {
+            @field(option_mask, field.name) = 1;
+            len += 4;
+        }
+    }
+    return .{ .len = len, .option_mask = option_mask };
+}
+
+fn inspectChangeGc(options: *const ChangeGcOptions) struct {
+    len: u18,
+    option_mask: GcOptionMask,
+} {
+    const non_option_len: u18 =
+        2 // opcode and unused
+        + 2 // request length
+        + 4 // gc id
+        + 4 // option mask
+    ;
+
+    var len: u18 = non_option_len;
+    var option_mask: GcOptionMask = .{};
+    inline for (std.meta.fields(ChangeGcOptions)) |field| {
         if (!isDefaultValue(options, field)) {
             @field(option_mask, field.name) = 1;
             len += 4;
