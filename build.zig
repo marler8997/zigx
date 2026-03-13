@@ -28,11 +28,63 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const xcbproto_dep = b.dependency("xcbproto", .{});
+
+    const generated_mod = blk: {
+        const scanner = b.addExecutable(.{
+            .name = "xcb-scanner",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("scanner/scanner.zig"),
+                .target = b.graph.host,
+            }),
+        });
+        const run = b.addRunArtifact(scanner);
+        run.addFileArg(xcbproto_dep.path("src/xproto.xml"));
+        run.addFileArg(xcbproto_dep.path("src/bigreq.xml"));
+        run.addFileArg(xcbproto_dep.path("src/composite.xml"));
+        run.addFileArg(xcbproto_dep.path("src/damage.xml"));
+        run.addFileArg(xcbproto_dep.path("src/dbe.xml"));
+        run.addFileArg(xcbproto_dep.path("src/dpms.xml"));
+        run.addFileArg(xcbproto_dep.path("src/dri2.xml"));
+        run.addFileArg(xcbproto_dep.path("src/dri3.xml"));
+        run.addFileArg(xcbproto_dep.path("src/ge.xml"));
+        run.addFileArg(xcbproto_dep.path("src/glx.xml"));
+        run.addFileArg(xcbproto_dep.path("src/present.xml"));
+        run.addFileArg(xcbproto_dep.path("src/randr.xml"));
+        run.addFileArg(xcbproto_dep.path("src/record.xml"));
+        run.addFileArg(xcbproto_dep.path("src/render.xml"));
+        run.addFileArg(xcbproto_dep.path("src/res.xml"));
+        run.addFileArg(xcbproto_dep.path("src/screensaver.xml"));
+        run.addFileArg(xcbproto_dep.path("src/shape.xml"));
+        run.addFileArg(xcbproto_dep.path("src/shm.xml"));
+        run.addFileArg(xcbproto_dep.path("src/sync.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xc_misc.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xevie.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xf86dri.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xf86vidmode.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xfixes.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xinerama.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xinput.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xkb.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xprint.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xselinux.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xtest.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xv.xml"));
+        run.addFileArg(xcbproto_dep.path("src/xvmc.xml"));
+        run.addArg("-o");
+        const generated_file = run.addOutputFileArg("generated_x11.zig");
+        b.getInstallStep().dependOn(&b.addInstallFile(generated_file, "src/generated_x11.zig").step);
+        break :blk b.createModule(.{
+            .root_source_file = generated_file,
+        });
+    };
+
     // In almost all cases, Zig programs should only use this module, not the
     // library defined below, that's for C programs.
     const x_mod = b.addModule("x11", .{
         .root_source_file = b.path("src/x.zig"),
     });
+    x_mod.addImport("generated", generated_mod);
     if (!zig_atleast_15) {
         if (b.lazyDependency("iobackport", .{})) |iobackport_dep| {
             x_mod.addImport("std15", iobackport_dep.module("std15"));
