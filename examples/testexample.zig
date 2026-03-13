@@ -145,7 +145,7 @@ pub fn main() !u8 {
         const remaining = source.replyRemainingSize();
         if (remaining != 0) {
             x11.log.err("setup reply had an extra {} bytes", .{remaining});
-            return error.X11Protocol;
+            return error.Protocol;
         }
 
         const screen = first_screen orelse {

@@ -133,7 +133,7 @@ pub fn readSetupDynamic(
         log_vendor: bool = true,
         on_visual: ?*OnVisual = null,
     },
-) error{ ReadFailed, EndOfStream, X11Protocol }!?x11.ScreenHeader {
+) error{ ReadFailed, EndOfStream, Protocol }!?x11.ScreenHeader {
     try source.requireReplyAtLeast(setup.required());
 
     {
@@ -201,7 +201,7 @@ pub fn readSetupDynamic(
     const remaining = source.replyRemainingSize();
     if (remaining != 0) {
         x11.log.err("setup reply had an extra {} bytes", .{remaining});
-        return error.X11Protocol;
+        return error.Protocol;
     }
     return first_screen_header;
 }
