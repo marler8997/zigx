@@ -5,6 +5,10 @@
     .zig_version = "0.15.2",
     .minimum_zig_version = "0.15.2",
     .dependencies = .{
+        .xcbproto = .{
+            .url = "https://xorg.freedesktop.org/archive/individual/proto/xcb-proto-1.17.0.tar.xz",
+            .hash = "N-V-__8AAHSbEABPZ6KgF7fJSjL12pFb6rKdTzAP02i91Qp7",
+        },
         .iobackport = .{
             .url = "git+https://github.com/marler8997/zig-io-backport#16d6621a2b42874dc3a4822be48dbf7e3e7b50ff",
             .hash = "iobackport-0.0.0-KeWQeDGeAwA_MbngHydEnyLQQuQ4V05Y-KQQSMEte7gw",
