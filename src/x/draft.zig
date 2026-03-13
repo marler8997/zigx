@@ -133,7 +133,7 @@ pub fn readSetupDynamic(
         log_vendor: bool = true,
         on_visual: ?*OnVisual = null,
     },
-) (x11.ProtocolError || x11.Reader.Error)!?x11.ScreenHeader {
+) error{ ReadFailed, EndOfStream, X11Protocol }!?x11.ScreenHeader {
     try source.requireReplyAtLeast(setup.required());
 
     {

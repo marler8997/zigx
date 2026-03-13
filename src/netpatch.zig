@@ -16,7 +16,7 @@ fn stream(io_r: *Io.Reader, io_w: *Io.Writer, limit: Io.Limit) Io.Reader.StreamE
     return n;
 }
 
-fn readVec(io_r: *std.Io.Reader, data: [][]u8) Io.Reader.Error!usize {
+fn readVec(io_r: *std.Io.Reader, data: [][]u8) error{ ReadFailed, EndOfStream }!usize {
     const r: *Reader = @alignCast(@fieldParentPtr("interface_state", io_r));
     var iovecs: [max_buffers_len]windows.ws2_32.WSABUF = undefined;
     const bufs_n, const data_size = try io_r.writableVectorWsa(&iovecs, data);
@@ -82,7 +82,7 @@ fn streamBufs(r: *Reader, bufs: []windows.ws2_32.WSABUF) Error!u32 {
     return n;
 }
 
-fn defaultDiscardPatched(r: *std.Io.Reader, limit: std.Io.Limit) std.Io.Reader.Error!usize {
+fn defaultDiscardPatched(r: *std.Io.Reader, limit: std.Io.Limit) error{ ReadFailed, EndOfStream }!usize {
     std.debug.assert(r.seek == r.end);
     r.seek = 0;
     r.end = 0;

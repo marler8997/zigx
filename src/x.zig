@@ -108,11 +108,6 @@ pub fn fileReader(file: std.fs.File, buf: []u8) File15.Reader {
     return .init(file, buf);
 }
 
-pub const ProtocolError = error{
-    /// Received data that violates the X11 protocol.
-    X11Protocol,
-};
-
 const x_test = @import("test/x_test.zig");
 
 test {
@@ -764,7 +759,7 @@ pub const Authenticator = struct {
             },
         };
     }
-    fn reportAuthReadError(filename: []const u8, err: Reader.Error, file_error: ?std.fs.File.ReadError) void {
+    fn reportAuthReadError(filename: []const u8, err: error{ ReadFailed, EndOfStream }, file_error: ?std.fs.File.ReadError) void {
         switch (err) {
             error.ReadFailed => {
                 const e = file_error orelse error.Unexpected;
@@ -797,7 +792,7 @@ fn writeSetupWithAuth(
     name: Slice(u16, [*]const u8),
     data_len: u16,
     out_write_error: *?Stream15.WriteError,
-) (Reader.Error || error{WriteFailed})!void {
+) error{ ReadFailed, EndOfStream, WriteFailed }!void {
     std.debug.assert(out_write_error.* == null);
     var write_buffer: [write_setup_no_auth_len + 400]u8 = undefined;
     var socket_writer = socketWriter(stream, &write_buffer);
@@ -821,7 +816,7 @@ pub const SetupFailed = struct {
     }
 };
 
-const ReadSetupReply1Error = ProtocolError || Reader.Error;
+const ReadSetupReply1Error = error{ ReadFailed, EndOfStream, X11Protocol };
 pub const SetupReply1 = union(enum) {
     success,
     failed: SetupFailed,
@@ -871,7 +866,7 @@ fn matchAuthEntry(
     address: *const std.net.Address,
     auth_reader: *AuthReader,
     entry_index: u32,
-) Reader.Error!union(enum) {
+) error{ ReadFailed, EndOfStream }!union(enum) {
     eof,
     skip,
     match: struct { name: Slice(u16, [*]const u8), data_len: u16 },
@@ -1192,7 +1187,7 @@ fn fmtRead(reader: *Reader, n: usize, result: *FmtReadResult) FmtRead {
 const FmtReadResult = union(enum) {
     init,
     success,
-    err: Reader.Error,
+    err: error{ ReadFailed, EndOfStream },
 };
 const FmtRead = struct {
     reader: *Reader,
@@ -1498,7 +1493,7 @@ pub const AuthReader = struct {
         read_so_far: u16,
     };
 
-    pub fn discardRemaining(self: *AuthReader) Reader.Error!void {
+    pub fn discardRemaining(self: *AuthReader) error{ ReadFailed, EndOfStream }!void {
         while (true) {
             switch (self.state) {
                 .family => return,
@@ -1524,7 +1519,7 @@ pub const AuthReader = struct {
         };
     }
 
-    pub fn takeDynamicLen(self: *AuthReader, part: DynamicPart) Reader.Error!u16 {
+    pub fn takeDynamicLen(self: *AuthReader, part: DynamicPart) error{ ReadFailed, EndOfStream }!u16 {
         std.debug.assert(part == switch (self.state) {
             .family, .dynamic_data => unreachable,
             .dynamic_len => |p| p,
@@ -1547,7 +1542,7 @@ pub const AuthReader = struct {
         self.state = dynamic.part.next();
     }
 
-    pub fn discardDynamic(self: *AuthReader, n: usize) Reader.Error!void {
+    pub fn discardDynamic(self: *AuthReader, n: usize) error{ ReadFailed, EndOfStream }!void {
         const dynamic = switch (self.state) {
             .family, .dynamic_len => unreachable,
             .dynamic_data => |*d| d,
@@ -1559,7 +1554,7 @@ pub const AuthReader = struct {
             self.state = dynamic.part.next();
         }
     }
-    pub fn readDynamic(self: *AuthReader, buf: []u8) std.Io.Reader.Error!void {
+    pub fn readDynamic(self: *AuthReader, buf: []u8) error{ ReadFailed, EndOfStream }!void {
         const dynamic = switch (self.state) {
             .family, .dynamic_len => unreachable,
             .dynamic_data => |*d| d,
@@ -1571,7 +1566,7 @@ pub const AuthReader = struct {
             self.state = dynamic.part.next();
         }
     }
-    pub fn takeDynamic(self: *AuthReader, n: usize) Reader.Error![]u8 {
+    pub fn takeDynamic(self: *AuthReader, n: usize) error{ ReadFailed, EndOfStream }![]u8 {
         const dynamic = switch (self.state) {
             .family, .dynamic_len => unreachable,
             .dynamic_data => |*d| d,
@@ -1598,7 +1593,7 @@ pub const AuthReader = struct {
         }
         return buf;
     }
-    pub fn takeNameAndDataLen(self: *AuthReader, n: usize) Reader.Error!struct { []u8, u16 } {
+    pub fn takeNameAndDataLen(self: *AuthReader, n: usize) error{ ReadFailed, EndOfStream }!struct { []u8, u16 } {
         const dynamic = switch (self.state) {
             .family, .dynamic_len => unreachable,
             .dynamic_data => |*d| d,
@@ -4312,7 +4307,7 @@ pub fn rgb32From24(color: u24) u32 {
 }
 
 // asserts that the first byte in the source's reader is the value 1
-pub fn readSetupSuccess(reader: *Reader) (ProtocolError || Reader.Error)!Setup {
+pub fn readSetupSuccess(reader: *Reader) error{ ReadFailed, EndOfStream, X11Protocol }!Setup {
     std.debug.assert(reader.seek < reader.end);
     std.debug.assert(reader.buffer[reader.seek] == 1);
     var setup: Setup = undefined;
@@ -4374,7 +4369,7 @@ pub const Source = struct {
     }
 
     /// Read the first byte (message kind) of a new message.
-    pub fn readKind(source: *Source) Reader.Error!ServerMsgKind {
+    pub fn readKind(source: *Source) error{ ReadFailed, EndOfStream }!ServerMsgKind {
         std.debug.assert(source.state == .kind);
         const byte = try source.reader.takeByte();
         const kind: ServerMsgKind = .fromU7(@truncate(byte));
@@ -4391,7 +4386,7 @@ pub const Source = struct {
     }
 
     /// discards the rest of the current message if we are currently reading one
-    pub fn discardRemaining(source: *Source) (ProtocolError || Reader.Error)!void {
+    pub fn discardRemaining(source: *Source) error{ ReadFailed, EndOfStream, X11Protocol }!void {
         switch (source.state) {
             .kind => return,
             .second => |kind| {
@@ -4425,7 +4420,7 @@ pub const Source = struct {
 
     /// Always call this after calling readKind.  It reads the next part of the given message type which
     /// will be the final read call for all non-reply messages.
-    pub fn read2(source: *Source, comptime category: ServerMsgCategory) (ProtocolError || Reader.Error)!@field(servermsg, @tagName(category)) {
+    pub fn read2(source: *Source, comptime category: ServerMsgCategory) error{ ReadFailed, EndOfStream, X11Protocol }!@field(servermsg, @tagName(category)) {
         const kind = switch (source.state) {
             .kind, .reply, .err => unreachable,
             .second => |k| k,
@@ -4498,7 +4493,7 @@ pub const Source = struct {
     pub fn readSynchronousReply1(
         source: *Source,
         sequence: u16,
-    ) (error{UnexpectedMessage} || ProtocolError || Reader.Error)!servermsg.Reply {
+    ) error{ ReadFailed, EndOfStream, X11Protocol, UnexpectedMessage }!servermsg.Reply {
         while (true) switch (try source.readKind()) {
             .Reply => {
                 const reply = try source.read2(.Reply);
@@ -4524,7 +4519,7 @@ pub const Source = struct {
     pub fn read3Full(
         source: *Source,
         comptime read3_kind: Read3Full,
-    ) Reader.Error!read3_kind.Type() {
+    ) error{ ReadFailed, EndOfStream }!read3_kind.Type() {
         var result: read3_kind.Type() = undefined;
         try source.readReply(std.mem.asBytes(&result));
         return result;
@@ -4532,7 +4527,7 @@ pub const Source = struct {
     pub fn read3Header(
         source: *Source,
         comptime read3_kind: Read3Header,
-    ) Reader.Error!read3_kind.Type() {
+    ) error{ ReadFailed, EndOfStream }!read3_kind.Type() {
         var result: read3_kind.Type() = undefined;
         try source.readReply(std.mem.asBytes(&result));
         return result;
@@ -4544,7 +4539,7 @@ pub const Source = struct {
         source: *Source,
         sequence: u16,
         comptime read3_kind: Read3Full,
-    ) (error{UnexpectedMessage} || ProtocolError || Reader.Error)!WithFlexible(read3_kind.Type()) {
+    ) error{ ReadFailed, EndOfStream, X11Protocol, UnexpectedMessage }!WithFlexible(read3_kind.Type()) {
         const reply = try source.readSynchronousReply1(sequence);
         try source.requireReplyExact(@sizeOf(read3_kind.Type()));
         return .{ try source.read3Full(read3_kind), reply.flexible };
@@ -4556,14 +4551,14 @@ pub const Source = struct {
         source: *Source,
         sequence: u16,
         comptime read3_kind: Read3Header,
-    ) (error{UnexpectedMessage} || ProtocolError || Reader.Error)!WithFlexible(read3_kind.Type()) {
+    ) error{ ReadFailed, EndOfStream, X11Protocol, UnexpectedMessage }!WithFlexible(read3_kind.Type()) {
         const reply = try source.readSynchronousReply1(sequence);
         try source.requireReplyAtLeast(@sizeOf(read3_kind.Type()));
         return .{ try source.read3Header(read3_kind), reply.flexible };
     }
 
     /// Call to verify that the reply has at least this much data remaining
-    pub fn requireReplyAtLeast(source: *Source, required: u35) ProtocolError!void {
+    pub fn requireReplyAtLeast(source: *Source, required: u35) error{X11Protocol}!void {
         const remaining = source.replyRemainingSize();
         if (required > remaining) {
             log.err("reply is truncated, {} bytes required but only have {}", .{ required, remaining });
@@ -4571,7 +4566,7 @@ pub const Source = struct {
         }
     }
     /// Call to verify that the reply has exactly this much data remaining
-    pub fn requireReplyExact(source: *Source, expected: u35) ProtocolError!void {
+    pub fn requireReplyExact(source: *Source, expected: u35) error{X11Protocol}!void {
         const remaining = source.replyRemainingSize();
         if (remaining != expected) {
             log.err("expected reply to have {} bytes remaining but has {}", .{ expected, remaining });
@@ -4595,7 +4590,7 @@ pub const Source = struct {
 
     /// Discard n bytes belonging to the current reply.
     /// It's allowed to call this function with an n of 0 if the entire reply has been read.
-    pub fn replyDiscard(source: *Source, n: usize) Reader.Error!void {
+    pub fn replyDiscard(source: *Source, n: usize) error{ ReadFailed, EndOfStream }!void {
         const reply_state: *ReplyState = switch (source.state) {
             .kind => {
                 std.debug.assert(n == 0);
@@ -4614,7 +4609,7 @@ pub const Source = struct {
     }
 
     /// After reading the reply kind/header, call this method to read reply data into a slice.
-    pub fn readReply(source: *Source, buffer: []u8) Reader.Error!void {
+    pub fn readReply(source: *Source, buffer: []u8) error{ ReadFailed, EndOfStream }!void {
         const reply_state: *ReplyState = switch (source.state) {
             .kind, .second, .err => unreachable,
             .reply => |*state| state,
@@ -4630,7 +4625,7 @@ pub const Source = struct {
 
     /// After reading the reply kind/header, call this method to call `take` on the underlying
     /// reader. Like Reader, `n` must be <= the size of the reader buffer.
-    pub fn takeReply(source: *Source, n: u35) Reader.Error![]u8 {
+    pub fn takeReply(source: *Source, n: u35) error{ ReadFailed, EndOfStream }![]u8 {
         const reply_state: *ReplyState = switch (source.state) {
             .kind, .second, .err => unreachable,
             .reply => |*state| state,
@@ -4644,7 +4639,7 @@ pub const Source = struct {
         }
         return data;
     }
-    pub fn takeReplyInt(source: *Source, comptime Int: type) Reader.Error!Int {
+    pub fn takeReplyInt(source: *Source, comptime Int: type) error{ ReadFailed, EndOfStream }!Int {
         const reply_state: *ReplyState = switch (source.state) {
             .kind, .second, .err => unreachable,
             .reply => |*state| state,
@@ -4658,7 +4653,7 @@ pub const Source = struct {
         }
         return int;
     }
-    pub fn streamReply(source: *Source, writer: *Writer, n: usize) Reader.StreamError!void {
+    pub fn streamReply(source: *Source, writer: *Writer, n: usize) error{ ReadFailed, EndOfStream, WriteFailed }!void {
         const reply_state: *ReplyState = switch (source.state) {
             .kind, .second, .err => unreachable,
             .reply => |*state| state,
@@ -5718,7 +5713,7 @@ pub const Extension = struct {
     opcode_base: u8,
     event_base: u8,
     error_base: u8,
-    pub fn init(reply: stage3.QueryExtension) ProtocolError!?Extension {
+    pub fn init(reply: stage3.QueryExtension) error{X11Protocol}!?Extension {
         switch (reply.present) {
             .no => return null,
             .yes => {},
@@ -5792,7 +5787,7 @@ pub fn FmtEnum(comptime T: type) type {
 pub const KeycodeRange = struct {
     min: u8,
     max: u8,
-    pub fn init(min: u8, max: u8) ProtocolError!KeycodeRange {
+    pub fn init(min: u8, max: u8) error{X11Protocol}!KeycodeRange {
         if (min < 8) {
             log.err("minimum keycode {} is too small (must be >= 8)", .{min});
             return error.X11Protocol;

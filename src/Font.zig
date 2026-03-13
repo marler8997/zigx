@@ -18,7 +18,7 @@ scale: f32,
 color: u32,
 ids: Ids,
 
-const Error = Writer.Error || TrueType.GlyphBitmapError || error{InvalidUtf8};
+const Error = error{WriteFailed} || TrueType.GlyphBitmapError || error{InvalidUtf8};
 
 /// X11 IDs necessary to render the font.
 pub const Ids = struct {
@@ -152,13 +152,13 @@ pub const TextWriter = struct {
         self.alignment = alignment;
     }
 
-    fn flush(writer: *Writer) Writer.Error!void {
+    fn flush(writer: *Writer) error{WriteFailed}!void {
         const tw: *TextWriter = @fieldParentPtr("interface", writer);
         try writer.defaultFlush();
         tw.needs_flush = false;
     }
 
-    fn drain(writer: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
+    fn drain(writer: *Writer, data: []const []const u8, splat: usize) error{WriteFailed}!usize {
         // Gather information for the write
         const tw: *TextWriter = @fieldParentPtr("interface", writer);
         if (tw.err != null) return error.WriteFailed;
@@ -219,11 +219,11 @@ pub const TextWriter = struct {
     fn mapErr(
         self: *TextWriter,
         res: anytype,
-    ) Writer.Error!@typeInfo(@TypeOf(res)).error_union.payload {
+    ) error{WriteFailed}!@typeInfo(@TypeOf(res)).error_union.payload {
         return res catch |err| return self.fail(err);
     }
 
-    fn fail(self: *TextWriter, err: Error) Writer.Error {
+    fn fail(self: *TextWriter, err: Error) error{WriteFailed} {
         self.err = err;
         return error.WriteFailed;
     }

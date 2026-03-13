@@ -657,7 +657,7 @@ const Read3Full = enum {
         };
     }
 };
-pub fn read3Full(source: *x11.Source, comptime kind: Read3Full) x11.Reader.Error!kind.Type() {
+pub fn read3Full(source: *x11.Source, comptime kind: Read3Full) error{ ReadFailed, EndOfStream }!kind.Type() {
     var value: kind.Type() = undefined;
     try source.readReply(std.mem.asBytes(&value));
     return value;
