@@ -485,15 +485,11 @@ pub const Device = enum(u16) {
         return @enumFromInt(i);
     }
 
-    pub fn format(v: Device, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .all) {
-            try writer.writeAll("Device(<all>)");
-        } else if (v == .all_master) {
-            try writer.writeAll("Device(<all_master>)");
-        } else {
-            try writer.print("Device({})", .{@intFromEnum(v)});
+    pub fn format(v: Device, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .all => try writer.writeAll(".all"),
+            .all_master => try writer.writeAll(".all_master"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };

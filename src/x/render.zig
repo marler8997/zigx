@@ -13,13 +13,10 @@ pub const Picture = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub fn format(v: Picture, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .none) {
-            try writer.writeAll("Picture(<none>)");
-        } else {
-            try writer.print("Picture({})", .{@intFromEnum(v)});
+    pub fn format(v: Picture, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -32,13 +29,10 @@ pub const PictureFormat = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub fn format(v: PictureFormat, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .none) {
-            try writer.writeAll("PictureFormat(<none>)");
-        } else {
-            try writer.print("PictureFormat({})", .{@intFromEnum(v)});
+    pub fn format(v: PictureFormat, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };

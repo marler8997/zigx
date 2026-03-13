@@ -2641,13 +2641,10 @@ pub const Drawable = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub fn format(v: Drawable, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .none) {
-            try writer.writeAll("Drawable(<none>)");
-        } else {
-            try writer.print("Drawable({})", .{@intFromEnum(v)});
+    pub fn format(v: Drawable, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -2667,13 +2664,10 @@ pub const Window = enum(u32) {
         return @enumFromInt(@intFromEnum(w));
     }
 
-    pub fn format(v: Window, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .none) {
-            try writer.writeAll("Window(<none>)");
-        } else {
-            try writer.print("Window({})", .{@intFromEnum(v)});
+    pub fn format(v: Window, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -2686,13 +2680,10 @@ pub const Cursor = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub fn format(v: Cursor, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .none) {
-            try writer.writeAll("Cursor(<none>)");
-        } else {
-            try writer.print("Cursor({})", .{@intFromEnum(v)});
+    pub fn format(v: Cursor, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -2709,13 +2700,10 @@ pub const Font = enum(u32) {
         return @enumFromInt(@intFromEnum(f));
     }
 
-    pub fn format(v: Font, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .none) {
-            try writer.writeAll("Font(<none>)");
-        } else {
-            try writer.print("Font({})", .{@intFromEnum(v)});
+    pub fn format(v: Font, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -2736,13 +2724,10 @@ pub const Fontable = enum(u32) {
         return @enumFromInt(@intFromEnum(f));
     }
 
-    pub fn format(v: Fontable, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .none) {
-            try writer.writeAll("Fontable(<none>)");
-        } else {
-            try writer.print("Fontable({})", .{@intFromEnum(v)});
+    pub fn format(v: Fontable, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -2755,13 +2740,10 @@ pub const Colormap = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub fn format(v: Colormap, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .copy_from_parent) {
-            try writer.writeAll("Colormap(<copy from parent>)");
-        } else {
-            try writer.print("Colormap({})", .{@intFromEnum(v)});
+    pub fn format(v: Colormap, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .copy_from_parent => try writer.writeAll(".copy_from_parent"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -2800,13 +2782,10 @@ pub const Pixmap = enum(u32) {
         return @enumFromInt(@intFromEnum(p));
     }
 
-    pub fn format(v: Pixmap, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .none) {
-            try writer.writeAll("Pixmap(<none>)");
-        } else {
-            try writer.print("Pixmap({})", .{@intFromEnum(v)});
+    pub fn format(v: Pixmap, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -2825,13 +2804,10 @@ pub const GraphicsContext = enum(u32) {
         return @enumFromInt(@intFromEnum(g));
     }
 
-    pub fn format(v: GraphicsContext, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .none) {
-            try writer.writeAll("GraphicsContext(<none>)");
-        } else {
-            try writer.print("GraphicsContext({})", .{@intFromEnum(v)});
+    pub fn format(v: GraphicsContext, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -2852,14 +2828,10 @@ pub const Timestamp = enum(u32) {
 
     _,
 
-    pub fn format(ts: Timestamp, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-
-        if (ts == .current_time) {
-            try writer.writeAll("Timestamp(<current time>)");
-        } else {
-            try writer.print("Timestamp({} ms)", .{@intFromEnum(ts)});
+    pub fn format(ts: Timestamp, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (ts) {
+            .current_time => try writer.writeAll(".current_time"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -3925,7 +3897,7 @@ pub const KeyButtonMask = packed struct(u16) {
         return @enumFromInt(result);
     }
 
-    pub fn format(kbm: KeyButtonMask, fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(kbm: KeyButtonMask, writer: *std.Io.Writer) error{WriteFailed}!void {
         var any = false;
 
         try writer.writeAll("KeyButtonMask{");
@@ -3947,9 +3919,6 @@ pub const KeyButtonMask = packed struct(u16) {
             try writer.writeAll("<empty>");
         }
         try writer.writeAll("}");
-
-        _ = fmt;
-        _ = options;
     }
 };
 
