@@ -4380,7 +4380,7 @@ pub const Source = struct {
             .reply => |*reply_state| {
                 const remaining = reply_state.remaining();
                 std.debug.assert(remaining > 0);
-                try source.reader.discardAll(remaining);
+                try source.reader.discardAll(@intCast(remaining));
                 source.state = .kind;
             },
             .err => return,
@@ -4601,7 +4601,7 @@ pub const Source = struct {
         };
         const total = reply_state.total();
         std.debug.assert(reply_state.taken + n <= total);
-        const data = try source.reader.take(n);
+        const data = try source.reader.take(@intCast(n));
         reply_state.taken += @intCast(data.len);
         if (reply_state.taken == total) {
             source.state = .kind;

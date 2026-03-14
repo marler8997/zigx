@@ -96,10 +96,11 @@ pub fn main() !u8 {
         const list, _ = try source.readSynchronousReplyHeader(sink.sequence, .ListFonts);
         std.log.info("font count {}", .{list.count});
         const remaining_size = source.replyRemainingSize();
-        const font_mem = try allocator.alloc(u8, remaining_size);
+        const font_mem = try allocator.alloc(u8, @intCast(remaining_size));
         try source.readReply(font_mem);
         const fonts = try allocator.alloc(x11.Slice(u8, [*]const u8), list.count);
-        var font_mem_index: u34 = 0;
+        var font_mem_index: usize = 0;
+
         for (fonts.ptr[0..list.count]) |*font| {
             if (font_mem_index == font_mem.len) @panic("fonts truncated");
             const len = font_mem[font_mem_index];
@@ -321,7 +322,7 @@ const State = struct {
                         "msg size is {} but fields require {}",
                         .{ msg_remaining_size, required_remaining_size },
                     );
-                    try source.replyDiscard(msg_remaining_size);
+                    try source.replyDiscard(@intCast(msg_remaining_size));
                     const font_info: FontInfo = .{
                         .font_ascent = font.font_ascent,
                         .font_descent = font.font_descent,
