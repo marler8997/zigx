@@ -2984,10 +2984,11 @@ pub const EventMask = packed struct(u32) {
     KeymapState: u1 = 0,
     Exposure: u1 = 0,
     VisibilityChange: u1 = 0,
+    /// Results in DestroyNotify, UnmapNotify, MapNotify, ReparentNotify,
+    /// ConfigureNotify, GravityNotify, CirculateNotify.
     StructureNotify: u1 = 0,
     ResizeRedirect: u1 = 0,
-    /// Results in CreateNotify, DestroyNotify, MapNotify, UnmapNotify, ReparentNotify,
-    /// ConfigureNotify, GravityNotify, CirculateNotify.
+    /// Results in the same events as StructureNotify as well as CreateNotify.
     SubstructureNotify: u1 = 0,
     SubstructureRedirect: u1 = 0,
     FocusChange: u1 = 0,

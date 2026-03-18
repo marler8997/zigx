@@ -2,8 +2,8 @@
 const std = @import("std");
 const x11 = @import("x11");
 
-const window_width = 400;
-const window_height = 400;
+const initial_window_width = 400;
+const initial_window_height = 400;
 
 const Key = enum {
     f, // faster
@@ -111,14 +111,15 @@ pub fn main() !u8 {
         .depth = 0, // we don't care, just inherit from the parent
         .x = 0,
         .y = 0,
-        .width = window_width,
-        .height = window_height,
+        .width = initial_window_width,
+        .height = initial_window_height,
         .border_width = 0, // TODO: what is this?
         .class = .input_output,
         .visual_id = screen.visual,
     }, .{
         .bg_pixel = 0x332211,
-        .event_mask = .{ .KeyPress = 1, .Exposure = 1 },
+        .bit_gravity = .north_west,
+        .event_mask = .{ .KeyPress = 1, .Exposure = 1, .StructureNotify = 1 },
     });
 
     try sink.CreateGc(
@@ -139,6 +140,8 @@ pub fn main() !u8 {
 
     try sink.MapWindow(ids.window());
 
+    var window_width: u16 = initial_window_width;
+    var window_height: u16 = initial_window_height;
     var animate: Animate = .{ .previous_time = try std.time.Instant.now() };
     var animate_frame_ms: i32 = 15;
 
@@ -162,6 +165,8 @@ pub fn main() !u8 {
                     dbe,
                     &animate,
                     animate_frame_ms,
+                    window_width,
+                    window_height,
                 );
                 continue;
             },
@@ -230,6 +235,8 @@ pub fn main() !u8 {
                         dbe,
                         &animate,
                         animate_frame_ms,
+                        window_width,
+                        window_height,
                     );
                 }
             },
@@ -246,9 +253,25 @@ pub fn main() !u8 {
                     dbe,
                     &animate,
                     animate_frame_ms,
+                    window_width,
+                    window_height,
                 );
             },
-            .MappingNotify => try source.discardRemaining(),
+            .ConfigureNotify => {
+                const event = try source.read2(.ConfigureNotify);
+                window_width = event.width;
+                window_height = event.height;
+            },
+            // StructureNotify events:
+            .DestroyNotify,
+            .UnmapNotify,
+            .MapNotify,
+            .ReparentNotify,
+            .GravityNotify,
+            .CirculateNotify,
+            // Sent to all clients regardless of event mask:
+            .MappingNotify,
+            => try source.discardRemaining(),
             else => std.debug.panic("unexpected message {f}", .{source.readFmt()}),
         }
     }
@@ -306,6 +329,8 @@ fn render(
     dbe: Dbe,
     animate: *Animate,
     animate_frame_ms: i32,
+    window_width: u16,
+    window_height: u16,
 ) !void {
     const elapsed_ms = blk: {
         const now = try std.time.Instant.now();
@@ -325,8 +350,8 @@ fn render(
             .{
                 .x = 0,
                 .y = 0,
-                .width = window_width,
-                .height = window_height,
+                .width = 0, // 0 means rest of window
+                .height = 0,
             },
             .{ .exposures = false },
         );
@@ -338,8 +363,8 @@ fn render(
         target_drawable,
         gc_id,
         .initAssume(&.{.{
-            .x = @intFromFloat(@round(@as(f32, window_width) * animate.progress)),
-            .y = @intFromFloat(@round(@as(f32, window_width) * animate.progress)),
+            .x = @intFromFloat(@round(@as(f32, @floatFromInt(window_width)) * animate.progress)),
+            .y = @intFromFloat(@round(@as(f32, @floatFromInt(window_height)) * animate.progress)),
             .width = 10,
             .height = 10,
         }}),
