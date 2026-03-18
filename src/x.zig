@@ -39,6 +39,9 @@ pub const draft = @import("x/draft.zig");
 // ================================================================================
 pub const input = @import("x/input.zig");
 pub const render = @import("x/render.zig");
+/// Double Buffer Extension. Consider using the Present extension instead,
+/// which supersedes DBE by providing both off-screen rendering (via Pixmaps)
+/// and frame synchronization (via CompleteNotify events).
 pub const dbe = @import("x/dbe.zig");
 pub const shape = @import("x/shape.zig");
 pub const tst = @import("x/tst.zig");
@@ -51,7 +54,7 @@ pub const sync = @compileError("todo");
 pub const video = @compileError("todo");
 pub const vmc = @compileError("todo");
 pub const dri = @compileError("todo");
-pub const present = @compileError("todo");
+pub const present = @import("x/present.zig");
 pub const res = @compileError("todo");
 pub const record = @compileError("todo");
 
@@ -5461,6 +5464,11 @@ pub const servermsg = struct {
         word_count: u32 align(1),
         type: u16,
         unused: u16,
+
+        pub fn isPresentCompleteNotify(event: *const GenericEvent, opcode_base: u8) bool {
+            return event.ext_opcode_base == opcode_base and
+                event.type == @intFromEnum(present.EventType.complete_notify);
+        }
     };
 
     comptime {
@@ -5668,6 +5676,19 @@ pub const stage3 = struct {
         minor: u32,
         unused: [16]u8,
     };
+    comptime {
+        std.debug.assert(@sizeOf(present_CompleteNotify) == 28);
+    }
+    pub const present_CompleteNotify = extern struct {
+        event_id: u32,
+        window: Window,
+        serial: u32,
+        /// The time the presentation occurred, in microseconds,
+        /// from an unspecified epoch.
+        unadjusted_system_time: u64 align(4),
+        /// The vblank count at which the presentation occurred.
+        media_stream_counter: u64 align(4),
+    };
 };
 
 pub const Read3Header = enum {
@@ -5696,6 +5717,7 @@ const Read3Full = enum {
     shape_QueryVersion,
     composite_QueryVersion,
     fixes_QueryVersion,
+    present_CompleteNotify,
     pub fn Type(self: Read3Full) type {
         return switch (self) {
             inline else => |tag| @field(stage3, @tagName(tag)),
@@ -5723,6 +5745,7 @@ pub const Extension = struct {
         };
     }
 };
+
 
 pub fn charsetName(set: Charset) ?[]const u8 {
     return if (stdext.enums.hasName(set)) @tagName(set) else null;

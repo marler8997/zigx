@@ -11,11 +11,14 @@ const Ids = struct {
     pub fn gc(self: Ids) x11.GraphicsContext {
         return self.range.addAssumeCapacity(after_glyphs + 0).graphicsContext();
     }
-    pub fn backBuffer(self: Ids) x11.Drawable {
-        return self.range.addAssumeCapacity(after_glyphs + 1).drawable();
+    pub fn pixmap(self: Ids) x11.Pixmap {
+        return self.range.addAssumeCapacity(after_glyphs + 1).pixmap();
     }
     pub fn glyphGc(self: Ids) x11.GraphicsContext {
         return self.range.addAssumeCapacity(after_glyphs + 2).graphicsContext();
+    }
+    pub fn presentEventId(self: Ids) u32 {
+        return @intFromEnum(self.range.addAssumeCapacity(after_glyphs + 3));
     }
     pub fn font(self: Ids) Font.Ids {
         return .{
@@ -25,25 +28,8 @@ const Ids = struct {
             .glyph_offset = glyph_offset,
         };
     }
-    const needed_capacity = after_glyphs + 3;
+    const needed_capacity = after_glyphs + 4;
 };
-
-fn hasData(socket_reader: *x11.Stream15.Reader) !bool {
-    if (socket_reader.interface().end > socket_reader.interface().seek) return true;
-    var fds = [_]std.posix.pollfd{.{
-        .fd = socket_reader.getStream().handle,
-        .events = std.posix.POLL.IN,
-        .revents = 0,
-    }};
-    const result = try std.posix.poll(&fds, 0);
-    if (result == 0) return false;
-    if ((fds[0].revents & std.posix.POLL.IN) != 0) return true;
-    if ((fds[0].revents & std.posix.POLL.HUP) != 0) {
-        std.log.info("X11 connection closed (Hangup)", .{});
-        std.process.exit(0);
-    }
-    std.debug.panic("unknown poll revents 0x{}", .{fds[0].revents});
-}
 
 pub fn main() !void {
     var arena_instance: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
@@ -143,12 +129,6 @@ pub fn main() !void {
         },
     );
 
-    const dbe: Dbe = blk: {
-        const ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.dbe.name) orelse break :blk .unsupported;
-        try x11.dbe.Allocate(&sink, ext.opcode_base, ids.window(), ids.backBuffer(), .background);
-        break :blk .{ .enabled = .{ .opcode_base = ext.opcode_base, .back_buffer = ids.backBuffer() } };
-    };
-
     try sink.CreateGc(
         ids.gc(),
         ids.window().drawable(),
@@ -160,6 +140,24 @@ pub fn main() !void {
             .graphics_exposures = false,
         },
     );
+    const present_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.present.name) orelse {
+        std.log.err("Present extension not available", .{});
+        std.process.exit(0xff);
+    };
+
+    try x11.present.selectInput(
+        &sink,
+        present_ext.opcode_base,
+        ids.presentEventId(),
+        ids.window(),
+        .{ .complete_notify = true },
+    );
+
+    try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
+        .depth = screen.depth,
+        .width = window_size.x,
+        .height = window_size.y,
+    });
 
     try sink.MapWindow(ids.window());
     const font_ids = ids.font();
@@ -191,10 +189,12 @@ pub fn main() !void {
     var layout: Layout = .{
         .slider = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
     };
-    var do_render = false;
+    var present_serial: u32 = 0;
+    var render_in_flight = false;
+    var dirty = false;
 
     while (true) {
-        if (!do_render) try sink.writer.flush();
+        try sink.writer.flush();
         const msg_kind = source.readKind() catch |err| return switch (err) {
             error.EndOfStream => {
                 std.log.info("X11 connection closed (EndOfStream)", .{});
@@ -216,7 +216,8 @@ pub fn main() !void {
                     const pt: XY(i16) = .{ .x = msg.event_x, .y = msg.event_y };
                     if (rectContains(layout.slider, pt)) {
                         sliding = true;
-                        do_render = try updateFontSize(&sink, &font_size, &font, layout.slider, pt.x);
+                        if (try updateFontSize(&sink, &font_size, &font, layout.slider, pt.x))
+                            dirty = true;
                     }
                 }
             },
@@ -230,13 +231,13 @@ pub fn main() !void {
                 const msg = try source.read2(.MotionNotify);
                 if (sliding) {
                     const pt: XY(i16) = .{ .x = msg.event_x, .y = msg.event_y };
-                    do_render = try updateFontSize(&sink, &font_size, &font, layout.slider, pt.x);
+                    if (try updateFontSize(&sink, &font_size, &font, layout.slider, pt.x))
+                        dirty = true;
                 }
             },
             .Expose => {
-                const expose = try source.read2(.Expose);
-                std.log.info("X11 {}", .{expose});
-                do_render = true;
+                _ = try source.read2(.Expose);
+                dirty = true;
             },
             .ConfigureNotify => {
                 const msg = try source.read2(.ConfigureNotify);
@@ -245,8 +246,26 @@ pub fn main() !void {
                 if (window_size.x != msg.width or window_size.y != msg.height) {
                     std.log.info("WindowSize {}x{}", .{ msg.width, msg.height });
                     window_size = .{ .x = msg.width, .y = msg.height };
-                    do_render = true;
+                    try sink.FreePixmap(ids.pixmap());
+                    try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
+                        .depth = screen.depth,
+                        .width = window_size.x,
+                        .height = window_size.y,
+                    });
+                    dirty = true;
                 }
+            },
+            .GenericEvent => {
+                const event = try source.read2(.GenericEvent);
+                if (event.isPresentCompleteNotify(present_ext.opcode_base)) {
+                    const complete = try source.read3Full(.present_CompleteNotify);
+                    std.debug.assert(complete.event_id == ids.presentEventId());
+                    std.debug.assert(complete.window == ids.window());
+                    if (complete.serial == present_serial) {
+                        std.debug.assert(render_in_flight);
+                        render_in_flight = false;
+                    }
+                } else std.debug.panic("unexpected GenericEvent {}", .{event});
             },
             .MapNotify,
             .ReparentNotify,
@@ -254,21 +273,20 @@ pub fn main() !void {
             => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }
-        if (do_render) {
-            // only render when socket is idle
-            if (!try hasData(&socket_reader)) {
-                layout = try render(
-                    &glyph_arena,
-                    &sink,
-                    ids,
-                    dbe,
-                    &font,
-                    window_size,
-                    font_size,
-                    opt.font_file,
-                );
-                do_render = false;
-            }
+        if (dirty and !render_in_flight) {
+            layout = try render(
+                &glyph_arena,
+                &sink,
+                ids,
+                &font,
+                window_size,
+                font_size,
+                opt.font_file,
+            );
+            present_serial +%= 1;
+            try x11.present.presentPixmap(&sink, present_ext.opcode_base, ids.window(), ids.pixmap(), present_serial, 0, 0, 0);
+            render_in_flight = true;
+            dirty = false;
         }
     }
 }
@@ -310,28 +328,22 @@ fn render(
     glyph_arena: *ArenaAllocator,
     sink: *x11.RequestSink,
     ids: Ids,
-    dbe: Dbe,
     font: *Font,
     window_size: XY(u16),
     font_size: f32,
     font_file: ?[]const u8,
 ) !Layout {
-    const window = ids.window();
     const gc = ids.gc();
+    const drawable = ids.pixmap().drawable();
 
-    if (null == dbe.backBuffer()) {
-        try sink.ClearArea(
-            window,
-            .{
-                .x = 0,
-                .y = 0,
-                .width = window_size.x,
-                .height = window_size.y,
-            },
-            .{ .exposures = false },
-        );
-    }
-    const drawable: x11.Drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
+    try sink.ChangeGc(gc, .{ .foreground = 0 });
+    try sink.PolyFillRectangle(drawable, gc, .initAssume(&.{.{
+        .x = 0,
+        .y = 0,
+        .width = window_size.x,
+        .height = window_size.y,
+    }}));
+    try sink.ChangeGc(gc, .{ .foreground = 0xffffff });
 
     const slider_margin_left = 10;
     const slider_rail_half_height = 2;
@@ -424,12 +436,6 @@ fn render(
     try writer.interface.writeAll("is centered, and also the last bit is longer than the buffer.");
     try writer.newline();
 
-    switch (dbe) {
-        .unsupported => {},
-        .enabled => |enabled| try x11.dbe.Swap(sink, enabled.opcode_base, .initAssume(&.{
-            .{ .window = window, .action = .background },
-        })),
-    }
     return layout;
 }
 
@@ -442,20 +448,6 @@ fn underline(
         .{ .x = left, .y = @intCast(writer.cursor.y), .width = @intCast(writer.cursor.x - left), .height = 1 },
     }));
 }
-
-const Dbe = union(enum) {
-    unsupported,
-    enabled: struct {
-        opcode_base: u8,
-        back_buffer: x11.Drawable,
-    },
-    pub fn backBuffer(self: Dbe) ?x11.Drawable {
-        return switch (self) {
-            .unsupported => null,
-            .enabled => |enabled| enabled.back_buffer,
-        };
-    }
-};
 
 fn errExit(comptime fmt: []const u8, args: anytype) noreturn {
     std.log.err(fmt, args);

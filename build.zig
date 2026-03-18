@@ -16,6 +16,7 @@ const examples = [_]Example{
     .{ .name = "graphics" },
     .{ .name = "fontviewer" },
     .{ .name = "dbe" },
+    .{ .name = "present" },
     .{ .name = "keys" },
     .{ .name = "input" },
     .{ .name = "draw" },

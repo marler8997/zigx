@@ -9,10 +9,13 @@ const Ids = struct {
     pub fn gc(self: Ids) x11.GraphicsContext {
         return self.range.addAssumeCapacity(1).graphicsContext();
     }
-    pub fn backBuffer(self: Ids) x11.Drawable {
-        return self.range.addAssumeCapacity(2).drawable();
+    pub fn pixmap(self: Ids) x11.Pixmap {
+        return self.range.addAssumeCapacity(2).pixmap();
     }
-    const needed_capacity = 3;
+    pub fn presentEventId(self: Ids) u32 {
+        return @intFromEnum(self.range.addAssumeCapacity(3));
+    }
+    const needed_capacity = 4;
 };
 
 pub fn main() !u8 {
@@ -79,6 +82,7 @@ pub fn main() !u8 {
         .visual_id = screen.visual,
     }, .{
         .bg_pixel = 0x332211,
+        .bit_gravity = .north_west,
         .event_mask = .{ .KeyPress = 1, .Exposure = 1 },
     });
 
@@ -90,12 +94,28 @@ pub fn main() !u8 {
             .foreground = 0xaabbff,
         },
     );
-
-    const dbe: Dbe = blk: {
-        const ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.dbe.name) orelse break :blk .unsupported;
-        try x11.dbe.Allocate(&sink, ext.opcode_base, ids.window(), ids.backBuffer(), .background);
-        break :blk .{ .enabled = .{ .opcode = ext.opcode_base, .back_buffer = ids.backBuffer() } };
+    const present_ext = try x11.draft.synchronousQueryExtension(
+        &source,
+        &sink,
+        x11.present.name,
+    ) orelse {
+        std.log.err("Present extension not available", .{});
+        return 0xff;
     };
+
+    try x11.present.selectInput(
+        &sink,
+        present_ext.opcode_base,
+        ids.presentEventId(),
+        ids.window(),
+        .{ .complete_notify = true },
+    );
+
+    try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
+        .depth = screen.depth,
+        .width = window_width,
+        .height = window_height,
+    });
 
     const font_dims: FontDims = blk: {
         try sink.QueryTextExtents(ids.gc().fontable(), .initComptime(&[_]u16{'m'}));
@@ -114,6 +134,9 @@ pub fn main() !u8 {
 
     var key_log: x11.BoundedArray(KeyEvent, 80) = .{ .len = 0, .buffer = undefined };
     var key_log_next: usize = 0;
+    var present_serial: u32 = 0;
+    var render_in_flight = false;
+    var dirty = false;
 
     while (true) {
         try sink.writer.flush();
@@ -142,15 +165,7 @@ pub fn main() !u8 {
                     };
                     key_log_next = (key_log_next + 1) % key_log.buffer.len;
                     key_log.len = @max(key_log_next, key_log.len);
-                    try render(
-                        &sink,
-                        ids.window(),
-                        ids.gc(),
-                        dbe,
-                        &font_dims,
-                        key_log.slice(),
-                        key_log_next,
-                    );
+                    dirty = true;
                 } else |err| switch (err) {
                     error.KeycodeTooSmall => {
                         std.log.err("keycode {} is too small", .{event.keycode});
@@ -161,40 +176,40 @@ pub fn main() !u8 {
             //       even though we didn't register for the KeyRelease event
             .KeyRelease => _ = try source.read2(.KeyRelease),
             .Expose => {
-                const expose = try source.read2(.Expose);
-                std.log.info("X11 {}", .{expose});
-                try render(
-                    &sink,
-                    ids.window(),
-                    ids.gc(),
-                    dbe,
-                    &font_dims,
-                    key_log.slice(),
-                    key_log_next,
-                );
+                _ = try source.read2(.Expose);
+                dirty = true;
+            },
+            .GenericEvent => {
+                const event = try source.read2(.GenericEvent);
+                if (event.isPresentCompleteNotify(present_ext.opcode_base)) {
+                    const complete = try source.read3Full(.present_CompleteNotify);
+                    std.debug.assert(complete.event_id == ids.presentEventId());
+                    std.debug.assert(complete.window == ids.window());
+                    if (complete.serial == present_serial) {
+                        std.debug.assert(render_in_flight);
+                        render_in_flight = false;
+                    }
+                } else std.debug.panic("unexpected GenericEvent {}", .{event});
             },
             .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }
+        if (dirty and !render_in_flight) {
+            try render(
+                &sink,
+                ids.pixmap(),
+                ids.gc(),
+                &font_dims,
+                key_log.slice(),
+                key_log_next,
+            );
+            present_serial +%= 1;
+            try x11.present.presentPixmap(&sink, present_ext.opcode_base, ids.window(), ids.pixmap(), present_serial, 0, 0, 0);
+            render_in_flight = true;
+            dirty = false;
+        }
     }
 }
-
-const Dbe = union(enum) {
-    unsupported,
-    disabled: struct {
-        opcode: u8,
-    },
-    enabled: struct {
-        opcode: u8,
-        back_buffer: x11.Drawable,
-    },
-    pub fn backBuffer(self: Dbe) ?x11.Drawable {
-        return switch (self) {
-            .unsupported, .disabled => null,
-            .enabled => |enabled| enabled.back_buffer,
-        };
-    }
-};
 
 const FontDims = struct {
     width: u8,
@@ -211,27 +226,21 @@ const KeyEvent = struct {
 
 fn render(
     sink: *x11.RequestSink,
-    window: x11.Window,
+    pixmap: x11.Pixmap,
     gc_id: x11.GraphicsContext,
-    dbe: Dbe,
     font_dims: *const FontDims,
     key_log: []const KeyEvent,
     key_log_next: usize,
 ) !void {
-    if (null == dbe.backBuffer()) {
-        try sink.ClearArea(
-            window,
-            .{
-                .x = 0,
-                .y = 0,
-                .width = window_width,
-                .height = window_height,
-            },
-            .{ .exposures = false },
-        );
-    }
-
-    const target_drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
+    const drawable = pixmap.drawable();
+    try sink.ChangeGc(gc_id, .{ .foreground = 0x332211 });
+    try sink.PolyFillRectangle(drawable, gc_id, .initAssume(&.{.{
+        .x = 0,
+        .y = 0,
+        .width = window_width,
+        .height = window_height,
+    }}));
+    try sink.ChangeGc(gc_id, .{ .foreground = 0xaabbff });
 
     const margin_left = 5;
     const margin_top = 5;
@@ -242,7 +251,7 @@ fn render(
         const text = x11.SliceWithMaxLen(u8, [*]const u8, 254).initComptime("Idx: Cod Mod    -> Sym");
         try renderString(
             sink,
-            target_drawable,
+            drawable,
             gc_id,
             text,
             .{
@@ -279,7 +288,7 @@ fn render(
         };
         try renderString(
             sink,
-            target_drawable,
+            drawable,
             gc_id,
             text_x11,
             .{
@@ -287,13 +296,6 @@ fn render(
                 .y = @intCast(margin_top + ((row + 2) * line_height)),
             },
         );
-    }
-
-    switch (dbe) {
-        .unsupported, .disabled => {},
-        .enabled => |enabled| try x11.dbe.Swap(sink, enabled.opcode, .initAssume(&.{
-            .{ .window = window, .action = .background },
-        })),
     }
 }
 

@@ -6,10 +6,13 @@ const Ids = struct {
     pub fn gc(self: Ids) x11.GraphicsContext {
         return self.range.addAssumeCapacity(1).graphicsContext();
     }
-    pub fn backBuffer(self: Ids) x11.Drawable {
-        return self.range.addAssumeCapacity(2).drawable();
+    pub fn pixmap(self: Ids) x11.Pixmap {
+        return self.range.addAssumeCapacity(2).pixmap();
     }
-    const needed_capacity = 3;
+    pub fn presentEventId(self: Ids) u32 {
+        return @intFromEnum(self.range.addAssumeCapacity(3));
+    }
+    const needed_capacity = 4;
 };
 
 pub fn main() !void {
@@ -74,6 +77,7 @@ pub fn main() !void {
         },
         .{
             .bg_pixel = screen.depth.rgbFrom24(0),
+            .bit_gravity = .north_west,
             .event_mask = .{
                 .ButtonPress = 1,
                 .ButtonRelease = 1,
@@ -84,10 +88,13 @@ pub fn main() !void {
         },
     );
 
-    const dbe: Dbe = blk: {
-        const ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.dbe.name) orelse break :blk .unsupported;
-        try x11.dbe.Allocate(&sink, ext.opcode_base, ids.window(), ids.backBuffer(), .background);
-        break :blk .{ .enabled = .{ .opcode_base = ext.opcode_base, .back_buffer = ids.backBuffer() } };
+    const present_ext = try x11.draft.synchronousQueryExtension(
+        &source,
+        &sink,
+        x11.present.name,
+    ) orelse {
+        std.log.err("Present extension not available", .{});
+        std.process.exit(0xff);
     };
 
     try sink.CreateGc(
@@ -99,6 +106,20 @@ pub fn main() !void {
             .line_width = 4,
         },
     );
+
+    try x11.present.selectInput(
+        &sink,
+        present_ext.opcode_base,
+        ids.presentEventId(),
+        ids.window(),
+        .{ .complete_notify = true },
+    );
+
+    try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
+        .depth = screen.depth,
+        .width = window_size.x,
+        .height = window_size.y,
+    });
 
     const font_dims: FontDims = blk: {
         try sink.QueryTextExtents(ids.gc().fontable(), .initComptime(&[_]u16{'m'}));
@@ -119,6 +140,9 @@ pub fn main() !void {
     var points: x11.ArrayListManaged(XY(i16)) = .init(point_arena.allocator());
     var mouse_state: MouseState = .{};
     var mode: Mode = .line;
+    var present_serial: u32 = 0;
+    var render_in_flight = false;
+    var dirty = false;
 
     while (true) {
         try sink.writer.flush();
@@ -136,34 +160,33 @@ pub fn main() !void {
             },
         };
 
-        var do_render = false;
         switch (msg_kind) {
             .ButtonPress => {
                 const msg = try source.read2(.ButtonPress);
                 std.log.info("ButtonPress {}", .{msg.button});
                 const button1_down = (msg.button == 1) or msg.state.button1;
-                do_render = onMouseEvent(
+                if (onMouseEvent(
                     &points,
                     &mouse_state,
                     .{ .x = msg.event_x, .y = msg.event_y },
                     button1_down,
-                );
+                )) dirty = true;
                 switch (msg.button) {
                     1 => {},
                     3 => {
                         // usually right click
                         points.clearRetainingCapacity();
-                        do_render = true;
+                        dirty = true;
                     },
                     2, 5 => {
                         // usually middle button and scroll
                         mode = mode.next();
-                        do_render = true;
+                        dirty = true;
                     },
                     4 => {
                         // usually the other scroll direction
                         mode = mode.prev();
-                        do_render = true;
+                        dirty = true;
                     },
                     else => {},
                 }
@@ -172,26 +195,25 @@ pub fn main() !void {
                 const msg = try source.read2(.ButtonRelease);
                 std.log.info("ButtonRelease {}", .{msg.button});
                 const button1_down = (msg.button != 1) and msg.state.button1;
-                do_render = onMouseEvent(
+                if (onMouseEvent(
                     &points,
                     &mouse_state,
                     .{ .x = msg.event_x, .y = msg.event_y },
                     button1_down,
-                );
+                )) dirty = true;
             },
             .MotionNotify => {
                 const msg = try source.read2(.MotionNotify);
-                do_render = onMouseEvent(
+                if (onMouseEvent(
                     &points,
                     &mouse_state,
                     .{ .x = msg.event_x, .y = msg.event_y },
                     msg.state.button1,
-                );
+                )) dirty = true;
             },
             .Expose => {
-                const expose = try source.read2(.Expose);
-                std.log.info("X11 {}", .{expose});
-                do_render = true;
+                _ = try source.read2(.Expose);
+                dirty = true;
             },
             .ConfigureNotify => {
                 const msg = try source.read2(.ConfigureNotify);
@@ -200,8 +222,26 @@ pub fn main() !void {
                 if (window_size.x != msg.width or window_size.y != msg.height) {
                     std.log.info("WindowSize {}x{}", .{ msg.width, msg.height });
                     window_size = .{ .x = msg.width, .y = msg.height };
-                    do_render = true;
+                    try sink.FreePixmap(ids.pixmap());
+                    try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
+                        .depth = screen.depth,
+                        .width = window_size.x,
+                        .height = window_size.y,
+                    });
+                    dirty = true;
                 }
+            },
+            .GenericEvent => {
+                const event = try source.read2(.GenericEvent);
+                if (event.isPresentCompleteNotify(present_ext.opcode_base)) {
+                    const complete = try source.read3Full(.present_CompleteNotify);
+                    std.debug.assert(complete.event_id == ids.presentEventId());
+                    std.debug.assert(complete.window == ids.window());
+                    if (complete.serial == present_serial) {
+                        std.debug.assert(render_in_flight);
+                        render_in_flight = false;
+                    }
+                } else std.debug.panic("unexpected GenericEvent {}", .{event});
             },
             .MapNotify,
             .ReparentNotify,
@@ -211,17 +251,29 @@ pub fn main() !void {
             },
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
         }
-        if (do_render) {
+        if (dirty and !render_in_flight) {
             try render(
                 &sink,
-                ids.window(),
+                ids.pixmap(),
                 ids.gc(),
                 font_dims,
-                dbe,
                 window_size,
                 points.items,
                 mode,
             );
+            present_serial +%= 1;
+            try x11.present.presentPixmap(
+                &sink,
+                present_ext.opcode_base,
+                ids.window(),
+                ids.pixmap(),
+                present_serial,
+                0,
+                0,
+                0,
+            );
+            render_in_flight = true;
+            dirty = false;
         }
     }
 }
@@ -311,28 +363,23 @@ const FontDims = struct {
 
 fn render(
     sink: *x11.RequestSink,
-    window: x11.Window,
+    pixmap: x11.Pixmap,
     gc: x11.GraphicsContext,
     font_dims: FontDims,
-    dbe: Dbe,
     window_size: XY(u16),
     lines: []const XY(i16),
     mode: Mode,
 ) !void {
-    if (null == dbe.backBuffer()) {
-        try sink.ClearArea(
-            window,
-            .{
-                .x = 0,
-                .y = 0,
-                .width = window_size.x,
-                .height = window_size.y,
-            },
-            .{ .exposures = false },
-        );
-    }
-    const drawable = if (dbe.backBuffer()) |back_buffer| back_buffer else window.drawable();
+    const drawable = pixmap.drawable();
+    try sink.ChangeGc(gc, .{ .foreground = 0 });
+    try sink.PolyFillRectangle(drawable, gc, .initAssume(&.{.{
+        .x = 0,
+        .y = 0,
+        .width = window_size.x,
+        .height = window_size.y,
+    }}));
 
+    try sink.ChangeGc(gc, .{ .foreground = 0xffffff });
     const text = "Draw on me!";
     const text_width = font_dims.width * text.len;
     try sink.ImageText8(
@@ -350,12 +397,12 @@ fn render(
             inline else => |name| .initComptime(@tagName(name)),
         } } },
     });
-    switch (dbe) {
-        .unsupported => {},
-        .enabled => |enabled| try x11.dbe.Swap(sink, enabled.opcode_base, .initAssume(&.{
-            .{ .window = window, .action = .background },
-        })),
-    }
+    try sink.PolyText8(drawable, gc, .{ .x = 5, .y = 5 + font_dims.height * 2 }, &[_]x11.TextItem8{
+        .{ .text_element = .{
+            .delta = 0,
+            .string = .initComptime("Mouse wheel to change mode"),
+        } },
+    });
 }
 
 fn renderLines(
@@ -394,20 +441,6 @@ fn renderLines(
         i += 2;
     }
 }
-
-const Dbe = union(enum) {
-    unsupported,
-    enabled: struct {
-        opcode_base: u8,
-        back_buffer: x11.Drawable,
-    },
-    pub fn backBuffer(self: Dbe) ?x11.Drawable {
-        return switch (self) {
-            .unsupported => null,
-            .enabled => |enabled| enabled.back_buffer,
-        };
-    }
-};
 
 fn oom(e: error{OutOfMemory}) noreturn {
     @panic(@errorName(e));

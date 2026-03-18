@@ -1,4 +1,7 @@
-//! An example of using the "Double Buffer Extension" (DBE)
+//! An example of using the "Double Buffer Extension" (DBE).
+//! Consider using the Present extension instead, which supersedes DBE by
+//! providing both off-screen rendering (via Pixmaps) and frame synchronization
+//! (via CompleteNotify events). See examples/present.zig.
 const std = @import("std");
 const x11 = @import("x11");
 
