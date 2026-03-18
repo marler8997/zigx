@@ -1,28 +1,29 @@
 const Ids = struct {
     base: x11.ResourceBase,
+
+    // putting glyph ids at the beginning to show it can be done
+    const after_glyphs = Font.max_glyphs;
+
+    pub fn glyphBase(self: Ids) x11.ResourceBase {
+        return self.base;
+    }
+    pub fn glyphLimit(self: Ids) u32 {
+        return @intFromEnum(self.base) + Font.max_glyphs;
+    }
     pub fn window(self: Ids) x11.Window {
-        return self.base.add(0).window();
+        return self.base.add(after_glyphs + 0).window();
     }
     pub fn gc(self: Ids) x11.GraphicsContext {
-        return self.base.add(1).graphicsContext();
+        return self.base.add(after_glyphs + 1).graphicsContext();
     }
     pub fn backBuffer(self: Ids) x11.Drawable {
-        return self.base.add(2).drawable();
-    }
-    pub fn glyphGc(self: Ids) x11.GraphicsContext {
-        return self.base.add(3).graphicsContext();
-    }
-    pub fn glyphPixmap(self: Ids, index: Font.GlyphIndex) x11.Pixmap {
-        const offset = 4;
-        comptime assert(offset + std.math.maxInt(@typeInfo(Font.GlyphIndex).@"enum".tag_type) < std.math.maxInt(u32));
-        return self.base.add(offset + @intFromEnum(index)).pixmap();
+        return self.base.add(after_glyphs + 2).drawable();
     }
     pub fn font(self: Ids) Font.Ids {
         return .{
             .window = self.window(),
-            .glyph_gc = self.base.add(4).graphicsContext(),
-            .glyphs_base = @enumFromInt(@intFromEnum(self.base.add(5))),
-            .glyphs_len = 4096,
+            .glyph_gc = self.base.add(after_glyphs + 3).graphicsContext(),
+            .glyphs_base = self.glyphBase(),
         };
     }
 };
@@ -173,11 +174,12 @@ pub fn main() !void {
     };
     const ttf: TrueType = try .load(ttf_content);
     var font_size: f32 = opt.size;
-    var font: Font = try .init(std.heap.page_allocator, &ttf, font_ids, .{
+    var cached_glyphs_store: Font.GlyphSet = undefined;
+    var font: Font = try .init(&ttf, font_ids, .{
         .size = font_size,
         .color = 0xffffff,
-    });
-    defer font.deinit(std.heap.page_allocator, &sink) catch |err| @panic(@errorName(err));
+    }, &cached_glyphs_store);
+    defer font.deinit(&sink) catch |err| @panic(@errorName(err));
     var glyph_arena: ArenaAllocator = .init(std.heap.page_allocator);
 
     var sliding: bool = false;
@@ -455,17 +457,11 @@ fn errExit(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(0xff);
 }
 
-fn oom(e: error{OutOfMemory}) noreturn {
-    @panic(@errorName(e));
-}
-
 const std = @import("std");
 const x11 = @import("x11");
 const XY = x11.XY;
 const assert = std.debug.assert;
-const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const Font = @import("Font");
 const TrueType = Font.TrueType;
 const Cmdline = @import("Cmdline.zig");

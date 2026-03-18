@@ -1,7 +1,6 @@
 const std = @import("std");
 const x11 = @import("x11");
 const assert = std.debug.assert;
-const DynamicBitSetUnmanaged = std.bit_set.DynamicBitSetUnmanaged;
 const Allocator = std.mem.Allocator;
 const GlyphIndex = TrueType.GlyphIndex;
 
@@ -13,10 +12,12 @@ pub const TrueType = @import("TrueType");
 const Font = @This();
 
 ttf: *const TrueType,
-cache: DynamicBitSetUnmanaged,
 scale: f32,
 color: u32,
 ids: Ids,
+cached_glyphs: *GlyphSet,
+
+pub const max_glyphs = std.math.maxInt(u16);
 
 const Error = error{WriteFailed} || TrueType.GlyphBitmapError || error{InvalidUtf8};
 
@@ -26,14 +27,10 @@ pub const Ids = struct {
     window: x11.Window,
     /// The ID reserved for use for temporary graphics contexts for glyph rasterization.
     glyph_gc: x11.GraphicsContext,
-    /// The base ID for glyph pixmap.
+    /// The base ID for glyph pixmaps. Must have space for `max_glyphs` IDs.
     glyphs_base: x11.ResourceBase,
-    /// The max number of glyphs supported.
-    glyphs_len: u16,
 
-    /// Returns the pixmap for a given glyph, or `null` if out of range.
-    pub fn glyphPixmap(self: Ids, index: Font.GlyphIndex) ?x11.Pixmap {
-        if (@intFromEnum(index) >= self.glyphs_len) return null;
+    pub fn glyphPixmap(self: Ids, index: Font.GlyphIndex) x11.Pixmap {
         return self.glyphs_base.add(@intFromEnum(index)).pixmap();
     }
 };
@@ -234,48 +231,63 @@ pub const Options = struct {
     color: u32,
 };
 
+comptime {
+    std.debug.assert(@sizeOf(GlyphSet) == 8192);
+}
+pub const GlyphSet = struct {
+    const GlyphIndexInt = @typeInfo(GlyphIndex).@"enum".tag_type;
+
+    bit_set: std.StaticBitSet(std.math.maxInt(GlyphIndexInt) + 1),
+
+    pub fn initEmpty() GlyphSet {
+        return .{ .bit_set = .initEmpty() };
+    }
+    pub fn isSet(self: *const GlyphSet, glyph_index: GlyphIndex) bool {
+        return self.bit_set.isSet(@intFromEnum(glyph_index));
+    }
+    pub fn set(self: *GlyphSet, glyph_index: GlyphIndex) void {
+        self.bit_set.set(@intFromEnum(glyph_index));
+    }
+};
+
 pub fn init(
-    gpa: Allocator,
     ttf: *const TrueType,
     ids: Ids,
     options: Options,
+    cached_glyphs_store: *GlyphSet,
 ) !Font {
     // We later on will assume that there's at least space for the .notdef glyph at 0
     if (ttf.glyphs_len == 0) return error.OutOfMemory;
-    _ = try std.math.add(u32, @intFromEnum(ids.glyphs_base), ids.glyphs_len);
-    var cache: DynamicBitSetUnmanaged = try .initEmpty(
-        gpa,
-        std.math.maxInt(@typeInfo(GlyphIndex).@"enum".tag_type),
-    );
-    errdefer cache.deinit(gpa);
+    _ = try std.math.add(u32, @intFromEnum(ids.glyphs_base), max_glyphs);
     const scale = ttf.scaleForPixelHeight(options.size);
+    cached_glyphs_store.* = .initEmpty();
     return .{
-        .cache = cache,
         .ttf = ttf,
         .scale = scale,
         .color = options.color,
         .ids = ids,
+        .cached_glyphs = cached_glyphs_store,
     };
 }
 
-fn freePixmaps(self: *Font, sink: *x11.RequestSink) !void {
-    var iter = self.cache.iterator(.{});
+fn freePixmaps(self: *Font, sink: *x11.RequestSink) error{WriteFailed}!void {
+    var iter = self.cached_glyphs.bit_set.iterator(.{});
     while (iter.next()) |glyph_index| {
-        const pixmap = self.ids.glyphPixmap(@enumFromInt(glyph_index)).?;
+        const pixmap = self.ids.glyphPixmap(@enumFromInt(glyph_index));
         try sink.FreePixmap(pixmap);
     }
+    // std.ArrayBitSet missing unsetAll
+    @memset(&self.cached_glyphs.bit_set.masks, 0);
 }
 
-pub fn deinit(self: *Font, gpa: Allocator, sink: *x11.RequestSink) !void {
+pub fn deinit(self: *Font, sink: *x11.RequestSink) !void {
     try self.freePixmaps(sink);
-    self.cache.deinit(gpa);
     self.* = undefined;
 }
 
 /// Invalidates the cached glyphs, and asks the server to release their pixmap memory.
-pub fn invalidateCache(self: *Font, sink: *x11.RequestSink) !void {
+pub fn invalidateCache(self: *Font, sink: *x11.RequestSink) error{WriteFailed}!void {
     try self.freePixmaps(sink);
-    self.cache.unsetAll();
 }
 
 pub const ChangeOptions = struct {
@@ -467,7 +479,7 @@ pub fn getGlyph(
     const measurement = self.getGlyphMetrics(glyph_index);
 
     // Check if the glyph is already in the cache
-    if (self.cache.isSet(@intFromEnum(glyph_index))) {
+    if (self.cached_glyphs.isSet(glyph_index)) {
         return .{
             .pixmap = self.ids.glyphPixmap(glyph_index),
             .measurement = measurement,
@@ -476,12 +488,7 @@ pub fn getGlyph(
 
     // If not, add it to the cache
     const pixmap = rasterize: {
-        // Find the pixmap ID. If there's no pixmap reserved for this glyph,
-        // return this notdef glyph instead.
-        const pixmap = self.ids.glyphPixmap(glyph_index) orelse {
-            assert(glyph_index != .notdef); // Unreachable
-            return self.getGlyph(gpa, sink, .notdef);
-        };
+        const pixmap = self.ids.glyphPixmap(glyph_index);
 
         // Rasterize the glyph
         var r8: std.ArrayListUnmanaged(u8) = .empty;
@@ -546,7 +553,7 @@ pub fn getGlyph(
         try sink.FreeGc(gc);
 
         // Add the glyph to the cache
-        self.cache.set(@intFromEnum(glyph_index));
+        self.cached_glyphs.set(glyph_index);
 
         break :rasterize pixmap;
     };
