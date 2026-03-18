@@ -11,26 +11,30 @@ const window_width = 400;
 const window_height = 400;
 
 pub const Ids = struct {
-    base: x11.ResourceBase,
+    range: x11.IdRange,
     pub fn window(self: Ids) x11.Window {
-        return self.base.add(0).window();
+        return self.range.addAssumeCapacity(0).window();
     }
     pub fn bg_gc(self: Ids) x11.GraphicsContext {
-        return self.base.add(1).graphicsContext();
+        return self.range.addAssumeCapacity(1).graphicsContext();
     }
     pub fn fg_gc(self: Ids) x11.GraphicsContext {
-        return self.base.add(2).graphicsContext();
+        return self.range.addAssumeCapacity(2).graphicsContext();
     }
     pub fn pixmap(self: Ids) x11.Pixmap {
-        return self.base.add(3).pixmap();
+        return self.range.addAssumeCapacity(3).pixmap();
     }
     // For the X Render extension part of this example
     pub fn picture_root(self: Ids) x11.render.Picture {
-        return self.base.add(4).picture();
+        return self.range.addAssumeCapacity(4).picture();
     }
     pub fn picture_window(self: Ids) x11.render.Picture {
-        return self.base.add(5).picture();
+        return self.range.addAssumeCapacity(5).picture();
     }
+    pub fn solid_blue(self: Ids) x11.render.Picture {
+        return self.range.addAssumeCapacity(6).picture();
+    }
+    const needed_capacity = 7;
 };
 
 // ZFormat
@@ -170,7 +174,12 @@ pub fn main() !u8 {
     var socket_writer = x11.socketWriter(socket_reader.getStream(), &write_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
 
-    const ids = Ids{ .base = setup.resource_id_base };
+    const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
+    if (id_range.capacity() < Ids.needed_capacity) {
+        std.log.err("X server id range capacity {} is less than needed {}", .{ id_range.capacity(), Ids.needed_capacity });
+        std.process.exit(0xff);
+    }
+    const ids = Ids{ .range = id_range };
     const depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(
         "unsupported depth {}",
         .{screen.root_depth},
@@ -752,7 +761,7 @@ fn render(
         });
 
         // Exercise CreateSolidFill: create a solid blue picture and composite it
-        const solid_blue = ids.base.add(6).picture();
+        const solid_blue = ids.solid_blue();
         try x11.render.CreateSolidFill(sink, render_ext.opcode_base, solid_blue, x11.render.Color.fromRgb24(0x0000ff));
         try x11.render.Composite(sink, render_ext.opcode_base, .{
             .picture_operation = .over,

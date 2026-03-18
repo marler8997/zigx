@@ -5,19 +5,20 @@ const window_width = 400;
 const window_height = 400;
 
 const Ids = struct {
-    base: x11.ResourceBase,
+    range: x11.IdRange,
     pub fn window(self: Ids) x11.Window {
-        return self.base.add(0).window();
+        return self.range.addAssumeCapacity(0).window();
     }
     pub fn gc(self: Ids) x11.GraphicsContext {
-        return self.base.add(1).graphicsContext();
+        return self.range.addAssumeCapacity(1).graphicsContext();
     }
     pub fn colormap(self: Ids) x11.Colormap {
-        return self.base.add(3).colormap();
+        return self.range.addAssumeCapacity(2).colormap();
     }
     pub fn region(self: Ids) x11.fixes.Region {
-        return self.base.add(4).fixesRegion();
+        return self.range.addAssumeCapacity(3).fixesRegion();
     }
+    const needed_capacity = 4;
 };
 
 pub fn main() !void {
@@ -42,9 +43,14 @@ pub fn main() !void {
             std.log.info("no visual compatible with transparency", .{});
             std.process.exit(0xff);
         }
+        const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
+        if (id_range.capacity() < Ids.needed_capacity) {
+            std.log.err("X server id range capacity {} is less than needed {}", .{ id_range.capacity(), Ids.needed_capacity });
+            std.process.exit(0xff);
+        }
         break :blk .{
             socket_reader.getStream(),
-            .{ .base = setup.resource_id_base },
+            .{ .range = id_range },
             screen.root,
             on_visual.transparent_visual,
         };

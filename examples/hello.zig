@@ -5,16 +5,17 @@ const window_width = 400;
 const window_height = 400;
 
 const Ids = struct {
-    base: x11.ResourceBase,
+    range: x11.IdRange,
     pub fn window(self: Ids) x11.Window {
-        return self.base.add(0).window();
+        return self.range.addAssumeCapacity(0).window();
     }
     pub fn bg_gc(self: Ids) x11.GraphicsContext {
-        return self.base.add(1).graphicsContext();
+        return self.range.addAssumeCapacity(1).graphicsContext();
     }
     pub fn fg_gc(self: Ids) x11.GraphicsContext {
-        return self.base.add(2).graphicsContext();
+        return self.range.addAssumeCapacity(2).graphicsContext();
     }
+    const needed_capacity = 3;
 };
 
 pub fn main() !void {
@@ -37,8 +38,13 @@ pub fn main() !void {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
+        const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
+        if (id_range.capacity() < Ids.needed_capacity) {
+            std.log.err("X server id range capacity {} is less than needed {}", .{ id_range.capacity(), Ids.needed_capacity });
+            std.process.exit(0xff);
+        }
         break :blk .{
-            socket_reader.getStream(), .{ .base = setup.resource_id_base }, .{
+            socket_reader.getStream(), .{ .range = id_range }, .{
                 .window = screen.root,
                 .visual = screen.root_visual,
                 .depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(

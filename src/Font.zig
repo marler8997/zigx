@@ -27,11 +27,12 @@ pub const Ids = struct {
     window: x11.Window,
     /// The ID reserved for use for temporary graphics contexts for glyph rasterization.
     glyph_gc: x11.GraphicsContext,
-    /// The base ID for glyph pixmaps. Must have space for `max_glyphs` IDs.
-    glyphs_base: x11.ResourceBase,
+    /// The ID range and starting offset for glyph pixmaps.
+    range: x11.IdRange,
+    glyph_offset: u29,
 
     pub fn glyphPixmap(self: Ids, index: Font.GlyphIndex) x11.Pixmap {
-        return self.glyphs_base.add(@intFromEnum(index)).pixmap();
+        return self.range.addAssumeCapacity(self.glyph_offset + @intFromEnum(index)).pixmap();
     }
 };
 
@@ -258,7 +259,7 @@ pub fn init(
 ) !Font {
     // We later on will assume that there's at least space for the .notdef glyph at 0
     if (ttf.glyphs_len == 0) return error.OutOfMemory;
-    _ = try std.math.add(u32, @intFromEnum(ids.glyphs_base), max_glyphs);
+    if (ids.range.capacity() < ids.glyph_offset + max_glyphs) return error.OutOfMemory;
     const scale = ttf.scaleForPixelHeight(options.size);
     cached_glyphs_store.* = .initEmpty();
     return .{

@@ -32,7 +32,7 @@ fn setupReply(
             .word_count = @divExact(result.len - 8, 4),
             .release_number = 12101008,
             .resource_id_base = @enumFromInt(396361728),
-            .resource_id_mask = 0x1fffff,
+            .resource_id_mask = @enumFromInt(0x1fffff),
             .motion_buffer_size = 256,
             .vendor_len = @intCast(named_ct.vendor.len),
             .max_request_len = 0xffff,
@@ -204,7 +204,7 @@ test "parse setup reply" {
     var source: x11.Source = .initFinishSetup(&buffer_reader, &setup);
     try testing.expectEqual(@as(u32, 12101008), setup.release_number);
     try testing.expectEqual(x11.ResourceBase.fromInt(396361728), setup.resource_id_base);
-    try testing.expectEqual(@as(u32, 0x1fffff), setup.resource_id_mask);
+    try testing.expectEqual(x11.ResourceMask.fromInt(0x1fffff), setup.resource_id_mask);
     try testing.expectEqual(@as(u32, 256), setup.motion_buffer_size);
     try testing.expectEqual(@as(u16, zigx_vendor.len), setup.vendor_len);
     try testing.expectEqual(@as(u16, 0xffff), setup.max_request_len);

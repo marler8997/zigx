@@ -1,31 +1,31 @@
 const Ids = struct {
-    base: x11.ResourceBase,
+    range: x11.IdRange,
 
-    // putting glyph ids at the beginning to show it can be done
-    const after_glyphs = Font.max_glyphs;
-
-    pub fn glyphBase(self: Ids) x11.ResourceBase {
-        return self.base;
-    }
-    pub fn glyphLimit(self: Ids) u32 {
-        return @intFromEnum(self.base) + Font.max_glyphs;
-    }
     pub fn window(self: Ids) x11.Window {
-        return self.base.add(after_glyphs + 0).window();
+        return self.range.addAssumeCapacity(0).window();
     }
+    // Glyph IDs are placed right after the window ID, just to demonstrate that
+    // they don't have to be at the beginning or end of the range.
+    const glyph_offset = 1;
+    const after_glyphs = glyph_offset + Font.max_glyphs;
     pub fn gc(self: Ids) x11.GraphicsContext {
-        return self.base.add(after_glyphs + 1).graphicsContext();
+        return self.range.addAssumeCapacity(after_glyphs + 0).graphicsContext();
     }
     pub fn backBuffer(self: Ids) x11.Drawable {
-        return self.base.add(after_glyphs + 2).drawable();
+        return self.range.addAssumeCapacity(after_glyphs + 1).drawable();
+    }
+    pub fn glyphGc(self: Ids) x11.GraphicsContext {
+        return self.range.addAssumeCapacity(after_glyphs + 2).graphicsContext();
     }
     pub fn font(self: Ids) Font.Ids {
         return .{
             .window = self.window(),
-            .glyph_gc = self.base.add(after_glyphs + 3).graphicsContext(),
-            .glyphs_base = self.glyphBase(),
+            .glyph_gc = self.glyphGc(),
+            .range = self.range,
+            .glyph_offset = glyph_offset,
         };
     }
+    const needed_capacity = after_glyphs + 3;
 };
 
 fn hasData(socket_reader: *x11.Stream15.Reader) !bool {
@@ -91,8 +91,13 @@ pub fn main() !void {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
+        const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
+        if (id_range.capacity() < Ids.needed_capacity) {
+            std.log.err("X server id range capacity {} is less than needed {}", .{ id_range.capacity(), Ids.needed_capacity });
+            std.process.exit(0xff);
+        }
         break :blk .{
-            socket_reader.getStream(), .{ .base = setup.resource_id_base }, .{
+            socket_reader.getStream(), .{ .range = id_range }, .{
                 .window = screen.root,
                 .visual = screen.root_visual,
                 .depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(

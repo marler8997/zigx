@@ -114,6 +114,7 @@ test {
     // Perhaps we can use `testing.refAllDecls(@This());` instead but that requires
     // us to make the `x_test` import public.
     _ = x_test;
+    _ = IdRange;
 }
 
 pub const TcpBasePort = 6000;
@@ -2567,6 +2568,29 @@ pub const ResourceBase = enum(u32) {
     }
 };
 
+pub const ResourceMask = enum(u32) {
+    _,
+
+    pub fn fromInt(i: u32) ResourceMask {
+        return @enumFromInt(i);
+    }
+
+    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+        formatLegacy
+    else
+        formatNew;
+    fn formatLegacy(v: ResourceMask, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = opt;
+        try writer.print("ResourceMask(0x{x})", .{@intFromEnum(v)});
+    }
+    fn formatNew(v: ResourceMask, writer: *std.Io.Writer) error{WriteFailed}!void {
+        try writer.print("ResourceMask(0x{x})", .{@intFromEnum(v)});
+    }
+};
+
+pub const IdRange = @import("x/IdRange.zig");
+
 pub const Resource = enum(u32) {
     none = 0,
     _,
@@ -4104,7 +4128,7 @@ pub const Setup = extern struct {
     word_count: u16,
     release_number: u32,
     resource_id_base: ResourceBase,
-    resource_id_mask: u32,
+    resource_id_mask: ResourceMask,
     motion_buffer_size: u32,
     vendor_len: u16,
     max_request_len: u16,
@@ -4142,7 +4166,7 @@ pub const Setup = extern struct {
             .{
                 setup.release_number,
                 @intFromEnum(setup.resource_id_base),
-                setup.resource_id_mask,
+                @intFromEnum(setup.resource_id_mask),
                 setup.motion_buffer_size,
                 setup.max_request_len,
                 setup.root_screen_count,

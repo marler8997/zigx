@@ -20,23 +20,24 @@ const bg_color = 0x231a20;
 const fg_color = 0xadccfa;
 
 const Ids = struct {
-    base: x11.ResourceBase,
+    range: x11.IdRange,
 
     pub fn window(self: Ids) x11.Window {
-        return self.base.add(0).window();
+        return self.range.addAssumeCapacity(0).window();
     }
     pub fn bg(self: Ids) x11.GraphicsContext {
-        return self.base.add(1).graphicsContext();
+        return self.range.addAssumeCapacity(1).graphicsContext();
     }
     pub fn fg(self: Ids) x11.GraphicsContext {
-        return self.base.add(2).graphicsContext();
+        return self.range.addAssumeCapacity(2).graphicsContext();
     }
     pub fn childWindow(self: Ids) x11.Window {
-        return self.base.add(3).window();
+        return self.range.addAssumeCapacity(3).window();
     }
     pub fn region(self: Ids) x11.fixes.Region {
-        return self.base.add(4).fixesRegion();
+        return self.range.addAssumeCapacity(4).fixesRegion();
     }
+    const needed_capacity = 5;
 };
 
 pub fn main() !u8 {
@@ -60,9 +61,14 @@ pub fn main() !u8 {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
+        const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
+        if (id_range.capacity() < Ids.needed_capacity) {
+            std.log.err("X server id range capacity {} is less than needed {}", .{ id_range.capacity(), Ids.needed_capacity });
+            std.process.exit(0xff);
+        }
         break :blk .{
             socket_reader.getStream(),
-            .{ .base = setup.resource_id_base },
+            .{ .range = id_range },
             try .init(setup.min_keycode, setup.max_keycode),
             .{
                 .window = screen.root,

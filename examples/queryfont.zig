@@ -46,7 +46,8 @@ pub fn main() !void {
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .initAfterSetup(socket_reader.interface());
 
-    const font_id = setup.resource_id_base.add(0).font();
+    const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
+    const font_id = id_range.addAssumeCapacity(0).font();
 
     try sink.OpenFont(font_id, .initAssume(font_name));
     try sink.QueryFont(font_id.fontable());
