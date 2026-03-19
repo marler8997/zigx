@@ -136,7 +136,7 @@ pub fn main() !void {
                 const notify = try source.read2(.MappingNotify);
                 std.log.info("ignoring {}", .{notify});
             },
-            else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
+            else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }
     }
 }

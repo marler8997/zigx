@@ -192,7 +192,7 @@ pub fn main() !u8 {
                 } else std.debug.panic("unexpected GenericEvent {}", .{event});
             },
             .MappingNotify => try source.discardRemaining(),
-            else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
+            else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }
         if (dirty and !render_in_flight) {
             try render(

@@ -104,7 +104,7 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
 
 fn list2(file: std.fs.File) !void {
     var file_read_buf: [4096]u8 = undefined;
-    var file_reader = x11.fileReader(file, &file_read_buf);
+    var file_reader = file.reader(&file_read_buf);
     var reader: x11.AuthReader = .{ .reader = &file_reader.interface };
     list3(&reader) catch |err| return switch (err) {
         error.ReadFailed => file_reader.err orelse error.ReadFailed,
@@ -114,7 +114,7 @@ fn list2(file: std.fs.File) !void {
 
 fn list3(reader: *x11.AuthReader) !void {
     var stdout_buffer: [1000]u8 = undefined;
-    var stdout_writer: x11.File15.Writer = .init(x11.stdoutFile(), &stdout_buffer);
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
     var entry_index: u32 = 0;
     while (true) : (entry_index += 1) {
@@ -157,12 +157,12 @@ fn list3(reader: *x11.AuthReader) !void {
     try stdout.flush();
 }
 
-fn streamHex(reader: *x11.AuthReader, stdout: *x11.Writer, n: usize) !void {
+fn streamHex(reader: *x11.AuthReader, stdout: *std.Io.Writer, n: usize) !void {
     var remaining = n;
     while (remaining > 0) {
         const take_len = @min(remaining, reader.reader.buffer.len);
         const data = try reader.takeDynamic(take_len);
-        try stdout.print("{x}", .{if (x11.zig_atleast_15) data else std.fmt.fmtSliceHexLower(data)});
+        try stdout.print("{x}", .{data});
         remaining -= take_len;
     }
     reader.finishDynamic();

@@ -230,7 +230,7 @@ pub fn main() !u8 {
             // Sent to all clients regardless of event mask:
             .MappingNotify,
             => try source.discardRemaining(),
-            else => std.debug.panic("unexpected message {f}", .{source.readFmt()}),
+            else => std.debug.panic("unexpected message {f}", .{source.readFmtDropError()}),
         }
 
         if (do_render) {

@@ -1,8 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-pub const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
-
 const Example = struct {
     name: []const u8,
     needs_text: bool = false,
@@ -34,11 +32,6 @@ pub fn build(b: *std.Build) void {
     const x_mod = b.addModule("x11", .{
         .root_source_file = b.path("src/x.zig"),
     });
-    if (!zig_atleast_15) {
-        if (b.lazyDependency("iobackport", .{})) |iobackport_dep| {
-            x_mod.addImport("std15", iobackport_dep.module("std15"));
-        }
-    }
 
     const true_type_mod = b.dependency("TrueType", .{}).module("TrueType");
 
@@ -174,11 +167,6 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/x.zig"),
             .target = target,
         });
-        if (!zig_atleast_15) {
-            if (b.lazyDependency("iobackport", .{})) |iobackport_dep| {
-                x_mod_with_target.addImport("std15", iobackport_dep.module("std15"));
-            }
-        }
         const unit_tests = b.addTest(.{
             .root_module = x_mod_with_target,
         });

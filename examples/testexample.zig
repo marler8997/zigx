@@ -92,13 +92,11 @@ pub fn main() !u8 {
     var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
     std.log.info("setup reply {f}", .{setup});
     try source.requireReplyAtLeast(setup.required());
-    if (x11.zig_atleast_15) {
+    {
         var used = false;
         const fmt = source.fmtReplyData(setup.vendor_len, &used);
         x11.log.info("vendor '{f}'", .{fmt});
         std.debug.assert(used == true);
-    } else {
-        try source.replyDiscard(setup.vendor_len);
     }
     try source.replyDiscard(x11.pad4Len(@truncate(setup.vendor_len)));
 
@@ -460,7 +458,7 @@ pub fn main() !u8 {
                 }
                 const remaining = source.replyRemainingSize();
                 if (remaining != 0) {
-                    std.debug.panic("unhandled Reply {f}", .{source.readFmt()});
+                    std.debug.panic("unhandled Reply {f}", .{source.readFmtDropError()});
                 }
             },
             .KeymapNotify => {
@@ -499,7 +497,9 @@ pub fn main() !u8 {
             .ConfigureNotify,
             .MappingNotify,
             => {
-                std.log.info("X11 {f}", .{source.readFmt()});
+                var maybe_read_error: ?x11.ReadError = null;
+                std.log.info("X11 {f}", .{source.readFmt(&maybe_read_error)});
+                if (maybe_read_error) |e| return e;
                 // ensures we still discard the rest of the message if logging is disabled
                 try source.discardRemaining();
             },
@@ -507,7 +507,7 @@ pub fn main() !u8 {
                 std.log.info("TODO: handle a generic extension event {}", .{msg_kind});
                 return error.TodoHandleGenericExtensionEvent;
             },
-            else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
+            else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }
     }
 }
@@ -791,7 +791,7 @@ fn writeTestImage(
     image_format: ImageFormat,
     width: u16,
     height: u16,
-    writer: *x11.Writer,
+    writer: *std.Io.Writer,
 ) error{WriteFailed}!void {
     const pixel_size: x11.PixelSize = .fromDepth(image_format.depth);
     const pixel_padding_size = (pixel_size.bitCount(u8) - image_format.depth.byte()) / 8;

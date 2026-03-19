@@ -164,7 +164,7 @@ pub fn main() !void {
                 try render(&sink, ids.window(), ids.gc(), font_dims);
             },
             .MappingNotify => try source.discardRemaining(),
-            else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
+            else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }
     }
 }

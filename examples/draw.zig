@@ -137,7 +137,7 @@ pub fn main() !void {
     try sink.MapWindow(ids.window());
 
     var point_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
-    var points: x11.ArrayListManaged(XY(i16)) = .init(point_arena.allocator());
+    var points: std.array_list.Managed(XY(i16)) = .init(point_arena.allocator());
     var mouse_state: MouseState = .{};
     var mode: Mode = .line;
     var present_serial: u32 = 0;
@@ -249,7 +249,7 @@ pub fn main() !void {
             => {
                 try source.discardRemaining();
             },
-            else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
+            else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }
         if (dirty and !render_in_flight) {
             try render(
@@ -296,7 +296,7 @@ const Mode = enum {
 };
 
 fn onMouseEvent(
-    points: *x11.ArrayListManaged(XY(i16)),
+    points: *std.array_list.Managed(XY(i16)),
     mouse_state: *MouseState,
     pos: XY(i16),
     button1_down: bool,
@@ -327,7 +327,7 @@ const MouseState = struct {
     }
     pub fn update(
         state: *MouseState,
-        points: *x11.ArrayListManaged(XY(i16)),
+        points: *std.array_list.Managed(XY(i16)),
         button1_down: bool,
         new_pos: XY(i16),
     ) void {

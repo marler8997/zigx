@@ -68,47 +68,27 @@ pub const keymap = @import("keymap.zig");
 
 pub const log = std.log.scoped(.x11);
 
-pub const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
 pub const zig_atleast_15_3 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 3 }) != .lt;
 
-const std15 = if (zig_atleast_15) std else @import("std15");
-pub const Stream15 = if (zig_atleast_15) std.net.Stream else std15.net.Stream15;
-pub const File15 = if (zig_atleast_15) std.fs.File else std15.fs.File15;
-
-pub const ArrayListManaged = if (zig_atleast_15) std.array_list.Managed else std.ArrayList;
-
-pub const Writer = std15.Io.Writer;
-pub const Reader = std15.Io.Reader;
-
-pub const Stream = std.net.Stream;
-
-pub fn stdoutFile() std.fs.File {
-    return if (zig_atleast_15) std.fs.File.stdout() else std.io.getStdOut();
+// TODO: drop this function when support for 0.15 is dropped.
+pub fn socketWriter(stream: std.net.Stream, buffer: []u8) std.net.Stream.Writer {
+    return stream.writer(buffer);
 }
 
-pub fn socketWriter(stream: std.net.Stream, buffer: []u8) Stream15.Writer {
-    if (zig_atleast_15) return stream.writer(buffer);
-    return .init(stream, buffer);
-}
-pub fn socketReader(stream: std.net.Stream, buffer: []u8) Stream15.Reader {
-    if (zig_atleast_15) {
-        switch (builtin.os.tag) {
-            .windows => {
-                // workaround https://github.com/ziglang/zig/issues/25620
-                if (!zig_atleast_15_3) {
-                    var reader = stream.reader(buffer);
-                    reader.interface_state.vtable = &@import("netpatch.zig").vtable;
-                    return reader;
-                }
-            },
-            else => {},
-        }
-        return stream.reader(buffer);
+// TODO: drop this function when support for 0.15 is dropped.
+pub fn socketReader(stream: std.net.Stream, buffer: []u8) std.net.Stream.Reader {
+    switch (builtin.os.tag) {
+        .windows => {
+            // workaround https://github.com/ziglang/zig/issues/25620
+            if (!zig_atleast_15_3) {
+                var reader = stream.reader(buffer);
+                reader.interface_state.vtable = &@import("netpatch.zig").vtable;
+                return reader;
+            }
+        },
+        else => {},
     }
-    return .init(stream, buffer);
-}
-pub fn fileReader(file: std.fs.File, buf: []u8) File15.Reader {
-    return .init(file, buf);
+    return stream.reader(buffer);
 }
 
 const x_test = @import("test/x_test.zig");
@@ -127,8 +107,6 @@ pub const max_display_num = max_port - TcpBasePort;
 
 pub const BigEndian = 'B';
 pub const LittleEndian = 'l';
-
-const align4 = if (zig_atleast_15) .@"4" else 4;
 
 pub fn Pad(comptime align_to: comptime_int) type {
     return switch (align_to) {
@@ -217,18 +195,7 @@ pub const Display = struct {
     pub fn init(s: ?[]const u8) Display {
         return .{ .string = s };
     }
-    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(display: Display, writer: *std.Io.Writer) error{WriteFailed}!void {
-        try display.formatLegacy("", .{}, writer);
-    }
-    fn formatLegacy(
-        display: Display,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(display: Display, writer: *std.Io.Writer) error{WriteFailed}!void {
         if (display.string) |string| {
             try writer.print("'{s}'", .{string});
         } else {
@@ -387,20 +354,9 @@ pub const Host = union(enum) {
         //       maybe not since we might detect this later during DNS resolution?
         return .{ .domain_name = .{ .string = host, .port = port } };
     }
-    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(host: Host, writer: *std.Io.Writer) error{WriteFailed}!void {
-        try host.formatLegacy("", .{}, writer);
-    }
-    fn formatLegacy(
-        host: Host,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(host: Host, writer: *std.Io.Writer) error{WriteFailed}!void {
         switch (host) {
-            .address => |*address| if (zig_atleast_15) try address.format(writer) else try address.format("", .{}, writer),
+            .address => |*address| try address.format(writer),
             .domain_name => |d| try writer.print("{s}:{}", .{ d.string, d.port }),
         }
     }
@@ -560,7 +516,7 @@ pub const Authenticator = struct {
         no_more_auth,
     };
 
-    pub const Success = struct { Stream15.Reader, bool };
+    pub const Success = struct { std.net.Stream.Reader, bool };
 
     pub const Event = union(enum) {
         reply: union(enum) {
@@ -586,8 +542,8 @@ pub const Authenticator = struct {
             filename: []const u8,
         },
         io_error: union(enum) {
-            write_error: Stream15.WriteError,
-            read_error: (error{EndOfStream} || Stream15.ReadError),
+            write_error: std.net.Stream.WriteError,
+            read_error: (error{EndOfStream} || std.net.Stream.ReadError),
             protocol,
         },
     };
@@ -598,7 +554,7 @@ pub const Authenticator = struct {
         filename: []const u8,
         file: std.fs.File,
         read_buf: [400]u8 = undefined,
-        file_reader: File15.Reader,
+        file_reader: std.fs.File.Reader,
         reader: AuthReader,
         pub fn close(self: *ReadFile) void {
             self.file.close();
@@ -693,7 +649,7 @@ pub const Authenticator = struct {
                     "sending setup with auth {} from '{s}' ({s}) ({s})",
                     .{ auth_index, r.filename, r.auth_file_kind.context(), match.name.nativeSlice() },
                 );
-                var write_error: ?Stream15.WriteError = null;
+                var write_error: ?std.net.Stream.WriteError = null;
                 writeSetupWithAuth(
                     authenticator.stream,
                     &r.reader,
@@ -722,10 +678,7 @@ pub const Authenticator = struct {
     fn connect(authenticator: *Authenticator) ConnectAddressError!void {
         if (authenticator.need_reconnect) {
             const new_stream = connectAddress(authenticator.address) catch |e| {
-                if (zig_atleast_15)
-                    log.err("reconnect to {f} failed with {s}", .{ authenticator.address.*, @errorName(e) })
-                else
-                    log.err("reconnect to {} failed with {s}", .{ authenticator.address.*, @errorName(e) });
+                log.err("reconnect to {f} failed with {t}", .{ authenticator.address.*, e });
                 return e;
             };
             log.info("reconnected", .{});
@@ -779,9 +732,9 @@ pub const Authenticator = struct {
 // The size of the client's initial setup message if both name and data are empty
 const write_setup_no_auth_len = 12;
 
-fn writeSetupNoAuth(stream: std.net.Stream) Stream15.WriteError!void {
+fn writeSetupNoAuth(stream: std.net.Stream) std.net.Stream.WriteError!void {
     var write_buffer: [write_setup_no_auth_len]u8 = undefined;
-    var socket_writer = socketWriter(stream, &write_buffer);
+    var socket_writer = stream.writer(&write_buffer);
     const w = &socket_writer.interface;
     writeSetupHeader(w, .empty, 0) catch unreachable;
     writeSetupData(w, .empty) catch unreachable;
@@ -795,11 +748,11 @@ fn writeSetupWithAuth(
     auth_reader: *AuthReader,
     name: Slice(u16, [*]const u8),
     data_len: u16,
-    out_write_error: *?Stream15.WriteError,
+    out_write_error: *?std.net.Stream.WriteError,
 ) error{ ReadFailed, EndOfStream, WriteFailed }!void {
     std.debug.assert(out_write_error.* == null);
     var write_buffer: [write_setup_no_auth_len + 400]u8 = undefined;
-    var socket_writer = socketWriter(stream, &write_buffer);
+    var socket_writer = stream.writer(&write_buffer);
     defer out_write_error.* = socket_writer.err;
     const w = &socket_writer.interface;
     writeSetupHeader(w, name, data_len) catch unreachable;
@@ -814,19 +767,16 @@ pub const SetupFailed = struct {
     reason_len: u8,
     reason_buf: [256]u8,
     pub fn reason(self: *const SetupFailed) []const u8 {
-        if (zig_atleast_15)
-            return std.mem.trimEnd(u8, self.reason_buf[0..self.reason_len], "\r\n");
-        return std.mem.trimRight(u8, self.reason_buf[0..self.reason_len], "\r\n");
+        return std.mem.trimEnd(u8, self.reason_buf[0..self.reason_len], "\r\n");
     }
 };
 
-const ReadSetupReply1Error = error{ ReadFailed, EndOfStream, Protocol };
 pub const SetupReply1 = union(enum) {
     success,
     failed: SetupFailed,
     authenticate: struct { reason_word_count: u16 },
 };
-fn readSetupReply1(reader: *Reader) ReadSetupReply1Error!SetupReply1 {
+fn readSetupReply1(reader: *std.Io.Reader) error{ ReadFailed, EndOfStream, Protocol }!SetupReply1 {
     const status = try reader.peekByte();
     const Status = enum(u8) {
         failed = 0,
@@ -931,18 +881,7 @@ pub const DisplayNum = enum(u16) {
         return TcpBasePort + @as(u16, @intFromEnum(self));
     }
 
-    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(self: DisplayNum, writer: *std.Io.Writer) error{WriteFailed}!void {
-        try writer.print("{}", .{@intFromEnum(self)});
-    }
-    fn formatLegacy(
-        self: DisplayNum,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: DisplayNum, writer: *std.Io.Writer) error{WriteFailed}!void {
         try writer.print("{}", .{@intFromEnum(self)});
     }
 };
@@ -1023,11 +962,8 @@ const ConnectTcpError = error{
 fn connectTcp(addr: *const std.net.Address) ConnectTcpError!std.net.Stream {
     // tcp connections can take a while so let's add a log to know
     // if we're blocked on it
-    if (zig_atleast_15)
-        log.info("connecting to {f}", .{addr.*})
-    else
-        log.info("connecting to {}", .{addr.*});
-    if (zig_atleast_15) return std.net.tcpConnectToAddress(addr.*) catch |err| switch (err) {
+    log.info("connecting to {f}", .{addr.*});
+    return std.net.tcpConnectToAddress(addr.*) catch |err| switch (err) {
         error.ConnectionTimedOut,
         error.ConnectionRefused,
         error.NetworkUnreachable,
@@ -1055,32 +991,6 @@ fn connectTcp(addr: *const std.net.Address) ConnectTcpError!std.net.Stream {
             return error.Unexpected;
         },
     };
-    return std.net.tcpConnectToAddress(if (zig_atleast_15) addr else addr.*) catch |err| switch (err) {
-        error.ConnectionTimedOut,
-        error.ConnectionRefused,
-        error.NetworkUnreachable,
-        error.ConnectionPending,
-        error.ConnectionResetByPeer,
-        => return error.ConnectionRefused,
-        error.SystemResources,
-        error.ProcessFdQuotaExceeded,
-        error.SystemFdQuotaExceeded,
-        => return error.SystemResources,
-        error.PermissionDenied => return error.AccessDenied,
-        error.AddressInUse,
-        error.AddressNotAvailable,
-        error.WouldBlock,
-        error.Unexpected,
-        error.FileNotFound,
-        error.AddressFamilyNotSupported,
-        error.ProtocolFamilyNotAvailable,
-        error.ProtocolNotSupported,
-        error.SocketTypeNotSupported,
-        => |e| {
-            log.err("TCP connect to {} failed unexpectedly with {s}", .{ addr, @errorName(e) });
-            return error.Unexpected;
-        },
-    };
 }
 
 pub fn disconnect(stream: std.net.Stream) void {
@@ -1101,24 +1011,9 @@ const ConnectUnixError = error{
     Unexpected,
 };
 pub fn connectUnix(addr: *const posix.sockaddr.un, path_len: usize) ConnectUnixError!std.net.Stream {
-    const sock = posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| if (zig_atleast_15) switch (err) {
+    const sock = posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| switch (err) {
         error.SystemResources => |e| return e,
         error.AccessDenied => return error.AccessDenied,
-        error.ProcessFdQuotaExceeded,
-        error.SystemFdQuotaExceeded,
-        => return error.SystemResources,
-        error.AddressFamilyNotSupported,
-        error.ProtocolFamilyNotAvailable,
-        error.ProtocolNotSupported,
-        error.SocketTypeNotSupported,
-        error.Unexpected,
-        => |e| {
-            log.err("create unix socket unexpectedly failed with {s}", .{@errorName(e)});
-            return error.Unexpected;
-        },
-    } else switch (err) {
-        error.SystemResources => |e| return e,
-        error.PermissionDenied => return error.AccessDenied,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
         => return error.SystemResources,
@@ -1136,30 +1031,11 @@ pub fn connectUnix(addr: *const posix.sockaddr.un, path_len: usize) ConnectUnixE
 
     // TODO: should we set any socket options?
     const addr_len: posix.socklen_t = @intCast(@offsetOf(posix.sockaddr.un, "path") + path_len + 1);
-    posix.connect(sock, @ptrCast(addr), addr_len) catch |err| if (zig_atleast_15) switch (err) {
+    posix.connect(sock, @ptrCast(addr), addr_len) catch |err| switch (err) {
         error.FileNotFound,
         error.SystemResources,
         error.ConnectionTimedOut,
         error.AccessDenied,
-        error.PermissionDenied,
-        error.Unexpected,
-        error.ConnectionRefused,
-        error.AddressNotAvailable,
-        => |e| return e,
-        error.ConnectionResetByPeer,
-        error.WouldBlock,
-        error.NetworkUnreachable,
-        error.AddressFamilyNotSupported,
-        error.AddressInUse,
-        error.ConnectionPending,
-        => |e| {
-            log.err("connect unix socket unexpectedly failed with {s}", .{@errorName(e)});
-            return error.Unexpected;
-        },
-    } else switch (err) {
-        error.FileNotFound,
-        error.SystemResources,
-        error.ConnectionTimedOut,
         error.PermissionDenied,
         error.Unexpected,
         error.ConnectionRefused,
@@ -1185,7 +1061,7 @@ fn unexpectedError(e: anyerror) error{Unexpected} {
     return error.Unexpected;
 }
 
-fn fmtRead(reader: *Reader, n: usize, result: *FmtReadResult) FmtRead {
+fn fmtRead(reader: *std.Io.Reader, n: usize, result: *FmtReadResult) FmtRead {
     return .{ .reader = reader, .n = n, .result = result };
 }
 const FmtReadResult = union(enum) {
@@ -1194,7 +1070,7 @@ const FmtReadResult = union(enum) {
     err: error{ ReadFailed, EndOfStream },
 };
 const FmtRead = struct {
-    reader: *Reader,
+    reader: *std.Io.Reader,
     n: usize,
     result: *FmtReadResult,
     pub fn format(r: FmtRead, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -1332,18 +1208,7 @@ pub fn fmtMaybeString(s: ?[]const u8) FmtMaybeString {
 }
 pub const FmtMaybeString = struct {
     s: ?[]const u8,
-    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(f: FmtMaybeString, writer: *std.Io.Writer) error{WriteFailed}!void {
-        try f.formatLegacy("", .{}, writer);
-    }
-    fn formatLegacy(
-        f: FmtMaybeString,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(f: FmtMaybeString, writer: *std.Io.Writer) error{WriteFailed}!void {
         if (f.s) |string| {
             try writer.print("'{s}'", .{string});
         } else {
@@ -1436,18 +1301,7 @@ fn matchDisplayNum(
 const AuthFileAddr = struct {
     family: AuthFamily,
     data: []const u8,
-    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(self: AuthFileAddr, writer: *std.Io.Writer) error{WriteFailed}!void {
-        try self.formatLegacy("", .{}, writer);
-    }
-    fn formatLegacy(
-        self: AuthFileAddr,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: AuthFileAddr, writer: *std.Io.Writer) error{WriteFailed}!void {
         const d = self.data;
         switch (self.family) {
             .inet => if (d.len == 4) {
@@ -1461,15 +1315,12 @@ const AuthFileAddr = struct {
             .wild => return try writer.print("*", .{}),
             _ => {},
         }
-        try writer.print("{x}/{f}", .{
-            if (zig_atleast_15) d else std.fmt.fmtSliceHexLower(d),
-            fmtEnum(self.family),
-        });
+        try writer.print("{x}/{f}", .{ d, fmtEnum(self.family) });
     }
 };
 
 pub const AuthReader = struct {
-    reader: *Reader,
+    reader: *std.Io.Reader,
     state: State = .family,
 
     const State = union(enum) {
@@ -1584,7 +1435,7 @@ pub const AuthReader = struct {
         return buf;
     }
 
-    pub fn streamDynamic(self: *AuthReader, writer: *Writer, n: usize) !void {
+    pub fn streamDynamic(self: *AuthReader, writer: *std.Io.Writer, n: usize) !void {
         const dynamic = switch (self.state) {
             .family, .dynamic_len => unreachable,
             .dynamic_data => |*d| d,
@@ -1616,7 +1467,7 @@ pub const AuthReader = struct {
 };
 
 pub const RequestSink = struct {
-    writer: *Writer,
+    writer: *std.Io.Writer,
     sequence: u16 = 0,
 
     pub fn CreateWindow(sink: *RequestSink, args: CreateWindowArgs, options: window.Options) error{WriteFailed}!void {
@@ -2505,30 +2356,30 @@ pub const RequestSink = struct {
 
 pub const native_endian = builtin.target.cpu.arch.endian();
 
-pub fn writeAll(writer: *Writer, offset: *usize, buf: []const u8) error{WriteFailed}!void {
+pub fn writeAll(writer: *std.Io.Writer, offset: *usize, buf: []const u8) error{WriteFailed}!void {
     try writer.writeAll(buf);
     offset.* += buf.len;
 }
-pub fn writeInt(writer: *Writer, offset: *usize, comptime T: type, int: T) error{WriteFailed}!void {
+pub fn writeInt(writer: *std.Io.Writer, offset: *usize, comptime T: type, int: T) error{WriteFailed}!void {
     try writer.writeInt(T, int, native_endian);
     offset.* += @sizeOf(T);
 }
-pub fn writePad4(writer: *Writer, offset: *usize) error{WriteFailed}!void {
+pub fn writePad4(writer: *std.Io.Writer, offset: *usize) error{WriteFailed}!void {
     const pad_len = pad4Len(@truncate(offset.*));
     try writer.splatByteAll(0, pad_len);
     offset.* += pad_len;
 }
 
-fn writeAllNoFlush(writer: *Writer, buf: []const u8) void {
+fn writeAllNoFlush(writer: *std.Io.Writer, buf: []const u8) void {
     std.debug.assert(buf.len <= writer.buffer.len - writer.end);
     @memcpy(writer.buffer[writer.end..][0..buf.len], buf);
     writer.end += buf.len;
 }
-pub fn writeIntNoFlush(writer: *Writer, comptime T: type, int: T) void {
+pub fn writeIntNoFlush(writer: *std.Io.Writer, comptime T: type, int: T) void {
     writeAllNoFlush(writer, std.mem.asBytes(&int));
 }
 
-fn writeSetupHeader(writer: *Writer, name: Slice(u16, [*]const u8), data_len: u16) error{WriteFailed}!void {
+fn writeSetupHeader(writer: *std.Io.Writer, name: Slice(u16, [*]const u8), data_len: u16) error{WriteFailed}!void {
     try writer.writeAll(&[_]u8{
         @as(u8, if (native_endian == .big) BigEndian else LittleEndian),
         0, // unused
@@ -2541,7 +2392,7 @@ fn writeSetupHeader(writer: *Writer, name: Slice(u16, [*]const u8), data_len: u1
     try writer.writeAll(name.nativeSlice());
     try writer.splatByteAll(0, pad4Len(@truncate(name.len)));
 }
-fn writeSetupData(writer: *Writer, data: Slice(u16, [*]const u8)) error{WriteFailed}!void {
+fn writeSetupData(writer: *std.Io.Writer, data: Slice(u16, [*]const u8)) error{WriteFailed}!void {
     try writer.writeAll(data.nativeSlice());
     try writer.splatByteAll(0, pad4Len(@truncate(data.len)));
 }
@@ -2557,16 +2408,7 @@ pub const ResourceBase = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
-        formatLegacy
-    else
-        formatNew;
-    fn formatLegacy(v: ResourceBase, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        try writer.print("ResourceBase({})", .{@intFromEnum(v)});
-    }
-    fn formatNew(v: ResourceBase, writer: *std.Io.Writer) error{WriteFailed}!void {
+    pub fn format(v: ResourceBase, writer: *std.Io.Writer) error{WriteFailed}!void {
         try writer.print("ResourceBase({})", .{@intFromEnum(v)});
     }
 };
@@ -2578,16 +2420,7 @@ pub const ResourceMask = enum(u32) {
         return @enumFromInt(i);
     }
 
-    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
-        formatLegacy
-    else
-        formatNew;
-    fn formatLegacy(v: ResourceMask, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        try writer.print("ResourceMask(0x{x})", .{@intFromEnum(v)});
-    }
-    fn formatNew(v: ResourceMask, writer: *std.Io.Writer) error{WriteFailed}!void {
+    pub fn format(v: ResourceMask, writer: *std.Io.Writer) error{WriteFailed}!void {
         try writer.print("ResourceMask(0x{x})", .{@intFromEnum(v)});
     }
 };
@@ -2634,24 +2467,10 @@ pub const Resource = enum(u32) {
         return @enumFromInt(@intFromEnum(r));
     }
 
-    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
-        formatLegacy
-    else
-        formatNew;
-    fn formatLegacy(v: Resource, fmt: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = opt;
-        if (v == .none) {
-            try writer.writeAll("Resource(<none>)");
-        } else {
-            try writer.print("Resource({})", .{@intFromEnum(v)});
-        }
-    }
-    fn formatNew(v: Resource, writer: *std.Io.Writer) error{WriteFailed}!void {
-        if (v == .none) {
-            try writer.writeAll("Resource(<none>)");
-        } else {
-            try writer.print("Resource({})", .{@intFromEnum(v)});
+    pub fn format(v: Resource, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
         }
     }
 };
@@ -2783,17 +2602,8 @@ pub const Visual = enum(u32) {
     copy_from_parent = 0,
     _,
 
-    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(visual: Visual, writer: *std.Io.Writer) error{WriteFailed}!void {
+    pub fn format(visual: Visual, writer: *std.Io.Writer) error{WriteFailed}!void {
         try fmtEnum(visual).format(writer);
-    }
-    fn formatLegacy(
-        visual: Visual,
-        comptime fmt: []const u8,
-        opt: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        try fmtEnum(visual).format(fmt, opt, writer);
     }
 };
 
@@ -4153,18 +3963,7 @@ pub const Setup = extern struct {
             (@sizeOf(Format) *| @as(u35, setup.format_count)) +|
             (@sizeOf(ScreenHeader) *| @as(u35, setup.root_screen_count));
     }
-    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    pub fn formatNew(setup: Setup, writer: *std.Io.Writer) error{WriteFailed}!void {
-        try setup.formatLegacy("", .{}, writer);
-    }
-    fn formatLegacy(
-        setup: Setup,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(setup: Setup, writer: *std.Io.Writer) error{WriteFailed}!void {
         try writer.print(
             "release=0x{x} res(base=0x{x} mask=0x{x}) motion-buf={} max-req={} screen-count={} format-count={} image-endian={f} bmp(order={} scan-unit={} scan-pad={}) keycodes={}-{}",
             .{
@@ -4304,7 +4103,7 @@ pub fn rgb32From24(color: u24) u32 {
 }
 
 // asserts that the first byte in the source's reader is the value 1
-pub fn readSetupSuccess(reader: *Reader) error{ ReadFailed, EndOfStream, Protocol }!Setup {
+pub fn readSetupSuccess(reader: *std.Io.Reader) error{ ReadFailed, EndOfStream, Protocol }!Setup {
     std.debug.assert(reader.seek < reader.end);
     std.debug.assert(reader.buffer[reader.seek] == 1);
     var setup: Setup = undefined;
@@ -4317,7 +4116,7 @@ pub fn readSetupSuccess(reader: *Reader) error{ ReadFailed, EndOfStream, Protoco
 }
 
 pub const Source = struct {
-    reader: *Reader,
+    reader: *std.Io.Reader,
     state: State,
 
     const State = union(enum) {
@@ -4349,7 +4148,7 @@ pub const Source = struct {
         }
     };
 
-    pub fn initFinishSetup(reader: *Reader, setup: *const Setup) Source {
+    pub fn initFinishSetup(reader: *std.Io.Reader, setup: *const Setup) Source {
         return .{
             .reader = reader,
             .state = .{
@@ -4361,7 +4160,7 @@ pub const Source = struct {
             },
         };
     }
-    pub fn initAfterSetup(reader: *Reader) Source {
+    pub fn initAfterSetup(reader: *std.Io.Reader) Source {
         return .{ .reader = reader, .state = .kind };
     }
 
@@ -4378,9 +4177,33 @@ pub const Source = struct {
     /// it to the writer being printed to. If you are formatting into something that
     /// might be skipped, such as std.log, you can call discardRemainig() to ensure
     /// the message is completely read.
-    pub fn readFmt(source: *Source) ReadFormatter {
+    pub fn readFmt(source: *Source, read_error_ref: *?ReadError) ReadFmt {
+        std.debug.assert(read_error_ref.* == null);
+        return .{ .source = source, .read_error_ref = read_error_ref };
+    }
+    pub const ReadFmt = struct {
+        source: *Source,
+        read_error_ref: *?ReadError,
+        pub fn format(self: ReadFmt, writer: *std.Io.Writer) error{WriteFailed}!void {
+            readFormat(self.source, writer) catch |err| switch (err) {
+                error.WriteFailed => return error.WriteFailed,
+                error.ReadFailed, error.EndOfStream, error.Protocol => |e| {
+                    self.read_error_ref.* = e;
+                    return error.WriteFailed;
+                },
+            };
+        }
+    };
+
+    pub fn readFmtDropError(source: *Source) ReadFmtDropError {
         return .{ .source = source };
     }
+    pub const ReadFmtDropError = struct {
+        source: *Source,
+        pub fn format(self: ReadFmtDropError, writer: *std.Io.Writer) error{WriteFailed}!void {
+            readFormat(self.source, writer) catch return error.WriteFailed;
+        }
+    };
 
     /// discards the rest of the current message if we are currently reading one
     pub fn discardRemaining(source: *Source) error{ ReadFailed, EndOfStream, Protocol }!void {
@@ -4451,10 +4274,6 @@ pub const Source = struct {
     }
 
     pub fn fmtReplyData(source: *Source, n: usize, used_ref: *bool) FmtReplyData {
-        // 0.14 can try to call the formatter multiple times so we'll just
-        // make sure we don't use the format api on 0.14
-        if (!zig_atleast_15) @compileError("fmtReplyData is a footgun before 0.15");
-
         std.debug.assert(used_ref.* == false);
         const reply_state: *ReplyState = switch (source.state) {
             .kind, .second, .err => unreachable,
@@ -4495,7 +4314,9 @@ pub const Source = struct {
             .Reply => {
                 const reply = try source.read2(.Reply);
                 if (reply.sequence != sequence) {
-                    log.err("expected sequence {} but got {f}", .{ sequence, source.readFmt() });
+                    var maybe_read_error: ?ReadError = null;
+                    log.err("expected sequence {} but got {f}", .{ sequence, source.readFmt(&maybe_read_error) });
+                    if (maybe_read_error) |e| return e;
                     return error.UnexpectedMessage;
                 }
                 return reply;
@@ -4507,7 +4328,9 @@ pub const Source = struct {
                 try source.discardRemaining();
             },
             else => {
-                log.err("expected Reply but got {f}", .{source.readFmt()});
+                var maybe_read_error: ?ReadError = null;
+                log.err("expected Reply but got {f}", .{source.readFmt(&maybe_read_error)});
+                if (maybe_read_error) |e| return e;
                 return error.UnexpectedMessage;
             },
         };
@@ -4650,7 +4473,7 @@ pub const Source = struct {
         }
         return int;
     }
-    pub fn streamReply(source: *Source, writer: *Writer, n: usize) error{ ReadFailed, EndOfStream, WriteFailed }!void {
+    pub fn streamReply(source: *Source, writer: *std.Io.Writer, n: usize) error{ ReadFailed, EndOfStream, WriteFailed }!void {
         const reply_state: *ReplyState = switch (source.state) {
             .kind, .second, .err => unreachable,
             .reply => |*state| state,
@@ -4669,95 +4492,77 @@ pub fn WithFlexible(comptime T: type) type {
     return struct { T, u8 };
 }
 
-pub const ReadFormatter = struct {
-    source: *Source,
+pub const ReadError = error{ ReadFailed, EndOfStream, Protocol };
 
-    pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-    pub fn formatNew(self: ReadFormatter, writer: *std.Io.Writer) error{WriteFailed}!void {
-        self.formatLegacy("", .{}, writer) catch |err| switch (err) {
-            error.ReadFailed => return error.WriteFailed,
-            error.EndOfStream => return error.WriteFailed,
-            error.Protocol => return error.WriteFailed,
-            else => |e| return e,
-        };
+fn readFormat(source: *Source, writer: *std.Io.Writer) (error{WriteFailed} || ReadError)!void {
+    // code currently assumes buffer has non-zero capacity
+    std.debug.assert(source.reader.buffer.len > 0);
+    const msg_kind: ServerMsgKind = switch (source.state) {
+        .kind => try source.readKind(),
+        .second => |kind| kind,
+        .reply => .Reply,
+        .err => {
+            try writer.print("error reading from server", .{});
+            return;
+        },
+        // .err => |err| {
+        //     switch (err) {
+        //         .bad_setup_status => |status| try writer.print("bad setup status {}", .{status}),
+        //         .auth_not_implemented => try writer.print("setup auth not implemented", .{}),
+        //         .unsupported_protocol_version => |ver| try writer.print("unsupported proto version {}", .{ver}),
+        //     }
+        //     return;
+        // },
+    };
+    try writer.print("{s}({})", .{ @tagName(msg_kind), msg_kind.toByte() });
+    switch (msg_kind) {
+        .Error => { // 0
+            const err = try source.read2(.Error);
+            try writer.print(" {f}", .{err});
+        },
+        .Reply, .GenericEvent => {
+            switch (source.state) {
+                .kind => unreachable,
+                .second => |kind| switch (kind) {
+                    .Reply => _ = try source.read2(.Reply),
+                    .GenericEvent => _ = try source.read2(.GenericEvent),
+                    else => unreachable,
+                },
+                .reply => {},
+                .err => unreachable,
+            }
+            const reply = &source.state.reply;
+            switch (reply.msg) {
+                .none => {},
+                .reply => |msg| try writer.print(
+                    " sequence={} flex={}",
+                    .{ msg.sequence, msg.flexible },
+                ),
+                .generic_event => |msg| try writer.print(
+                    " sequence={} ext-opcode-base={} event-type={}",
+                    .{ msg.sequence, msg.ext_opcode_base, msg.type },
+                ),
+            }
+            const total = reply.total();
+            try writer.print(" with {} bytes: ", .{total});
+            var remaining = reply.remaining();
+            if (remaining < total) {
+                try writer.print("[{} bytes truncated]...", .{total - remaining});
+            }
+            while (remaining > 0) {
+                // note: we asserted above that reader buffer has non-zero capacity
+                const take_len = @min(source.reader.buffer.len, remaining);
+                const next = try source.takeReply(take_len);
+                try writer.print("{x}", .{next});
+                remaining -= @intCast(take_len);
+            }
+        },
+        inline else => |_, tag| {
+            const msg = try source.read2(tag);
+            try writer.print("{}", .{msg});
+        },
     }
-    fn formatLegacy(
-        self: ReadFormatter,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
-        // code currently assumes buffer has non-zero capacity
-        std.debug.assert(self.source.reader.buffer.len > 0);
-        const msg_kind: ServerMsgKind = switch (self.source.state) {
-            .kind => try self.source.readKind(),
-            .second => |kind| kind,
-            .reply => .Reply,
-            .err => {
-                try writer.print("error reading from server", .{});
-                return;
-            },
-            // .err => |err| {
-            //     switch (err) {
-            //         .bad_setup_status => |status| try writer.print("bad setup status {}", .{status}),
-            //         .auth_not_implemented => try writer.print("setup auth not implemented", .{}),
-            //         .unsupported_protocol_version => |ver| try writer.print("unsupported proto version {}", .{ver}),
-            //     }
-            //     return;
-            // },
-        };
-        try writer.print("{s}({})", .{ @tagName(msg_kind), msg_kind.toByte() });
-        switch (msg_kind) {
-            .Error => { // 0
-                const err = try self.source.read2(.Error);
-                try writer.print(" {f}", .{err});
-            },
-            .Reply, .GenericEvent => {
-                switch (self.source.state) {
-                    .kind => unreachable,
-                    .second => |kind| switch (kind) {
-                        .Reply => _ = try self.source.read2(.Reply),
-                        .GenericEvent => _ = try self.source.read2(.GenericEvent),
-                        else => unreachable,
-                    },
-                    .reply => {},
-                    .err => unreachable,
-                }
-                const reply = &self.source.state.reply;
-                switch (reply.msg) {
-                    .none => {},
-                    .reply => |msg| try writer.print(
-                        " sequence={} flex={}",
-                        .{ msg.sequence, msg.flexible },
-                    ),
-                    .generic_event => |msg| try writer.print(
-                        " sequence={} ext-opcode-base={} event-type={}",
-                        .{ msg.sequence, msg.ext_opcode_base, msg.type },
-                    ),
-                }
-                const total = reply.total();
-                try writer.print(" with {} bytes: ", .{total});
-                var remaining = reply.remaining();
-                if (remaining < total) {
-                    try writer.print("[{} bytes truncated]...", .{total - remaining});
-                }
-                while (remaining > 0) {
-                    // note: we asserted above that reader buffer has non-zero capacity
-                    const take_len = @min(self.source.reader.buffer.len, remaining);
-                    const next = try self.source.takeReply(take_len);
-                    try writer.print("{x}", .{next});
-                    remaining -= @intCast(take_len);
-                }
-            },
-            inline else => |_, tag| {
-                const msg = try self.source.read2(tag);
-                try writer.print("{}", .{msg});
-            },
-        }
-    }
-};
+}
 
 comptime {
     std.debug.assert(@sizeOf(CommonEvent) == 32);
@@ -4811,24 +4616,7 @@ pub const servermsg = struct {
         minor_opcode: u16,
         major_opcode: NonExhaustive(Opcode),
         data: [21]u8,
-        pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-        pub fn formatNew(err: Error, writer: *std.Io.Writer) error{WriteFailed}!void {
-            try writer.print("{f} sequence={} generic={} opcode={f}.{}", .{
-                fmtEnum(err.code),
-                err.sequence,
-                err.generic,
-                fmtEnum(err.major_opcode),
-                err.minor_opcode,
-            });
-        }
-        fn formatLegacy(
-            err: Error,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(err: Error, writer: *std.Io.Writer) error{WriteFailed}!void {
             try writer.print("{f} sequence={} generic={} opcode={f}.{}", .{
                 fmtEnum(err.code),
                 err.sequence,
@@ -5746,7 +5534,6 @@ pub const Extension = struct {
     }
 };
 
-
 pub fn charsetName(set: Charset) ?[]const u8 {
     return if (stdext.enums.hasName(set)) @tagName(set) else null;
 }
@@ -5769,8 +5556,7 @@ pub fn FmtEnum(comptime T: type) type {
         value: T,
 
         const Self = @This();
-        pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-        fn formatNew(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
+        pub fn format(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
             if (@typeInfo(T).@"enum".is_exhaustive) {
                 try writer.print("{s}", .{@tagName(self.value)});
             } else {
@@ -5780,22 +5566,6 @@ pub fn FmtEnum(comptime T: type) type {
                 } else {
                     try writer.print("?({d})", .{@intFromEnum(self.value)});
                 }
-            }
-        }
-        fn formatLegacy(
-            self: Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
-            if (@typeInfo(T).@"enum".is_exhaustive) {
-                try writer.print("{s}", .{@tagName(self.value)});
-            } else if (std.enums.tagName(T, self.value)) |name| {
-                try writer.print("{s}", .{name});
-            } else {
-                try writer.print("?({d})", .{@intFromEnum(self.value)});
             }
         }
     };
@@ -5907,11 +5677,11 @@ pub const PolyPointSink = struct {
     }
 
     // updates the write buffer with the actual length of the message
-    pub fn endSetMsgSize(point_sink: *PolyPointSink, writer: *Writer) void {
+    pub fn endSetMsgSize(point_sink: *PolyPointSink, writer: *std.Io.Writer) void {
         point_sink.setMsgSize(writer);
         point_sink.* = undefined;
     }
-    fn setMsgSize(point_sink: PolyPointSink, writer: *Writer) void {
+    fn setMsgSize(point_sink: PolyPointSink, writer: *std.Io.Writer) void {
         const state = switch (point_sink.state) {
             .initial => return,
             .header_written => |*s| s,

@@ -36,7 +36,7 @@ pub fn main() !void {
     try sink.writer.flush();
 
     var stdout_buffer: [1000]u8 = undefined;
-    var stdout_writer: x11.File15.Writer = .init(x11.stdoutFile(), &stdout_buffer);
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     const fonts, _ = try source.readSynchronousReplyHeader(sink.sequence, .ListFonts);

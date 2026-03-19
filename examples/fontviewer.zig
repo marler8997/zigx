@@ -201,7 +201,7 @@ pub fn main() !u8 {
                 try state.onExpose(&expose, &sink, ids, fonts);
             },
             .MappingNotify => try source.discardRemaining(),
-            else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
+            else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }
     }
 }
@@ -315,7 +315,7 @@ const State = struct {
                 .getting_font => |info| {
                     if (reply.sequence != info.query_sequence) std.debug.panic(
                         "expected sequence {} but got {f}",
-                        .{ info.query_sequence, source.readFmt() },
+                        .{ info.query_sequence, source.readFmtDropError() },
                     );
                     if (!info.still_open) @panic("unexpected");
                     const font = try source.read3Header(.QueryFont);

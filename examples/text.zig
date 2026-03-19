@@ -271,7 +271,7 @@ pub fn main() !void {
             .ReparentNotify,
             .MappingNotify,
             => try source.discardRemaining(),
-            else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
+            else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }
         if (dirty and !render_in_flight) {
             layout = try render(

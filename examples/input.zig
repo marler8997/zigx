@@ -203,7 +203,7 @@ pub fn main() !u8 {
             },
         };
         switch (msg_kind) {
-            .Error => std.debug.panic("X11 {f}", .{source.readFmt()}),
+            .Error => std.debug.panic("X11 {f}", .{source.readFmtDropError()}),
             .Reply => {
                 const reply = try source.read2(.Reply);
                 const handled = try handleReply(
@@ -319,7 +319,7 @@ pub fn main() !u8 {
                 try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
             },
             .MappingNotify => try source.discardRemaining(),
-            else => std.debug.panic("unexpected X11 {f}", .{source.readFmt()}),
+            else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }
     }
 }

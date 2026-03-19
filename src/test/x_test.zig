@@ -1,5 +1,3 @@
-const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
-
 fn setupReply(
     // the serialized reply starting at the list of formats
     comptime serialized: []const u8,
@@ -199,7 +197,7 @@ test "parse setup reply" {
         .root_screen_count = 2,
         .format_count = 4,
     });
-    var buffer_reader: x11.Reader = .fixed(&buffer);
+    var buffer_reader: std.Io.Reader = .fixed(&buffer);
     const setup = try x11.readSetupSuccess(&buffer_reader);
     var source: x11.Source = .initFinishSetup(&buffer_reader, &setup);
     try testing.expectEqual(@as(u32, 12101008), setup.release_number);
@@ -296,7 +294,7 @@ test "VisualType.findMatchingVisualType" {
         .root_screen_count = 2,
         .format_count = 4,
     });
-    var buffer_reader: x11.Reader = .fixed(&buffer);
+    var buffer_reader: std.Io.Reader = .fixed(&buffer);
     const setup = try x11.readSetupSuccess(&buffer_reader);
     var source: x11.Source = .initFinishSetup(&buffer_reader, &setup);
     try testing.expectEqualSlices(u8, zigx_vendor, try source.takeReply(zigx_vendor.len));
@@ -358,7 +356,7 @@ fn testXauth(comptime entries: []const Auth) !void {
         std.debug.assert(offset == total_size);
     }
 
-    var buffer_reader: x11.Reader = .fixed(&buffer);
+    var buffer_reader: std.Io.Reader = .fixed(&buffer);
     var reader: x11.AuthReader = .{ .reader = &buffer_reader };
     for (entries) |entry| {
         const parsed = try takeXauthEntry(&reader);
@@ -423,7 +421,7 @@ test "discardRemaining after kind" {
     for (0..256) |kind| {
         var buffer = [1]u8{0} ** 32;
         buffer[0] = @intCast(kind);
-        var buffer_reader: x11.Reader = .fixed(&buffer);
+        var buffer_reader: std.Io.Reader = .fixed(&buffer);
         var source: x11.Source = .initAfterSetup(&buffer_reader);
         try source.discardRemaining(); // should do nothing
         std.debug.assert(source.state == .kind);
@@ -440,7 +438,7 @@ test "discardRemaining after read2" {
     for (0..256) |kind| {
         var buffer = [1]u8{0} ** 32;
         buffer[0] = @intCast(kind);
-        var buffer_reader: x11.Reader = .fixed(&buffer);
+        var buffer_reader: std.Io.Reader = .fixed(&buffer);
         var source: x11.Source = .initAfterSetup(&buffer_reader);
         try source.discardRemaining(); // should do nothing
         std.debug.assert(source.state == .kind);
@@ -462,10 +460,12 @@ test "readFmt" {
     for (0..256) |kind| {
         var buffer = [1]u8{0} ** 32;
         buffer[0] = @intCast(kind);
-        var buffer_reader: x11.Reader = .fixed(&buffer);
+        var buffer_reader: std.Io.Reader = .fixed(&buffer);
         var source: x11.Source = .initAfterSetup(&buffer_reader);
         var fmt_buf: [1000]u8 = undefined;
-        _ = try std.fmt.bufPrint(&fmt_buf, "{f}", .{source.readFmt()});
+        var maybe_read_error: ?x11.ReadError = null;
+        _ = try std.fmt.bufPrint(&fmt_buf, "{f}", .{source.readFmt(&maybe_read_error)});
+        if (maybe_read_error) |e| return e;
         std.debug.assert(source.state == .kind);
     }
 }

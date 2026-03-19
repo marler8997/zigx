@@ -4,8 +4,8 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const GlyphIndex = TrueType.GlyphIndex;
 
-const Reader = x11.Reader;
-const Writer = x11.Writer;
+const Reader = std.Io.Reader;
+const Writer = std.Io.Writer;
 
 pub const TrueType = @import("TrueType");
 

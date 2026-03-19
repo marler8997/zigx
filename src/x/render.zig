@@ -214,18 +214,7 @@ pub const PictureFormatInfo = extern struct {
     direct: DirectFormat,
     colormap: u32,
 
-    pub const format = if (x11.zig_atleast_15) formatNew else formatLegacy;
-    fn formatNew(self: PictureFormatInfo, writer: *std.Io.Writer) error{WriteFailed}!void {
-        try self.formatLegacy("", .{}, writer);
-    }
-    fn formatLegacy(
-        self: PictureFormatInfo,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: PictureFormatInfo, writer: *std.Io.Writer) error{WriteFailed}!void {
         try writer.print(
             "id={} type={f} depth={} colormap={} direct={any}",
             .{

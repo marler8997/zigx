@@ -1,7 +1,5 @@
 const std = @import("std");
 
-const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
-
 pub fn Slice(comptime LenType: type, comptime Ptr: type) type {
     return struct {
         const Self = @This();
@@ -46,18 +44,7 @@ pub fn Slice(comptime LenType: type, comptime Ptr: type) type {
 
         pub const format = switch (@typeInfo(Ptr).pointer.child) {
             u8 => (struct {
-                pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-                fn formatNew(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
-                    try writer.writeAll(self.ptr[0..self.len]);
-                }
-                fn formatLegacy(
-                    self: Self,
-                    comptime fmt: []const u8,
-                    options: std.fmt.FormatOptions,
-                    writer: anytype,
-                ) !void {
-                    _ = fmt;
-                    _ = options;
+                pub fn format(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
                     try writer.writeAll(self.ptr[0..self.len]);
                 }
             }).format,
@@ -110,18 +97,7 @@ pub fn SliceWithMaxLen(comptime LenType: type, comptime Ptr: type, comptime max_
 
         pub const format = switch (@typeInfo(Ptr).pointer.child) {
             u8 => (struct {
-                pub const format = if (zig_atleast_15) formatNew else formatLegacy;
-                fn formatNew(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
-                    try writer.writeAll(self.ptr[0..self.len]);
-                }
-                pub fn formatLegacy(
-                    self: Self,
-                    comptime fmt: []const u8,
-                    options: std.fmt.FormatOptions,
-                    writer: anytype,
-                ) !void {
-                    _ = fmt;
-                    _ = options;
+                pub fn format(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
                     try writer.writeAll(self.ptr[0..self.len]);
                 }
             }).format,

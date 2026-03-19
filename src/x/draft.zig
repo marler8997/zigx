@@ -1,6 +1,4 @@
 //! This file contains apis that I'm unsure whether to include as they are.
-const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
-
 pub const ConnectError = error{
     GetDisplay,
     BadDisplay,
@@ -28,10 +26,7 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
         return error.ConnectFailed;
     };
     errdefer x11.disconnect(initial_stream);
-    if (zig_atleast_15)
-        x11.log.info("connected to {f}", .{address})
-    else
-        x11.log.info("connected to {}", .{address});
+    x11.log.info("connected to {f}", .{address});
     return x11.draft.authenticate(
         display,
         &parsed_display,
@@ -139,20 +134,8 @@ pub fn readSetupDynamic(
     {
         const old_remaining = source.replyRemainingSize();
         if (opt.log_vendor) {
-            if (zig_atleast_15) {
-                var used = false;
-                x11.log.info("vendor '{f}'", .{source.fmtReplyData(setup.vendor_len, &used)});
-            } else {
-                var buf: [100]u8 = undefined;
-                const read_len = @min(buf.len, setup.vendor_len);
-                const vendor = buf[0..read_len];
-                try source.readReply(vendor);
-                if (setup.vendor_len > buf.len) {
-                    x11.log.info("vendor '{s}' (truncated to {} from {})", .{ vendor, buf.len, setup.vendor_len });
-                } else {
-                    x11.log.info("vendor '{s}'", .{vendor});
-                }
-            }
+            var used = false;
+            x11.log.info("vendor '{f}'", .{source.fmtReplyData(setup.vendor_len, &used)});
         }
         const vendor_written = old_remaining - source.replyRemainingSize();
         const vendor_remaining = setup.vendor_len - vendor_written;
