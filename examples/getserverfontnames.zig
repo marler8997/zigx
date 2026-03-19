@@ -48,7 +48,7 @@ pub fn main() !void {
     }
     const remaining = source.replyRemainingSize();
     std.log.info("discarding remaining {} bytes...", .{remaining});
-    try source.replyDiscard(remaining);
+    try source.replyDiscard(@intCast(remaining));
 
     try stdout.flush();
 }

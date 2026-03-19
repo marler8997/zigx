@@ -342,7 +342,7 @@ pub fn main() !u8 {
             }
         }
         // NOTE: there is stil two more lists we could read
-        try source.replyDiscard(source.replyRemainingSize());
+        try source.replyDiscard(@intCast(source.replyRemainingSize()));
 
         if (maybe_picture_format) |format| {
             std.log.info("using format {f}", .{format});
@@ -857,7 +857,7 @@ fn checkTestImageIsDrawnToWindow(
 
     const log_image = false;
 
-    for (0..image_size / 4) |_| {
+    for (0..@intCast(image_size / 4)) |_| {
         if (width_index >= test_image.width) {
             // For Debugging: Print a newline after each row
             if (log_image) std.debug.print("\n", .{});
