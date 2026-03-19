@@ -21,6 +21,22 @@ pub const Picture = enum(u32) {
     }
 };
 
+pub const GlyphSet = enum(u32) {
+    none = 0,
+    _,
+
+    pub fn fromInt(i: u32) GlyphSet {
+        return @enumFromInt(i);
+    }
+
+    pub fn format(v: GlyphSet, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (v) {
+            .none => try writer.writeAll(".none"),
+            _ => |d| try writer.print("{d}", .{d}),
+        }
+    }
+};
+
 pub const PictureFormat = enum(u32) {
     none = 0,
     _,
@@ -70,15 +86,15 @@ pub const Opcode = enum(u8) {
     // opcode 14 reserved for ColorTrapezoids
     // opcode 15 reserved for ColorTriangles
     // opcode 16 reserved for Transform
-    // create_glyph_set = 17,
+    create_glyph_set = 17,
     // reference_glyph_set = 18,
-    // free_glyph_set = 19,
-    // add_glyphs = 20,
+    free_glyph_set = 19,
+    add_glyphs = 20,
     // opcode 21 reserved for AddGlyphsFromPicture
     // free_glyphs = 22,
     // composite_glyphs_8 = 23,
     // composite_glyphs_16 = 24,
-    // composite_glyphs_32 = 25,
+    composite_glyphs_32 = 25,
     // new in version 0.1
     fill_rectangles = 26,
     // new in version 0.5
@@ -478,6 +494,144 @@ pub fn CreateSolidFill(
     try x11.writeInt(sink.writer, &offset, u16, color.green);
     try x11.writeInt(sink.writer, &offset, u16, color.blue);
     try x11.writeInt(sink.writer, &offset, u16, color.alpha);
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+
+pub const GlyphInfo = extern struct {
+    width: u16,
+    height: u16,
+    x: i16,
+    y: i16,
+    x_off: i16,
+    y_off: i16,
+};
+comptime {
+    if (@sizeOf(GlyphInfo) != 12) @compileError("GlyphInfo size is wrong");
+}
+
+pub fn CreateGlyphSet(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    gsid: GlyphSet,
+    format: PictureFormat,
+) error{WriteFailed}!void {
+    const msg_len = 12;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(Opcode.create_glyph_set),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(gsid));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(format));
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+
+pub fn FreeGlyphSet(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    gsid: GlyphSet,
+) error{WriteFailed}!void {
+    const msg_len = 8;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(Opcode.free_glyph_set),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(gsid));
+    std.debug.assert(offset == msg_len);
+    sink.sequence +%= 1;
+}
+
+/// Begin adding a single glyph to a GlyphSet. Writes the request header;
+/// the caller then streams `alpha_size` bytes of alpha data directly to `sink.writer`,
+/// and finishes with `AddGlyphsFinish`.
+pub fn AddGlyphsStart(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    gsid: GlyphSet,
+    glyph_id: u32,
+    info: GlyphInfo,
+    alpha_size: u32,
+) error{WriteFailed}!u2 {
+    const header_len = 28; // 12 header + 4 glyph_id + 12 glyph_info
+    const pad_len: u2 = @truncate((4 -% alpha_size) & 3);
+    const msg_len: u32 = header_len + alpha_size + pad_len;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(Opcode.add_glyphs),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(gsid));
+    try x11.writeInt(sink.writer, &offset, u32, 1); // num glyphs
+    try x11.writeInt(sink.writer, &offset, u32, glyph_id); // glyph id
+    // GlyphInfo
+    try x11.writeInt(sink.writer, &offset, u16, info.width);
+    try x11.writeInt(sink.writer, &offset, u16, info.height);
+    try x11.writeInt(sink.writer, &offset, i16, info.x);
+    try x11.writeInt(sink.writer, &offset, i16, info.y);
+    try x11.writeInt(sink.writer, &offset, i16, info.x_off);
+    try x11.writeInt(sink.writer, &offset, i16, info.y_off);
+    std.debug.assert(offset == header_len);
+    return pad_len;
+}
+
+/// Finish an AddGlyphs request after streaming alpha data.
+pub fn AddGlyphsFinish(sink: *x11.RequestSink, pad_len: u2) error{WriteFailed}!void {
+    try sink.writer.splatByteAll(0, pad_len);
+    sink.sequence +%= 1;
+}
+
+/// Render glyphs from a GlyphSet onto a destination Picture.
+/// Sends a single GLYPHELT32 with one glyph.
+pub fn CompositeGlyphs32(
+    sink: *x11.RequestSink,
+    ext_opcode: u8,
+    named: struct {
+        picture_operation: PictureOperation,
+        src_picture: Picture,
+        dst_picture: Picture,
+        mask_format: PictureFormat,
+        glyphset: GlyphSet,
+        src_x: i16,
+        src_y: i16,
+        delta_x: i16,
+        delta_y: i16,
+        glyph_id: u32,
+    },
+) error{WriteFailed}!void {
+    const msg_len = 28 // header
+        + 8 // GLYPHELT32 header (len u8 + pad[3] + delta_x i16 + delta_y i16)
+        + 4 // one u32 glyph id
+    ;
+    var offset: usize = 0;
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        ext_opcode,
+        @intFromEnum(Opcode.composite_glyphs_32),
+    });
+    try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        @intFromEnum(named.picture_operation),
+        0, 0, 0, // padding
+    });
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.src_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.dst_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.mask_format));
+    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.glyphset));
+    try x11.writeInt(sink.writer, &offset, i16, named.src_x);
+    try x11.writeInt(sink.writer, &offset, i16, named.src_y);
+    // GLYPHELT32: len=1, pad, delta_x, delta_y, glyph_id
+    try x11.writeAll(sink.writer, &offset, &[_]u8{
+        1, // len: 1 glyph
+        0, 0, 0, // padding
+    });
+    try x11.writeInt(sink.writer, &offset, i16, named.delta_x);
+    try x11.writeInt(sink.writer, &offset, i16, named.delta_y);
+    try x11.writeInt(sink.writer, &offset, u32, named.glyph_id);
     std.debug.assert(offset == msg_len);
     sink.sequence +%= 1;
 }
