@@ -1,7 +1,8 @@
 //! An example of using the "Double Buffer Extension" (DBE).
 //! Consider using the Present extension instead, which supersedes DBE by
 //! providing both off-screen rendering (via Pixmaps) and frame synchronization
-//! (via CompleteNotify events). See examples/present.zig.
+//! (via CompleteNotify events). See examples/present.zig. This example only
+//! exists to test/ensure the DBE extension code remains working.
 const std = @import("std");
 const x11 = @import("x11");
 
@@ -36,24 +37,30 @@ const Ids = struct {
     const needed_capacity = 3;
 };
 
-pub fn main() !u8 {
+const Root = struct {
+    window: x11.Window,
+    visual: x11.Visual,
+    depth: x11.Depth,
+};
+
+pub fn main() !void {
     try x11.wsaStartup();
 
-    const Screen = struct {
-        window: x11.Window,
-        visual: x11.Visual,
-        depth: x11.Depth,
-    };
-
-    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const screen: Screen = blk: {
+    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
         var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
         errdefer x11.disconnect(socket_reader.getStream());
         _ = used_auth;
-        const setup = try x11.readSetupSuccess(socket_reader.interface());
+        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        };
         std.log.info("setup reply {f}", .{setup});
         var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
-        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
+        const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
@@ -84,12 +91,26 @@ pub fn main() !u8 {
     var socket_reader = x11.socketReader(stream, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .initAfterSetup(socket_reader.interface());
+    run(ids, &root, &sink, &socket_reader, &source, keyrange) catch |err| switch (err) {
+        error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.UnexpectedMessage => |e| return e,
+    };
+}
 
+fn run(
+    ids: Ids,
+    root: *const Root,
+    sink: *x11.RequestSink,
+    socket_reader: *std.net.Stream.Reader,
+    source: *x11.Source,
+    keyrange: x11.KeycodeRange,
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
     var keycode_map = [1]?Key{null} ** std.math.maxInt(u8);
     {
-        var it = try x11.synchronousGetKeyboardMapping(&sink, &source, keyrange);
+        var it = try x11.synchronousGetKeyboardMapping(sink, source, keyrange);
         for (keyrange.min..@as(usize, keyrange.max) + 1) |keycode| {
-            for (try it.readSyms(&source)) |sym| {
+            for (try it.readSyms(source)) |sym| {
                 if (Key.fromSym(sym)) |key| {
                     if (keycode_map[keycode]) |existing| {
                         std.log.info("keycode {} maps to {s}", .{ keycode, @tagName(key) });
@@ -110,7 +131,7 @@ pub fn main() !u8 {
 
     try sink.CreateWindow(.{
         .window_id = ids.window(),
-        .parent_window_id = screen.window,
+        .parent_window_id = root.window,
         .depth = 0, // we don't care, just inherit from the parent
         .x = 0,
         .y = 0,
@@ -118,7 +139,7 @@ pub fn main() !u8 {
         .height = initial_window_height,
         .border_width = 0, // TODO: what is this?
         .class = .input_output,
-        .visual_id = screen.visual,
+        .visual_id = root.visual,
     }, .{
         .bg_pixel = 0x332211,
         .bit_gravity = .north_west,
@@ -136,8 +157,8 @@ pub fn main() !u8 {
     try sink.writer.flush();
 
     var dbe: Dbe = blk: {
-        const ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.dbe.name) orelse break :blk .unsupported;
-        try x11.dbe.Allocate(&sink, ext.opcode_base, ids.window(), ids.backBuffer(), .background);
+        const ext = try x11.draft.synchronousQueryExtension(source, sink, x11.dbe.name) orelse break :blk .unsupported;
+        try x11.dbe.Allocate(sink, ext.opcode_base, ids.window(), ids.backBuffer(), .background);
         break :blk .{ .enabled = .{ .opcode = ext.opcode_base, .back_buffer = ids.backBuffer() } };
     };
 
@@ -145,15 +166,15 @@ pub fn main() !u8 {
 
     var window_width: u16 = initial_window_width;
     var window_height: u16 = initial_window_height;
-    var animate: Animate = .{ .previous_time = try std.time.Instant.now() };
+    var animate: Animate = .{ .previous_time = std.time.Instant.now() catch @panic("monotonic timer unsupported") };
     var animate_frame_ms: i32 = 15;
 
     while (true) {
         try sink.writer.flush();
 
-        const action: enum { timeout, socket } = switch (try pollSocketReader(&socket_reader, 0)) {
+        const action: enum { timeout, socket } = switch (pollSocketReader(socket_reader, 0)) {
             .ready => .socket,
-            .timeout => if (try getTimeout(animate.previous_time, animate_frame_ms)) |timeout_ms| switch (try pollSocketReader(&socket_reader, timeout_ms)) {
+            .timeout => if (getTimeout(animate.previous_time, animate_frame_ms)) |timeout_ms| switch (pollSocketReader(socket_reader, timeout_ms)) {
                 .ready => .socket,
                 .timeout => .timeout,
             } else .timeout,
@@ -162,7 +183,7 @@ pub fn main() !u8 {
         switch (action) {
             .timeout => {
                 try render(
-                    &sink,
+                    sink,
                     ids.window(),
                     ids.gc(),
                     dbe,
@@ -177,19 +198,7 @@ pub fn main() !u8 {
         }
 
         try sink.writer.flush();
-        const msg_kind = source.readKind() catch |err| return switch (err) {
-            error.EndOfStream => {
-                std.log.info("X11 connection closed (EndOfStream)", .{});
-                std.process.exit(0);
-            },
-            else => |e| switch (socket_reader.getError() orelse e) {
-                error.ConnectionResetByPeer => {
-                    std.log.info("X11 connection closed (ConnectionReset)", .{});
-                    return std.process.exit(0);
-                },
-                else => |e2| e2,
-            },
-        };
+        const msg_kind = try source.readKind();
         switch (msg_kind) {
             .KeyPress => {
                 const event = try source.read2(.KeyPress);
@@ -206,7 +215,7 @@ pub fn main() !u8 {
                         .unsupported => {},
                         .disabled => |disabled| {
                             try x11.dbe.Allocate(
-                                &sink,
+                                sink,
                                 disabled.opcode,
                                 ids.window(),
                                 ids.backBuffer(),
@@ -219,7 +228,7 @@ pub fn main() !u8 {
                         },
                         .enabled => |enabled| {
                             try x11.dbe.Deallocate(
-                                &sink,
+                                sink,
                                 enabled.opcode,
                                 ids.backBuffer(),
                             );
@@ -232,7 +241,7 @@ pub fn main() !u8 {
                 }
                 if (do_render) {
                     try render(
-                        &sink,
+                        sink,
                         ids.window(),
                         ids.gc(),
                         dbe,
@@ -250,7 +259,7 @@ pub fn main() !u8 {
                 const expose = try source.read2(.Expose);
                 std.log.info("{}", .{expose});
                 try render(
-                    &sink,
+                    sink,
                     ids.window(),
                     ids.gc(),
                     dbe,
@@ -280,7 +289,7 @@ pub fn main() !u8 {
     }
 }
 
-fn pollSocketReader(socket_reader: *std.net.Stream.Reader, timeout_ms: i32) !enum { ready, timeout } {
+fn pollSocketReader(socket_reader: *std.net.Stream.Reader, timeout_ms: i32) enum { ready, timeout } {
     if (socket_reader.interface().bufferedLen() > 0) return .ready;
     var poll_fds = [_]std.posix.pollfd{
         .{
@@ -289,15 +298,16 @@ fn pollSocketReader(socket_reader: *std.net.Stream.Reader, timeout_ms: i32) !enu
             .revents = 0,
         },
     };
-    return switch (try std.posix.poll(&poll_fds, timeout_ms)) {
+    return switch (std.posix.poll(&poll_fds, timeout_ms) catch |err|
+        std.debug.panic("poll: {s}", .{@errorName(err)})) {
         0 => .timeout,
         1 => .ready,
         else => unreachable,
     };
 }
 
-pub fn getTimeout(start: std.time.Instant, duration_ms: i32) !?u31 {
-    const now = try std.time.Instant.now();
+pub fn getTimeout(start: std.time.Instant, duration_ms: i32) ?u31 {
+    const now = std.time.Instant.now() catch @panic("monotonic timer unsupported");
     const since_ms = @divTrunc(now.since(start), std.time.ns_per_ms);
     if (since_ms >= duration_ms) return null;
     return @intCast(duration_ms - @as(i32, @intCast(since_ms)));
@@ -336,7 +346,7 @@ fn render(
     window_height: u16,
 ) !void {
     const elapsed_ms = blk: {
-        const now = try std.time.Instant.now();
+        const now = std.time.Instant.now() catch @panic("monotonic timer unsupported");
         const elapsed_ms = now.since(animate.previous_time);
         animate.previous_time = now;
         break :blk elapsed_ms;

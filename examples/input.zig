@@ -40,24 +40,30 @@ const Ids = struct {
     const needed_capacity = 5;
 };
 
-pub fn main() !u8 {
+const Root = struct {
+    window: x11.Window,
+    visual: x11.Visual,
+    depth: x11.Depth,
+};
+
+pub fn main() !void {
     try x11.wsaStartup();
 
-    const Screen = struct {
-        window: x11.Window,
-        visual: x11.Visual,
-        depth: x11.Depth,
-    };
-
-    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const screen: Screen = blk: {
+    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
         var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
         errdefer x11.disconnect(socket_reader.getStream());
         _ = used_auth;
-        const setup = try x11.readSetupSuccess(socket_reader.interface());
+        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        };
         std.log.info("setup reply {f}", .{setup});
         var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
-        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
+        const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
@@ -88,13 +94,26 @@ pub fn main() !u8 {
     var socket_reader = x11.socketReader(stream, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .initAfterSetup(socket_reader.interface());
+    run(ids, &root, &sink, &source, keyrange) catch |err| switch (err) {
+        error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.UnexpectedMessage => |e| return e,
+    };
+}
 
+fn run(
+    ids: Ids,
+    root: *const Root,
+    sink: *x11.RequestSink,
+    source: *x11.Source,
+    keyrange: x11.KeycodeRange,
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
     var keycode_map = [1]?Key{null} ** std.math.maxInt(u8);
 
     {
-        var it = try x11.synchronousGetKeyboardMapping(&sink, &source, keyrange);
+        var it = try x11.synchronousGetKeyboardMapping(sink, source, keyrange);
         for (keyrange.min..@as(usize, keyrange.max) + 1) |keycode| {
-            for (try it.readSyms(&source)) |sym| {
+            for (try it.readSyms(source)) |sym| {
                 if (@as(?Key, switch (sym) {
                     .kbd_escape => .escape,
                     .latin_w => .w,
@@ -128,7 +147,7 @@ pub fn main() !u8 {
 
     try sink.CreateWindow(.{
         .window_id = ids.window(),
-        .parent_window_id = screen.window,
+        .parent_window_id = root.window,
         .depth = 0, // dont care, inherit from parent
         .x = 0,
         .y = 0,
@@ -136,7 +155,7 @@ pub fn main() !u8 {
         .height = window_height,
         .border_width = 0, // TODO: what is this?
         .class = .input_output,
-        .visual_id = screen.visual,
+        .visual_id = root.visual,
     }, .{
         .bg_pixel = bg_color,
         .event_mask = .{
@@ -189,29 +208,17 @@ pub fn main() !u8 {
 
     while (true) {
         try sink.writer.flush();
-        const msg_kind = source.readKind() catch |err| return switch (err) {
-            error.EndOfStream => {
-                std.log.info("X11 connection closed (EndOfStream)", .{});
-                std.process.exit(0);
-            },
-            else => |e| switch (socket_reader.getError() orelse e) {
-                error.ConnectionResetByPeer => {
-                    std.log.info("X11 connection closed (ConnectionReset)", .{});
-                    return std.process.exit(0);
-                },
-                else => |e2| e2,
-            },
-        };
+        const msg_kind = try source.readKind();
         switch (msg_kind) {
             .Error => std.debug.panic("X11 {f}", .{source.readFmtDropError()}),
             .Reply => {
                 const reply = try source.read2(.Reply);
                 const handled = try handleReply(
                     reply,
-                    &source,
-                    &sink,
+                    source,
+                    sink,
                     &state,
-                    screen.window,
+                    root.window,
                     ids.window(),
                     ids.bg(),
                     ids.fg(),
@@ -223,17 +230,17 @@ pub fn main() !u8 {
                     std.process.exit(0xff);
                 }
                 // just always do another render, it's *probably* needed
-                try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
+                try render(sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
             },
             .KeyPress => {
                 const event = try source.read2(.KeyPress);
                 var do_render = true;
                 if (keycode_map[event.keycode]) |key| switch (key) {
                     .g => {
-                        //try state.toggleGrab(&sink, screen.root);
-                        try state.toggleGrab(&sink, ids.window());
+                        //try state.toggleGrab(sink, root.window);
+                        try state.toggleGrab(sink, ids.window());
                     },
-                    .w => try warpPointer(&sink),
+                    .w => try warpPointer(sink),
                     .c => {
                         state.confine_grab = !state.confine_grab;
                     },
@@ -241,31 +248,31 @@ pub fn main() !u8 {
                         try sink.DestroyWindow(ids.childWindow());
                         state.window_created = false;
                     } else {
-                        try createWindow(&sink, screen.window, ids.childWindow());
+                        try createWindow(sink, root.window, ids.childWindow());
                         state.window_created = true;
                     },
                     .d => {
-                        try disableInputDevice(&sink, &state);
+                        try disableInputDevice(sink, &state);
                     },
                     .l => {
-                        try listenToRawEvents(&sink, &state, screen.window);
+                        try listenToRawEvents(sink, &state, root.window);
                     },
                     .p => {
-                        try togglePassthrough(&sink, &state, ids.window(), ids);
+                        try togglePassthrough(sink, &state, ids.window(), ids);
                     },
                     .r => {
-                        try toggleResourceManagerWatch(&sink, &state, screen.window);
+                        try toggleResourceManagerWatch(sink, &state, root.window);
                     },
                     .escape => {
                         std.log.info("ESC pressed, exiting loop...", .{});
-                        return 0;
+                        return;
                     },
                 } else {
                     // std.log.info("{}", .{event.keycode});
                     do_render = false;
                 }
                 if (do_render) {
-                    try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
+                    try render(sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
                 }
             },
             // NOTE: server will send us KeyRelease when the user holds down a key
@@ -279,12 +286,12 @@ pub fn main() !u8 {
                 state.pointer_root_pos.y = motion.root_y;
                 state.pointer_event_pos.x = motion.event_x;
                 state.pointer_event_pos.y = motion.event_y;
-                try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
+                try render(sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
             },
             .Expose => {
                 const expose = try source.read2(.Expose);
                 std.log.info("X11 {}", .{expose});
-                try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
+                try render(sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
             },
             .GenericEvent => {
                 const event = try source.read2(.GenericEvent);
@@ -316,7 +323,7 @@ pub fn main() !u8 {
                 } else {
                     std.log.info("PropertyNotify: atom={any} window={any}", .{ event.atom, event.window });
                 }
-                try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
+                try render(sink, ids.window(), ids.bg(), ids.fg(), font_dims, state);
             },
             .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),

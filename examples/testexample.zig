@@ -81,14 +81,17 @@ fn getImageFormat(
     };
 }
 
-pub fn main() !u8 {
+pub fn main() !void {
     try x11.wsaStartup();
 
     var read_buffer: [1000]u8 = undefined;
     var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
     defer x11.disconnect(socket_reader.getStream());
     _ = used_auth;
-    const setup = try x11.readSetupSuccess(socket_reader.interface());
+    const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
+        error.ReadFailed => return socket_reader.getError().?,
+        error.EndOfStream, error.Protocol => |e| return e,
+    };
     var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
     std.log.info("setup reply {f}", .{setup});
     try source.requireReplyAtLeast(setup.required());
@@ -106,7 +109,7 @@ pub fn main() !u8 {
             .msb_first => .big,
             else => |order| {
                 std.log.err("unknown image-byte-order {}", .{order});
-                return 0xff;
+                std.process.exit(0xff);
             },
         };
 
@@ -163,7 +166,7 @@ pub fn main() !u8 {
                 x11.Depth.init(screen.root_depth) orelse std.debug.panic("screen has invalid depth {}", .{screen.root_depth}),
             ) catch |err| {
                 std.log.err("can't resolve root depth {} format: {s}", .{ screen.root_depth, @errorName(err) });
-                return 0xff;
+                std.process.exit(0xff);
             },
         };
     };
@@ -182,6 +185,21 @@ pub fn main() !u8 {
         "unsupported depth {}",
         .{screen.root_depth},
     );
+    run(&sink, &source, ids, depth, image_format, screen) catch |err| switch (err) {
+        error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.UnexpectedMessage => |e| return e,
+    };
+}
+
+fn run(
+    sink: *x11.RequestSink,
+    source: *x11.Source,
+    ids: Ids,
+    depth: x11.Depth,
+    image_format: ImageFormat,
+    screen: x11.ScreenHeader,
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
     try sink.CreateWindow(.{
         .window_id = ids.window(),
         .parent_window_id = screen.root,
@@ -195,6 +213,7 @@ pub fn main() !u8 {
         .visual_id = screen.root_visual,
     }, .{
         .bg_pixel = depth.rgbFrom24(0xbbccdd),
+        .bit_gravity = .north_west,
         .event_mask = .{
             .KeymapState = 1,
             .Exposure = 1,
@@ -298,15 +317,15 @@ pub fn main() !u8 {
 
     var maybe_picture_format: ?x11.render.PictureFormatInfo = null;
 
-    const opt_composite_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.composite.name);
+    const opt_composite_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.composite.name);
     if (opt_composite_ext) |composite_ext| {
-        const latest_version = try queryExtensionVersions(.composite, &sink, &source, composite_ext.opcode_base);
+        const latest_version = try queryExtensionVersions(.composite, sink, source, composite_ext.opcode_base);
         _ = latest_version;
     }
 
-    const opt_render_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.render.name);
+    const opt_render_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.render.name);
     if (opt_render_ext) |render_ext| {
-        const latest_version = try queryExtensionVersions(.render, &sink, &source, render_ext.opcode_base);
+        const latest_version = try queryExtensionVersions(.render, sink, source, render_ext.opcode_base);
         if (latest_version.major != 0) @panic("untested render extension major version");
         // TODO: actually use the version for now we're just verifying the version
         //       is the oldest one that's been tested to work
@@ -317,7 +336,7 @@ pub fn main() !u8 {
 
         // Find some compatible picture formats for use with the X Render extension. We want
         // to find a 24-bit depth format for use with the root and our window.
-        try x11.render.QueryPictFormats(&sink, render_ext.opcode_base);
+        try x11.render.QueryPictFormats(sink, render_ext.opcode_base);
         try sink.writer.flush();
         const result, _ = try source.readSynchronousReplyHeader(sink.sequence, .render_QueryPictFormats);
         std.log.info(
@@ -358,7 +377,7 @@ pub fn main() !u8 {
         //
         // Create a picture for the root window that we will copy from in this example
         try x11.render.CreatePicture(
-            &sink,
+            sink,
             opt_render_ext.?.opcode_base,
             ids.picture_root(),
             screen.root.drawable(),
@@ -373,7 +392,7 @@ pub fn main() !u8 {
 
         // Create a picture for the our window that we can copy and composite things onto
         try x11.render.CreatePicture(
-            &sink,
+            sink,
             opt_render_ext.?.opcode_base,
             ids.picture_window(),
             ids.window().drawable(),
@@ -382,9 +401,9 @@ pub fn main() !u8 {
         );
     }
 
-    const opt_shape_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.shape.name);
+    const opt_shape_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.shape.name);
     if (opt_shape_ext) |shape_ext| {
-        try x11.shape.QueryVersion(&sink, shape_ext.opcode_base);
+        try x11.shape.QueryVersion(sink, shape_ext.opcode_base);
         try sink.writer.flush();
         try sink.writer.flush();
         const version, _ = try source.readSynchronousReplyFull(sink.sequence, .shape_QueryVersion);
@@ -392,9 +411,9 @@ pub fn main() !u8 {
         if (version.major != 1) std.debug.panic("unsupported SHAPE version {}", .{version.major});
     }
 
-    const opt_test_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.tst.name);
+    const opt_test_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.tst.name);
     if (opt_test_ext) |tst_ext| {
-        const latest_version = try queryExtensionVersions(.tst, &sink, &source, tst_ext.opcode_base);
+        const latest_version = try queryExtensionVersions(.tst, sink, source, tst_ext.opcode_base);
         if (latest_version.major != 2) @panic("untested XTEST version");
         if (latest_version.minor < 2) @panic("untested XTEST version");
     }
@@ -404,7 +423,7 @@ pub fn main() !u8 {
     // Send a fake mouse left-click event
     if (opt_test_ext) |test_ext| {
         std.log.info("sending fake button press/release...", .{});
-        try x11.tst.request.FakeInput(&sink, test_ext.opcode_base, .{
+        try x11.tst.request.FakeInput(sink, test_ext.opcode_base, .{
             .button_press = .{
                 .event_type = x11.tst.FakeEventType.button_press,
                 .detail = 1,
@@ -412,7 +431,7 @@ pub fn main() !u8 {
                 .device_id = null,
             },
         });
-        try x11.tst.request.FakeInput(&sink, test_ext.opcode_base, .{
+        try x11.tst.request.FakeInput(sink, test_ext.opcode_base, .{
             .button_press = .{
                 .event_type = x11.tst.FakeEventType.button_release,
                 .detail = 1,
@@ -434,25 +453,13 @@ pub fn main() !u8 {
 
     while (true) {
         try sink.writer.flush();
-        const msg_kind = source.readKind() catch |err| return switch (err) {
-            error.EndOfStream => {
-                std.log.info("X11 connection closed (EndOfStream)", .{});
-                std.process.exit(0);
-            },
-            else => |e| switch (socket_reader.getError() orelse e) {
-                error.ConnectionResetByPeer => {
-                    std.log.info("X11 connection closed (ConnectionReset)", .{});
-                    return std.process.exit(0);
-                },
-                else => |e2| e2,
-            },
-        };
+        const msg_kind = try source.readKind();
         switch (msg_kind) {
             .Reply => {
                 const reply = try source.read2(.Reply);
                 if (maybe_get_img_sequence) |s| {
                     if (s == reply.sequence) {
-                        try checkTestImageIsDrawnToWindow(&source, reply, image_format);
+                        try checkTestImageIsDrawnToWindow(source, reply, image_format);
                         maybe_get_img_sequence = null;
                     }
                 }
@@ -469,7 +476,7 @@ pub fn main() !u8 {
                 const expose = try source.read2(.Expose);
                 std.log.info("{}", .{expose});
                 try render(
-                    &sink,
+                    sink,
                     depth,
                     image_format,
                     ids,
@@ -504,8 +511,7 @@ pub fn main() !u8 {
                 try source.discardRemaining();
             },
             .ExtensionEvent => {
-                std.log.info("TODO: handle a generic extension event {}", .{msg_kind});
-                return error.TodoHandleGenericExtensionEvent;
+                std.debug.panic("TODO: handle a generic extension event {}", .{msg_kind});
             },
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }

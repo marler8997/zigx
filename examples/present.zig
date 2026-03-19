@@ -37,24 +37,30 @@ const Key = enum {
 
 const bg_rgb: u24 = 0x1a1a1a;
 
-pub fn main() !u8 {
+const Root = struct {
+    window: x11.Window,
+    visual: x11.Visual,
+    depth: x11.Depth,
+};
+
+pub fn main() !void {
     try x11.wsaStartup();
 
-    const Screen = struct {
-        window: x11.Window,
-        visual: x11.Visual,
-        depth: x11.Depth,
-    };
-
-    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const screen: Screen = blk: {
+    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
-        var stream_reader, const used_auth = try x11.draft.connect(&read_buffer);
-        errdefer x11.disconnect(stream_reader.getStream());
+        var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
+        errdefer x11.disconnect(socket_reader.getStream());
         _ = used_auth;
-        const setup = try x11.readSetupSuccess(stream_reader.interface());
+        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        };
         std.log.info("setup reply {f}", .{setup});
-        var source: x11.Source = .initFinishSetup(stream_reader.interface(), &setup);
-        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
+        var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+        const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
@@ -64,7 +70,7 @@ pub fn main() !u8 {
             std.process.exit(0xff);
         }
         break :blk .{
-            stream_reader.getStream(),
+            socket_reader.getStream(),
             .{ .range = id_range },
             try .init(setup.min_keycode, setup.max_keycode),
             .{
@@ -81,17 +87,30 @@ pub fn main() !u8 {
 
     var write_buffer: [1000]u8 = undefined;
     var read_buffer: [1000]u8 = undefined;
-    var stream_writer = x11.socketWriter(stream, &write_buffer);
-    var stream_reader = x11.socketReader(stream, &read_buffer);
-    var sink: x11.RequestSink = .{ .writer = &stream_writer.interface };
-    var source: x11.Source = .initAfterSetup(stream_reader.interface());
+    var socket_writer = x11.socketWriter(stream, &write_buffer);
+    var socket_reader = x11.socketReader(stream, &read_buffer);
+    var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
+    var source: x11.Source = .initAfterSetup(socket_reader.interface());
+    run(ids, &root, &sink, &source, keyrange) catch |err| switch (err) {
+        error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.UnexpectedMessage => |e| return e,
+    };
+}
 
+fn run(
+    ids: Ids,
+    root: *const Root,
+    sink: *x11.RequestSink,
+    source: *x11.Source,
+    keyrange: x11.KeycodeRange,
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
     var keycode_map = [1]?Key{null} ** std.math.maxInt(u8);
 
     {
-        var it = try x11.synchronousGetKeyboardMapping(&sink, &source, keyrange);
+        var it = try x11.synchronousGetKeyboardMapping(sink, source, keyrange);
         for (keyrange.min..@as(usize, keyrange.max) + 1) |keycode| {
-            for (try it.readSyms(&source)) |sym| {
+            for (try it.readSyms(source)) |sym| {
                 if (Key.fromSym(sym)) |key| {
                     keycode_map[keycode] = key;
                 }
@@ -101,7 +120,7 @@ pub fn main() !u8 {
 
     try sink.CreateWindow(.{
         .window_id = ids.window(),
-        .parent_window_id = screen.window,
+        .parent_window_id = root.window,
         .depth = 0, // we don't care, just inherit from the parent
         .x = 0,
         .y = 0,
@@ -109,7 +128,7 @@ pub fn main() !u8 {
         .height = initial_window_height,
         .border_width = 0, // TODO: what is this?
         .class = .input_output,
-        .visual_id = screen.visual,
+        .visual_id = root.visual,
     }, .{
         .bg_pixel = bg_rgb,
         .bit_gravity = .north_west,
@@ -137,13 +156,13 @@ pub fn main() !u8 {
         };
     };
 
-    const present_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.present.name) orelse {
+    const present_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.present.name) orelse {
         std.log.err("Present extension not available", .{});
-        return 0xff;
+        std.process.exit(0xff);
     };
 
     try x11.present.selectInput(
-        &sink,
+        sink,
         present_ext.opcode_base,
         ids.presentEventId(),
         ids.window(),
@@ -154,7 +173,7 @@ pub fn main() !u8 {
     var window_height: u16 = initial_window_height;
 
     try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
-        .depth = screen.depth,
+        .depth = root.depth,
         .width = window_width,
         .height = window_height,
     });
@@ -167,20 +186,7 @@ pub fn main() !u8 {
 
     while (true) {
         try sink.writer.flush();
-
-        const msg_kind = source.readKind() catch |err| return switch (err) {
-            error.EndOfStream => {
-                std.log.info("X11 connection closed (EndOfStream)", .{});
-                std.process.exit(0);
-            },
-            else => |e| switch (stream_reader.getError() orelse e) {
-                error.ConnectionResetByPeer => {
-                    std.log.info("X11 connection closed (ConnectionReset)", .{});
-                    return std.process.exit(0);
-                },
-                else => |e2| e2,
-            },
-        };
+        const msg_kind = try source.readKind();
 
         switch (msg_kind) {
             .Expose => {
@@ -211,13 +217,13 @@ pub fn main() !u8 {
                 if (event.width != window_width or event.height != window_height) {
                     window_width = event.width;
                     window_height = event.height;
-                    writeFreeCreatePixmap(
-                        &sink,
+                    try writeFreeCreatePixmap(
+                        sink,
                         ids,
-                        screen.depth,
+                        root.depth,
                         window_width,
                         window_height,
-                    ) catch |e| try onWriteError(e, stream_writer.err.?);
+                    );
                 }
             },
             // StructureNotify events:
@@ -235,31 +241,25 @@ pub fn main() !u8 {
 
         if (do_render) {
             present_serial +%= 1;
-            sink.ChangeGc(ids.gc(), .{ .foreground = bg_rgb }) catch |e| try onWriteError(
-                e,
-                stream_writer.err.?,
-            );
-            sink.PolyFillRectangle(ids.pixmap().drawable(), ids.gc(), .initAssume(&.{.{
+            try sink.ChangeGc(ids.gc(), .{ .foreground = bg_rgb });
+            try sink.PolyFillRectangle(ids.pixmap().drawable(), ids.gc(), .initAssume(&.{.{
                 .x = 0,
                 .y = 0,
                 .width = window_width,
                 .height = window_height,
-            }})) catch |e| try onWriteError(
-                e,
-                stream_writer.err.?,
-            );
+            }}));
             frame_time_graph.writeRender(
-                &sink,
+                sink,
                 ids.pixmap().drawable(),
                 ids.gc(),
                 window_width,
                 window_height,
             ) catch |err| switch (err) {
-                error.WriteFailed => |e| try onWriteError(e, stream_writer.err.?),
+                error.WriteFailed => return error.WriteFailed,
                 error.TextTooLong => @panic("todo: handle longer text"),
             };
-            x11.present.presentPixmap(
-                &sink,
+            try x11.present.presentPixmap(
+                sink,
                 present_ext.opcode_base,
                 ids.window(),
                 ids.pixmap(),
@@ -267,7 +267,7 @@ pub fn main() !u8 {
                 0,
                 0,
                 0,
-            ) catch |e| try onWriteError(e, stream_writer.err.?);
+            );
             do_render = false;
         }
     }
@@ -286,17 +286,6 @@ fn writeFreeCreatePixmap(
         .width = width,
         .height = height,
     });
-}
-
-fn onWriteError(write_failed: error{WriteFailed}, err: std.net.Stream.WriteError) !noreturn {
-    write_failed catch {};
-    switch (err) {
-        error.BrokenPipe => {
-            std.log.info("connection closed (BrokenPipe)", .{});
-            std.process.exit(0);
-        },
-        else => |e| return e,
-    }
 }
 
 const std = @import("std");

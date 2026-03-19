@@ -18,24 +18,30 @@ const Ids = struct {
     const needed_capacity = 4;
 };
 
-pub fn main() !u8 {
+const Root = struct {
+    window: x11.Window,
+    visual: x11.Visual,
+    depth: x11.Depth,
+};
+
+pub fn main() !void {
     try x11.wsaStartup();
 
-    const Screen = struct {
-        window: x11.Window,
-        visual: x11.Visual,
-        depth: x11.Depth,
-    };
-
-    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const screen: Screen = blk: {
+    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
         var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
         errdefer x11.disconnect(socket_reader.getStream());
         _ = used_auth;
-        const setup = try x11.readSetupSuccess(socket_reader.interface());
+        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        };
         std.log.info("setup reply {f}", .{setup});
         var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
-        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
+        const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
@@ -66,12 +72,25 @@ pub fn main() !u8 {
     var socket_reader = x11.socketReader(stream, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .initAfterSetup(socket_reader.interface());
+    run(ids, &root, &sink, &source, keyrange) catch |err| switch (err) {
+        error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.UnexpectedMessage => |e| return e,
+    };
+}
 
-    const keymap: x11.keymap.Full = try .initSynchronous(&sink, &source, keyrange);
+fn run(
+    ids: Ids,
+    root: *const Root,
+    sink: *x11.RequestSink,
+    source: *x11.Source,
+    keyrange: x11.KeycodeRange,
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
+    const keymap: x11.keymap.Full = try .initSynchronous(sink, source, keyrange);
 
     try sink.CreateWindow(.{
         .window_id = ids.window(),
-        .parent_window_id = screen.window,
+        .parent_window_id = root.window,
         .depth = 0, // we don't care, just inherit from the parent
         .x = 0,
         .y = 0,
@@ -79,7 +98,7 @@ pub fn main() !u8 {
         .height = window_height,
         .border_width = 0, // TODO: what is this?
         .class = .input_output,
-        .visual_id = screen.visual,
+        .visual_id = root.visual,
     }, .{
         .bg_pixel = 0x332211,
         .bit_gravity = .north_west,
@@ -95,16 +114,16 @@ pub fn main() !u8 {
         },
     );
     const present_ext = try x11.draft.synchronousQueryExtension(
-        &source,
-        &sink,
+        source,
+        sink,
         x11.present.name,
     ) orelse {
         std.log.err("Present extension not available", .{});
-        return 0xff;
+        std.process.exit(0xff);
     };
 
     try x11.present.selectInput(
-        &sink,
+        sink,
         present_ext.opcode_base,
         ids.presentEventId(),
         ids.window(),
@@ -112,7 +131,7 @@ pub fn main() !u8 {
     );
 
     try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
-        .depth = screen.depth,
+        .depth = root.depth,
         .width = window_width,
         .height = window_height,
     });
@@ -140,19 +159,7 @@ pub fn main() !u8 {
 
     while (true) {
         try sink.writer.flush();
-        const msg_kind = source.readKind() catch |err| return switch (err) {
-            error.EndOfStream => {
-                std.log.info("X11 connection closed (EndOfStream)", .{});
-                std.process.exit(0);
-            },
-            else => |e| switch (socket_reader.getError() orelse e) {
-                error.ConnectionResetByPeer => {
-                    std.log.info("X11 connection closed (ConnectionReset)", .{});
-                    return std.process.exit(0);
-                },
-                else => |e2| e2,
-            },
-        };
+        const msg_kind = try source.readKind();
         switch (msg_kind) {
             .KeyPress => {
                 const event = try source.read2(.KeyPress);
@@ -196,7 +203,7 @@ pub fn main() !u8 {
         }
         if (dirty and !render_in_flight) {
             try render(
-                &sink,
+                sink,
                 ids.pixmap(),
                 ids.gc(),
                 &font_dims,
@@ -204,7 +211,7 @@ pub fn main() !u8 {
                 key_log_next,
             );
             present_serial +%= 1;
-            try x11.present.presentPixmap(&sink, present_ext.opcode_base, ids.window(), ids.pixmap(), present_serial, 0, 0, 0);
+            try x11.present.presentPixmap(sink, present_ext.opcode_base, ids.window(), ids.pixmap(), present_serial, 0, 0, 0);
             render_in_flight = true;
             dirty = false;
         }

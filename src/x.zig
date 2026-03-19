@@ -1466,6 +1466,19 @@ pub const AuthReader = struct {
     }
 };
 
+/// Call to handle a WriteFailed on the socket writer and/or RequestSink after the intial setup.
+/// It will either return an error or nothing if the error is a BrokenPipe which means the
+/// connection to the X server has been closed.
+pub fn onWriteError(write_failed: error{WriteFailed}, err: std.net.Stream.WriteError) !void {
+    write_failed catch {};
+    switch (err) {
+        error.BrokenPipe => {
+            log.info("BrokenPipe", .{});
+        },
+        else => |e| return e,
+    }
+}
+
 pub const RequestSink = struct {
     writer: *std.Io.Writer,
     sequence: u16 = 0,
@@ -4162,6 +4175,39 @@ pub const Source = struct {
     }
     pub fn initAfterSetup(reader: *std.Io.Reader) Source {
         return .{ .reader = reader, .state = .kind };
+    }
+
+    /// Call to handle a read error. On graceful disconnect does nothing, otherwise,
+    /// returns an error. Graceful exit requires either EndOfStream or ConnectionResetByPeer
+    /// with the source state being `.kind` (at the start of a message).
+    pub fn onReadError(
+        source: *const Source,
+        read_err: error{ ReadFailed, EndOfStream, Protocol },
+        stream_err: ?std.net.Stream.ReadError,
+    ) (error{ EndOfStream, Protocol } || std.net.Stream.ReadError)!void {
+        switch (read_err) {
+            error.ReadFailed => switch (stream_err.?) {
+                error.ConnectionResetByPeer => |e| {
+                    if (source.state != .kind) {
+                        log.err("ConnectionReset with source state {t}", .{source.state});
+                        return e;
+                    }
+                    log.info("ConnectionReset", .{});
+                },
+                else => |e| return e,
+            },
+            error.EndOfStream => |e| {
+                if (source.state != .kind) {
+                    log.err("EndOfStream with source state {t}", .{source.state});
+                    return e;
+                }
+                log.info("EndOfStream", .{});
+            },
+            error.Protocol => {
+                log.err("received unexpected data from x11 server", .{});
+                return error.Protocol;
+            },
+        }
     }
 
     /// Read the first byte (message kind) of a new message.

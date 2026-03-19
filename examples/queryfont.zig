@@ -3,8 +3,6 @@ const x11 = @import("x11");
 
 pub const log_level = std.log.Level.info;
 
-const zig_atleast_15 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
-
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const allocator = arena.allocator();
@@ -27,10 +25,16 @@ pub fn main() !void {
         var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
         errdefer x11.disconnect(socket_reader.getStream());
         _ = used_auth;
-        const setup = try x11.readSetupSuccess(socket_reader.interface());
+        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        };
         std.log.info("setup reply {f}", .{setup});
         var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
-        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
+        const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
@@ -49,15 +53,24 @@ pub fn main() !void {
     const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
     const font_id = id_range.addAssumeCapacity(0).font();
 
-    try sink.OpenFont(font_id, .initAssume(font_name));
-    try sink.QueryFont(font_id.fontable());
+    if (@as(?error{WriteFailed}, blk: {
+        sink.OpenFont(font_id, .initAssume(font_name)) catch |e| break :blk e;
+        sink.QueryFont(font_id.fontable()) catch |e| break :blk e;
+        sink.writer.flush() catch |e| break :blk e;
+        break :blk null;
+    })) |e| return x11.onWriteError(e, socket_writer.err.?);
 
     var stdout_buffer: [1000]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+    streamFont(&source, sink.sequence, &stdout_writer.interface) catch |err| switch (err) {
+        error.WriteFailed => return stdout_writer.err.?,
+        error.ReadFailed => return socket_reader.getError().?,
+        error.EndOfStream, error.Protocol, error.UnexpectedMessage => |e| return e,
+    };
+}
 
-    try sink.writer.flush();
-    const font, _ = try source.readSynchronousReplyHeader(sink.sequence, .QueryFont);
+fn streamFont(source: *x11.Source, sequence: u16, stdout: *std.Io.Writer) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
+    const font, _ = try source.readSynchronousReplyHeader(sequence, .QueryFont);
     std.log.info("{}", .{font});
 
     const msg_remaining_size: u35 = source.replyRemainingSize();
@@ -79,6 +92,5 @@ pub fn main() !void {
         try stdout.print("Info {}: {}\n", .{ index, info });
     }
     std.debug.assert(source.replyRemainingSize() == 0);
-
     try stdout.flush();
 }

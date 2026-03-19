@@ -29,12 +29,18 @@ pub fn main() !void {
         var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
         errdefer x11.disconnect(socket_reader.getStream());
         _ = used_auth;
-        const setup = try x11.readSetupSuccess(socket_reader.interface());
+        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        };
         std.log.info("setup reply {f}", .{setup});
         var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
         var on_visual: OnVisual = .{};
-        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{
+        const screen = (x11.draft.readSetupDynamic(&source, &setup, .{
             .on_visual = &on_visual.base,
+        }) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
         }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
@@ -63,11 +69,24 @@ pub fn main() !void {
     var socket_reader = x11.socketReader(stream, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .initAfterSetup(socket_reader.interface());
+    run(ids, root_window, transparent_visual, &sink, &source) catch |err| switch (err) {
+        error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.UnexpectedMessage => |e| return e,
+    };
+}
 
+fn run(
+    ids: Ids,
+    root_window: x11.Window,
+    transparent_visual: x11.Visual,
+    sink: *x11.RequestSink,
+    source: *x11.Source,
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
     const fixes: Fixes = blk: {
-        const ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.fixes.name) orelse break :blk .unsupported;
+        const ext = try x11.draft.synchronousQueryExtension(source, sink, x11.fixes.name) orelse break :blk .unsupported;
         // need at leaset 2.0 for regions
-        try x11.fixes.request.QueryVersion(&sink, ext.opcode_base, 2, 0);
+        try x11.fixes.request.QueryVersion(sink, ext.opcode_base, 2, 0);
         try sink.writer.flush();
         const version, _ = try source.readSynchronousReplyFull(sink.sequence, .fixes_QueryVersion);
         std.log.info("XFIXES version {}.{}", .{ version.major, version.minor });
@@ -127,9 +146,9 @@ pub fn main() !void {
     switch (fixes) {
         .unsupported => {},
         .enabled => |enabled| {
-            try x11.fixes.request.CreateRegion(&sink, enabled.opcode_base, ids.region(), &.{});
+            try x11.fixes.request.CreateRegion(sink, enabled.opcode_base, ids.region(), &.{});
             try x11.fixes.request.SetWindowShapeRegion(
-                &sink,
+                sink,
                 enabled.opcode_base,
                 ids.window(),
                 .input, // shape kind for input
@@ -144,24 +163,12 @@ pub fn main() !void {
 
     while (true) {
         try sink.writer.flush();
-        const msg_kind = source.readKind() catch |err| return switch (err) {
-            error.EndOfStream => {
-                std.log.info("X11 connection closed (EndOfStream)", .{});
-                std.process.exit(0);
-            },
-            else => |e| switch (socket_reader.getError() orelse e) {
-                error.ConnectionResetByPeer => {
-                    std.log.info("X11 connection closed (ConnectionReset)", .{});
-                    return std.process.exit(0);
-                },
-                else => |e2| e2,
-            },
-        };
+        const msg_kind = try source.readKind();
         switch (msg_kind) {
             .Expose => {
                 const expose = try source.read2(.Expose);
                 std.log.info("X11 {}", .{expose});
-                try render(&sink, ids.window(), ids.gc(), font_dims);
+                try render(sink, ids.window(), ids.gc(), font_dims);
             },
             .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),

@@ -24,24 +24,30 @@ const Ids = struct {
     const needed_capacity = 3;
 };
 
-pub fn main() !u8 {
+const Root = struct {
+    window: x11.Window,
+    visual: x11.Visual,
+    depth: x11.Depth,
+};
+
+pub fn main() !void {
     try x11.wsaStartup();
 
-    const Screen = struct {
-        window: x11.Window,
-        visual: x11.Visual,
-        depth: x11.Depth,
-    };
-
-    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const screen: Screen = blk: {
+    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
         var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
         errdefer x11.disconnect(socket_reader.getStream());
         _ = used_auth;
-        const setup = try x11.readSetupSuccess(socket_reader.interface());
+        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        };
         std.log.info("setup reply {f}", .{setup});
         var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
-        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
+        const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
@@ -72,7 +78,20 @@ pub fn main() !u8 {
     var socket_reader = x11.socketReader(stream, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .initAfterSetup(socket_reader.interface());
+    run(ids, &root, &sink, &source, keyrange) catch |err| switch (err) {
+        error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.UnexpectedMessage => |e| return e,
+    };
+}
 
+fn run(
+    ids: Ids,
+    root: *const Root,
+    sink: *x11.RequestSink,
+    source: *x11.Source,
+    keyrange: x11.KeycodeRange,
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
     const Key = enum {
         left,
         right,
@@ -80,16 +99,16 @@ pub fn main() !u8 {
     var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
 
     {
-        var it = try x11.synchronousGetKeyboardMapping(&sink, &source, keyrange);
+        var it = try x11.synchronousGetKeyboardMapping(sink, source, keyrange);
         for (keyrange.min..@as(usize, keyrange.max) + 1) |keycode| {
-            for (try it.readSyms(&source)) |sym| switch (sym) {
+            for (try it.readSyms(source)) |sym| switch (sym) {
                 .kbd_left => {
                     std.log.info("keycode {} is left", .{keycode});
-                    try keycode_map.put(allocator, @intCast(keycode), .left);
+                    keycode_map.put(allocator, @intCast(keycode), .left) catch |e| oom(e);
                 },
                 .kbd_right => {
                     std.log.info("keycode {} is right", .{keycode});
-                    try keycode_map.put(allocator, @intCast(keycode), .right);
+                    keycode_map.put(allocator, @intCast(keycode), .right) catch |e| oom(e);
                 },
                 else => {},
             };
@@ -102,9 +121,9 @@ pub fn main() !u8 {
         const list, _ = try source.readSynchronousReplyHeader(sink.sequence, .ListFonts);
         std.log.info("font count {}", .{list.count});
         const remaining_size = source.replyRemainingSize();
-        const font_mem = try allocator.alloc(u8, remaining_size);
+        const font_mem = allocator.alloc(u8, remaining_size) catch |e| oom(e);
         try source.readReply(font_mem);
-        const fonts = try allocator.alloc(x11.Slice(u8, [*]const u8), list.count);
+        const fonts = allocator.alloc(x11.Slice(u8, [*]const u8), list.count) catch |e| oom(e);
         var font_mem_index: u34 = 0;
         for (fonts.ptr[0..list.count]) |*font| {
             if (font_mem_index == font_mem.len) @panic("fonts truncated");
@@ -119,7 +138,7 @@ pub fn main() !u8 {
 
     try sink.CreateWindow(.{
         .window_id = ids.window(),
-        .parent_window_id = screen.window,
+        .parent_window_id = root.window,
         .depth = 0,
         .x = 0,
         .y = 0,
@@ -127,7 +146,7 @@ pub fn main() !u8 {
         .height = window_height,
         .border_width = 0, // TODO: what is this?
         .class = .input_output,
-        .visual_id = screen.visual,
+        .visual_id = root.visual,
     }, .{
         .bg_pixel = 0xffffff,
         .event_mask = .{ .KeyPress = 1, .Exposure = 1 },
@@ -136,8 +155,8 @@ pub fn main() !u8 {
         ids.gc(),
         ids.window().drawable(),
         .{
-            .background = screen.depth.rgbFrom24(0xffffff),
-            .foreground = screen.depth.rgbFrom24(0),
+            .background = root.depth.rgbFrom24(0xffffff),
+            .foreground = root.depth.rgbFrom24(0),
         },
     );
     try sink.MapWindow(ids.window());
@@ -146,19 +165,7 @@ pub fn main() !u8 {
 
     while (true) {
         try sink.writer.flush();
-        const msg_kind = source.readKind() catch |err| return switch (err) {
-            error.EndOfStream => {
-                std.log.info("X11 connection closed (EndOfStream)", .{});
-                std.process.exit(0);
-            },
-            else => |e| switch (socket_reader.getError() orelse e) {
-                error.ConnectionResetByPeer => {
-                    std.log.info("X11 connection closed (ConnectionReset)", .{});
-                    return std.process.exit(0);
-                },
-                else => |e2| e2,
-            },
-        };
+        const msg_kind = try source.readKind();
         switch (msg_kind) {
             .Error => {
                 const err = try source.read2(.Error);
@@ -172,7 +179,7 @@ pub fn main() !u8 {
                     },
                     .font => {
                         if (err.major_opcode == .query_font) {
-                            try state.onQueryFontError(&err, &sink, ids, fonts);
+                            try state.onQueryFontError(&err, sink, ids, fonts);
                             error_handled = true;
                         }
                     },
@@ -180,7 +187,7 @@ pub fn main() !u8 {
                 }
                 if (!error_handled) std.debug.panic("X11 {f}", .{err});
             },
-            .Reply => try state.onReply(&source, &sink, ids, fonts),
+            .Reply => try state.onReply(source, sink, ids, fonts),
             .KeyPress => {
                 const event = try source.read2(.KeyPress);
                 const diff: isize = if (keycode_map.get(event.keycode)) |key| switch (key) {
@@ -189,7 +196,7 @@ pub fn main() !u8 {
                 } else 0;
                 if (diff != 0) {
                     const new_font_index = @mod(@as(isize, @intCast(state.desired_font_index)) + diff, @as(isize, @intCast(fonts.len)));
-                    try state.updateDesiredFont(&sink, ids, fonts, @intCast(new_font_index));
+                    try state.updateDesiredFont(sink, ids, fonts, @intCast(new_font_index));
                 }
             },
             // NOTE: server will send us KeyRelease when the user holds down a key
@@ -198,7 +205,7 @@ pub fn main() !u8 {
             .Expose => {
                 const expose = try source.read2(.Expose);
                 std.log.info("X11 {}", .{expose});
-                try state.onExpose(&expose, &sink, ids, fonts);
+                try state.onExpose(&expose, sink, ids, fonts);
             },
             .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
@@ -446,6 +453,10 @@ fn renderText(
         error.TextTooLong => @panic("todo: handle render long text"),
         error.WriteFailed => return error.WriteFailed,
     };
+}
+
+fn oom(e: error{OutOfMemory}) noreturn {
+    @panic(@errorName(e));
 }
 
 fn openAndQueryFont(

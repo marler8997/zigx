@@ -21,23 +21,30 @@ const Ids = struct {
     const needed_capacity = 3;
 };
 
-pub fn main() !u8 {
+const Root = struct {
+    window: x11.Window,
+    visual: x11.Visual,
+    depth: x11.Depth,
+};
+
+pub fn main() !void {
     try x11.wsaStartup();
 
-    const Screen = struct {
-        window: x11.Window,
-        visual: x11.Visual,
-        depth: x11.Depth,
-    };
-    const stream: std.net.Stream, const ids: Ids, const screen: Screen = blk: {
+    const stream: std.net.Stream, const ids: Ids, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
         var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
         errdefer x11.disconnect(socket_reader.getStream());
         _ = used_auth;
-        const setup = try x11.readSetupSuccess(socket_reader.interface());
+        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        };
         std.log.info("setup reply {f}", .{setup});
         var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
-        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
+        const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
@@ -65,33 +72,45 @@ pub fn main() !u8 {
     var socket_reader = x11.socketReader(stream, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .initAfterSetup(socket_reader.interface());
+    run(ids, &root, &sink, &source) catch |err| switch (err) {
+        error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.UnexpectedMessage => |e| return e,
+    };
+}
 
+fn run(
+    ids: Ids,
+    root: *const Root,
+    sink: *x11.RequestSink,
+    source: *x11.Source,
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
     try sink.CreateWindow(.{
         .window_id = ids.window(),
-        .parent_window_id = screen.window,
+        .parent_window_id = root.window,
         .x = 0,
         .y = 0,
         .width = window_width,
         .height = window_height,
         .border_width = 0, // TODO: what is this?
         .class = .input_output,
-        .visual_id = screen.visual,
+        .visual_id = root.visual,
         .depth = 0,
     }, .{
-        .bg_pixel = screen.depth.rgbFrom24(0xbbccdd),
+        .bg_pixel = root.depth.rgbFrom24(0xbbccdd),
         .event_mask = .{ .Exposure = 1 },
     });
     try sink.CreateGc(
         ids.bg(),
         ids.window().drawable(),
-        .{ .foreground = screen.depth.rgbFrom24(0) },
+        .{ .foreground = root.depth.rgbFrom24(0) },
     );
     try sink.CreateGc(
         ids.fg(),
         ids.window().drawable(),
         .{
-            .background = screen.depth.rgbFrom24(0),
-            .foreground = screen.depth.rgbFrom24(0x884411),
+            .background = root.depth.rgbFrom24(0),
+            .foreground = root.depth.rgbFrom24(0x884411),
             .line_width = 10,
         },
     );
@@ -113,24 +132,12 @@ pub fn main() !u8 {
 
     while (true) {
         try sink.writer.flush();
-        const msg_kind = source.readKind() catch |err| return switch (err) {
-            error.EndOfStream => {
-                std.log.info("X11 connection closed (EndOfStream)", .{});
-                std.process.exit(0);
-            },
-            else => |e| switch (socket_reader.getError() orelse e) {
-                error.ConnectionResetByPeer => {
-                    std.log.info("X11 connection closed (ConnectionReset)", .{});
-                    return std.process.exit(0);
-                },
-                else => |e2| e2,
-            },
-        };
+        const msg_kind = try source.readKind();
         switch (msg_kind) {
             .Expose => {
                 const expose = try source.read2(.Expose);
                 std.log.info("X11 {}", .{expose});
-                try render(&sink, ids.window(), ids.bg(), ids.fg(), font_dims);
+                try render(sink, ids.window(), ids.bg(), ids.fg(), font_dims);
             },
             .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),

@@ -31,15 +31,23 @@ const Ids = struct {
     const needed_capacity = after_glyphs + 4;
 };
 
+const Root = struct {
+    window: x11.Window,
+    visual: x11.Visual,
+    depth: x11.Depth,
+};
+
+const Options = struct {
+    font_file: ?[]const u8 = null,
+    size: f32 = 24.0,
+};
+
 pub fn main() !void {
     var arena_instance: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     // no need to deinit
     const cmdline = try Cmdline.alloc(arena_instance.allocator());
 
-    var opt: struct {
-        font_file: ?[]const u8 = null,
-        size: f32 = 24.0,
-    } = .{};
+    var opt: Options = .{};
 
     {
         var i: usize = 1;
@@ -60,20 +68,21 @@ pub fn main() !void {
 
     try x11.wsaStartup();
 
-    const Screen = struct {
-        window: x11.Window,
-        visual: x11.Visual,
-        depth: x11.Depth,
-    };
-    const stream: std.net.Stream, const ids: Ids, const screen: Screen = blk: {
+    const stream: std.net.Stream, const ids: Ids, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
         var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
         errdefer x11.disconnect(socket_reader.getStream());
         _ = used_auth;
-        const setup = try x11.readSetupSuccess(socket_reader.interface());
+        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        };
         std.log.info("setup reply {f}", .{setup});
         var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
-        const screen = try x11.draft.readSetupDynamic(&source, &setup, .{}) orelse {
+        const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.getError().?,
+            error.EndOfStream, error.Protocol => |e| return e,
+        }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
@@ -101,13 +110,27 @@ pub fn main() !void {
     var socket_reader = x11.socketReader(stream, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
     var source: x11.Source = .initAfterSetup(socket_reader.interface());
+    run(ids, &root, &sink, &source, &arena_instance, opt) catch |err| switch (err) {
+        error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.UnexpectedMessage => |e| return e,
+    };
+}
 
+fn run(
+    ids: Ids,
+    root: *const Root,
+    sink: *x11.RequestSink,
+    source: *x11.Source,
+    arena_instance: *std.heap.ArenaAllocator,
+    opt: Options,
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
     var window_size: XY(u16) = .{ .x = 600, .y = 700 };
 
     try sink.CreateWindow(
         .{
             .window_id = ids.window(),
-            .parent_window_id = screen.window,
+            .parent_window_id = root.window,
             .depth = 0,
             .x = 0,
             .y = 0,
@@ -115,10 +138,10 @@ pub fn main() !void {
             .height = window_size.y,
             .border_width = 0,
             .class = .input_output,
-            .visual_id = screen.visual,
+            .visual_id = root.visual,
         },
         .{
-            .bg_pixel = screen.depth.rgbFrom24(0),
+            .bg_pixel = root.depth.rgbFrom24(0),
             .event_mask = .{
                 .ButtonPress = 1,
                 .ButtonRelease = 1,
@@ -133,20 +156,20 @@ pub fn main() !void {
         ids.gc(),
         ids.window().drawable(),
         .{
-            .background = screen.depth.rgbFrom24(0),
-            .foreground = screen.depth.rgbFrom24(0xffffff),
+            .background = root.depth.rgbFrom24(0),
+            .foreground = root.depth.rgbFrom24(0xffffff),
             .line_width = 4,
             // prevent NoExposure events when we send CopyArea
             .graphics_exposures = false,
         },
     );
-    const present_ext = try x11.draft.synchronousQueryExtension(&source, &sink, x11.present.name) orelse {
+    const present_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.present.name) orelse {
         std.log.err("Present extension not available", .{});
         std.process.exit(0xff);
     };
 
     try x11.present.selectInput(
-        &sink,
+        sink,
         present_ext.opcode_base,
         ids.presentEventId(),
         ids.window(),
@@ -154,7 +177,7 @@ pub fn main() !void {
     );
 
     try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
-        .depth = screen.depth,
+        .depth = root.depth,
         .width = window_size.x,
         .height = window_size.y,
     });
@@ -175,14 +198,14 @@ pub fn main() !void {
         }
         break :blk @embedFile("InterVariable.ttf");
     };
-    const ttf: TrueType = try .load(ttf_content);
+    const ttf: TrueType = TrueType.load(ttf_content) catch |e| @panic(@errorName(e));
     var font_size: f32 = opt.size;
     var cached_glyphs_store: Font.GlyphSet = undefined;
-    var font: Font = try .init(&ttf, font_ids, .{
+    var font: Font = Font.init(&ttf, font_ids, .{
         .size = font_size,
         .color = 0xffffff,
-    }, &cached_glyphs_store);
-    defer font.deinit(&sink) catch |err| @panic(@errorName(err));
+    }, &cached_glyphs_store) catch |e| @panic(@errorName(e));
+    defer font.deinit(sink) catch |err| @panic(@errorName(err));
     var glyph_arena: ArenaAllocator = .init(std.heap.page_allocator);
 
     var sliding: bool = false;
@@ -195,19 +218,7 @@ pub fn main() !void {
 
     while (true) {
         try sink.writer.flush();
-        const msg_kind = source.readKind() catch |err| return switch (err) {
-            error.EndOfStream => {
-                std.log.info("X11 connection closed (EndOfStream)", .{});
-                std.process.exit(0);
-            },
-            else => |e| switch (socket_reader.getError() orelse e) {
-                error.ConnectionResetByPeer => {
-                    std.log.info("X11 connection closed (ConnectionReset)", .{});
-                    return std.process.exit(0);
-                },
-                else => |e2| e2,
-            },
-        };
+        const msg_kind = try source.readKind();
 
         switch (msg_kind) {
             .ButtonPress => {
@@ -216,7 +227,7 @@ pub fn main() !void {
                     const pt: XY(i16) = .{ .x = msg.event_x, .y = msg.event_y };
                     if (rectContains(layout.slider, pt)) {
                         sliding = true;
-                        if (try updateFontSize(&sink, &font_size, &font, layout.slider, pt.x))
+                        if (try updateFontSize(sink, &font_size, &font, layout.slider, pt.x))
                             dirty = true;
                     }
                 }
@@ -231,7 +242,7 @@ pub fn main() !void {
                 const msg = try source.read2(.MotionNotify);
                 if (sliding) {
                     const pt: XY(i16) = .{ .x = msg.event_x, .y = msg.event_y };
-                    if (try updateFontSize(&sink, &font_size, &font, layout.slider, pt.x))
+                    if (try updateFontSize(sink, &font_size, &font, layout.slider, pt.x))
                         dirty = true;
                 }
             },
@@ -248,7 +259,7 @@ pub fn main() !void {
                     window_size = .{ .x = msg.width, .y = msg.height };
                     try sink.FreePixmap(ids.pixmap());
                     try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
-                        .depth = screen.depth,
+                        .depth = root.depth,
                         .width = window_size.x,
                         .height = window_size.y,
                     });
@@ -274,17 +285,19 @@ pub fn main() !void {
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }
         if (dirty and !render_in_flight) {
-            layout = try render(
+            layout = render(
                 &glyph_arena,
-                &sink,
+                sink,
                 ids,
                 &font,
                 window_size,
                 font_size,
                 opt.font_file,
-            );
+            ) catch |err| switch (err) {
+                error.WriteFailed => return error.WriteFailed,
+            };
             present_serial +%= 1;
-            try x11.present.presentPixmap(&sink, present_ext.opcode_base, ids.window(), ids.pixmap(), present_serial, 0, 0, 0);
+            try x11.present.presentPixmap(sink, present_ext.opcode_base, ids.window(), ids.pixmap(), present_serial, 0, 0, 0);
             render_in_flight = true;
             dirty = false;
         }
@@ -332,7 +345,7 @@ fn render(
     window_size: XY(u16),
     font_size: f32,
     font_file: ?[]const u8,
-) !Layout {
+) error{WriteFailed}!Layout {
     const gc = ids.gc();
     const drawable = ids.pixmap().drawable();
 
@@ -381,26 +394,40 @@ fn render(
         .left_margin = margin,
         .buffer = &writer_buf,
     });
+    renderText(&writer, margin, font_size, font_file) catch |err| switch (err) {
+        error.WriteFailed => return error.WriteFailed,
+        else => |e| std.debug.panic("render text error: {s}", .{@errorName(e)}),
+    };
+
+    return layout;
+}
+
+fn renderText(
+    writer: *Font.TextWriter,
+    margin: i16,
+    font_size: f32,
+    font_file: ?[]const u8,
+) (error{WriteFailed} || Font.Error)!void {
     try writer.newline();
     try writer.interface.print("size: {d}", .{font_size});
-    try underline(&writer, margin);
+    try underline(writer, margin);
     try writer.newline();
     if (font_file) |f| {
         try writer.interface.print("{s}", .{f});
     } else {
         try writer.interface.writeAll("builtin font InterVariable.ttf");
     }
-    try underline(&writer, margin);
+    try underline(writer, margin);
     try writer.newline();
     try writer.interface.print("Hello, {s}! These glyphs are missing: こんにちは", .{"World"});
-    try underline(&writer, margin);
+    try underline(writer, margin);
     try writer.newline();
     try writer.newline();
     try writer.interface.writeAll("0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-    try underline(&writer, margin);
+    try underline(writer, margin);
     try writer.newline();
     try writer.interface.writeAll("abcdefghijklmnopqrstuvwxyz");
-    try underline(&writer, margin);
+    try underline(writer, margin);
     try writer.newline();
 
     writer.left_margin = 300;
@@ -435,8 +462,6 @@ fn render(
     try writer.newline();
     try writer.interface.writeAll("is centered, and also the last bit is longer than the buffer.");
     try writer.newline();
-
-    return layout;
 }
 
 fn underline(

@@ -2,8 +2,22 @@
 pub const ConnectError = error{
     GetDisplay,
     BadDisplay,
-    ConnectFailed,
-    AuthenticateFailed,
+
+    // Errors resulting from connect
+    SystemResources,
+    ConnectionTimedOut,
+    AccessDenied,
+    PermissionDenied,
+    FileNotFound,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    ConnectionRefused,
+    AddressNotAvailable,
+    UnknownHostName,
+    Unexpected,
+
+    // Error from authenticate error
+    AuthRejected,
 };
 pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
     const display = x11.getDisplay() catch |err| {
@@ -21,13 +35,26 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
             return error.BadDisplay;
         },
     };
-    const address, const initial_stream = x11.connect(&host) catch |err| {
-        x11.log.err("connect to {f} failed with {s}", .{ host, @errorName(err) });
-        return error.ConnectFailed;
+    const address, const initial_stream = x11.connect(&host) catch |err| return switch (err) {
+        error.SystemResources,
+        error.ConnectionTimedOut,
+        error.AccessDenied,
+        error.Unexpected,
+        error.PermissionDenied,
+        error.FileNotFound,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        error.ConnectionRefused,
+        error.AddressNotAvailable,
+        error.UnknownHostName,
+        => |e| {
+            x11.log.err("connect to {f} failed with {s}", .{ host, @errorName(err) });
+            return e;
+        },
     };
     errdefer x11.disconnect(initial_stream);
     x11.log.info("connected to {f}", .{address});
-    return x11.draft.authenticate(
+    return try x11.draft.authenticate(
         display,
         &parsed_display,
         &host,
@@ -35,9 +62,7 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
         initial_stream,
         read_buffer,
         .{},
-    ) catch |err| return switch (err) {
-        error.X11Authentication => error.AuthenticateFailed,
-    };
+    );
 }
 
 pub fn authenticate(
@@ -50,7 +75,7 @@ pub fn authenticate(
     opt: struct {
         order: x11.Authenticator.Order = .auth_first,
     },
-) !x11.Authenticator.Success {
+) error{AuthRejected}!x11.Authenticator.Success {
     var filename_buffer: [std.fs.max_path_bytes]u8 = undefined;
     var authenticator: x11.Authenticator = .{
         .display = display,
@@ -86,7 +111,7 @@ pub fn authenticate(
                     );
                 },
             }
-            return error.X11Authentication;
+            return error.AuthRejected;
         },
         .get_auth_filename_error => |e| {
             x11.log.err("get auth filename ({s}) failed with {s}", .{ e.kind.context(), @errorName(e.err) });

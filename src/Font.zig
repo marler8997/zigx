@@ -19,7 +19,7 @@ cached_glyphs: *GlyphSet,
 
 pub const max_glyphs = std.math.maxInt(u16);
 
-const Error = error{WriteFailed} || TrueType.GlyphBitmapError || error{InvalidUtf8};
+pub const Error = error{WriteFailed} || TrueType.GlyphBitmapError || error{InvalidUtf8};
 
 /// X11 IDs necessary to render the font.
 pub const Ids = struct {
