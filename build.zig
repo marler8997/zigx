@@ -1,6 +1,17 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+/// Create the xtt (x11 true type) module with a custom TrueType module.
+pub fn createXtt(b: *std.Build, zigx_dep: *std.Build.Dependency, TrueType: *std.Build.Module) *std.Build.Module {
+    return b.createModule(.{
+        .root_source_file = zigx_dep.path("xtt/xtt.zig"),
+        .imports = &.{
+            .{ .name = "x11", .module = zigx_dep.module("x11") },
+            .{ .name = "TrueType", .module = TrueType },
+        },
+    });
+}
+
 const Example = struct {
     name: []const u8,
     needs_text: bool = false,
@@ -34,9 +45,8 @@ pub fn build(b: *std.Build) void {
     });
 
     const true_type_mod = b.dependency("TrueType", .{}).module("TrueType");
-
-    const font_mod = b.addModule("Font", .{
-        .root_source_file = b.path("src/Font.zig"),
+    const xtt_mod = b.addModule("xtt", .{
+        .root_source_file = b.path("xtt/xtt.zig"),
         .imports = &.{
             .{ .name = "x11", .module = x_mod },
             .{ .name = "TrueType", .module = true_type_mod },
@@ -69,7 +79,7 @@ pub fn build(b: *std.Build) void {
             },
         });
         if (example.needs_text) {
-            example_mod.addImport("Font", font_mod);
+            example_mod.addImport("xtt", xtt_mod);
 
             const inter = b.dependency("inter", .{});
             example_mod.addImport("InterVariable.ttf", b.createModule(.{

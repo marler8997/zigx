@@ -2472,6 +2472,10 @@ pub const Resource = enum(u32) {
         return @enumFromInt(@intFromEnum(r));
     }
 
+    pub fn glyphSet(r: Resource) render.GlyphSet {
+        return @enumFromInt(@intFromEnum(r));
+    }
+
     pub fn colormap(r: Resource) Colormap {
         return @enumFromInt(@intFromEnum(r));
     }

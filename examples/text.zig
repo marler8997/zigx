@@ -4,31 +4,25 @@ const Ids = struct {
     pub fn window(self: Ids) x11.Window {
         return self.range.addAssumeCapacity(0).window();
     }
-    // Glyph IDs are placed right after the window ID, just to demonstrate that
-    // they don't have to be at the beginning or end of the range.
-    const glyph_offset = 1;
-    const after_glyphs = glyph_offset + Font.max_glyphs;
     pub fn gc(self: Ids) x11.GraphicsContext {
-        return self.range.addAssumeCapacity(after_glyphs + 0).graphicsContext();
+        return self.range.addAssumeCapacity(1).graphicsContext();
     }
     pub fn pixmap(self: Ids) x11.Pixmap {
-        return self.range.addAssumeCapacity(after_glyphs + 1).pixmap();
-    }
-    pub fn glyphGc(self: Ids) x11.GraphicsContext {
-        return self.range.addAssumeCapacity(after_glyphs + 2).graphicsContext();
+        return self.range.addAssumeCapacity(2).pixmap();
     }
     pub fn presentEventId(self: Ids) u32 {
-        return @intFromEnum(self.range.addAssumeCapacity(after_glyphs + 3));
+        return @intFromEnum(self.range.addAssumeCapacity(3));
     }
-    pub fn font(self: Ids) Font.Ids {
-        return .{
-            .window = self.window(),
-            .glyph_gc = self.glyphGc(),
-            .range = self.range,
-            .glyph_offset = glyph_offset,
-        };
+    pub fn glyphset(self: Ids) x11.render.GlyphSet {
+        return self.range.addAssumeCapacity(4).glyphSet();
     }
-    const needed_capacity = after_glyphs + 4;
+    pub fn dstPicture(self: Ids) x11.render.Picture {
+        return self.range.addAssumeCapacity(5).picture();
+    }
+    pub fn srcPicture(self: Ids) x11.render.Picture {
+        return self.range.addAssumeCapacity(6).picture();
+    }
+    const needed_capacity = 7;
 };
 
 const Root = struct {
@@ -159,8 +153,6 @@ fn run(
             .background = root.depth.rgbFrom24(0),
             .foreground = root.depth.rgbFrom24(0xffffff),
             .line_width = 4,
-            // prevent NoExposure events when we send CopyArea
-            .graphics_exposures = false,
         },
     );
     const present_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.present.name) orelse {
@@ -176,14 +168,80 @@ fn run(
         .{ .complete_notify = true },
     );
 
-    try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
-        .depth = root.depth,
-        .width = window_size.x,
-        .height = window_size.y,
-    });
+    const render_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.render.name) orelse {
+        std.log.err("RENDER extension not available", .{});
+        std.process.exit(0xff);
+    };
+
+    // Query PictFormats to find the PictureFormat for our root visual and an A8 (alpha) format
+    try x11.render.QueryPictFormats(sink, render_ext.opcode_base);
+    try sink.writer.flush();
+    const visual_format: x11.render.PictureFormat, const a8_format: x11.render.PictureFormat = blk: {
+        const pict_result, _ = try source.readSynchronousReplyHeader(sink.sequence, .render_QueryPictFormats);
+        var pict_reader: x11.render.PictFormatsReader = .init(pict_result);
+
+        var maybe_a8_format: ?x11.render.PictureFormat = null;
+        {
+            var format_rd = pict_reader.formatReader();
+            while (try format_rd.next(source)) |format| {
+                const log_formats = false;
+                if (log_formats) std.log.info("PictFormat {f}", .{format});
+                if (format.depth == 8 and format.type == .direct and format.direct.alpha_mask == 0xff) {
+                    maybe_a8_format = format.id;
+                    if (!log_formats) break;
+                }
+            }
+            try format_rd.discardRemaining(source);
+        }
+
+        var maybe_visual_format: ?x11.render.PictureFormat = null;
+        {
+            var visual_rd = pict_reader.visualReader();
+            while (try visual_rd.next(source)) |visual| {
+                const log_visuals = false;
+                if (log_visuals) std.log.info("Visual {}", .{visual});
+                if (visual.visual == root.visual) {
+                    maybe_visual_format = visual.format;
+                    if (!log_visuals) break;
+                }
+            }
+            try visual_rd.discardRemaining(source);
+        }
+
+        try pict_reader.discardRemaining(source);
+        break :blk .{
+            maybe_visual_format orelse {
+                std.log.err("no PictFormat for root visual {f}", .{root.visual});
+                std.process.exit(0xff);
+            },
+            maybe_a8_format orelse {
+                std.log.err("no A8 PictFormat found", .{});
+                std.process.exit(0xff);
+            },
+        };
+    };
+
+    try x11.render.createPixmapPicture(
+        sink,
+        render_ext.opcode_base,
+        ids.pixmap(),
+        ids.dstPicture(),
+        ids.window().drawable(),
+        visual_format,
+        root.depth,
+        window_size.x,
+        window_size.y,
+    );
+
+    // Create a solid white Picture (source color for glyph compositing)
+    try x11.render.CreateSolidFill(
+        sink,
+        render_ext.opcode_base,
+        ids.srcPicture(),
+        x11.render.Color.fromRgb24(0xffffff),
+    );
 
     try sink.MapWindow(ids.window());
-    const font_ids = ids.font();
 
     const ttf_content = blk: {
         if (opt.font_file) |font_file| {
@@ -198,14 +256,20 @@ fn run(
         }
         break :blk @embedFile("InterVariable.ttf");
     };
-    const ttf: TrueType = TrueType.load(ttf_content) catch |e| @panic(@errorName(e));
+    const ttf: xtt.TrueType = xtt.TrueType.load(ttf_content) catch |e| @panic(@errorName(e));
+    xtt.check(&ttf) catch |e| @panic(@errorName(e));
     var font_size: f32 = opt.size;
-    var cached_glyphs_store: Font.GlyphSet = undefined;
-    var font: Font = Font.init(&ttf, font_ids, .{
-        .size = font_size,
-        .color = 0xffffff,
-    }, &cached_glyphs_store) catch |e| @panic(@errorName(e));
-    defer font.deinit(sink) catch |err| @panic(@errorName(err));
+    var uploaded_glyphs: xtt.GlyphIndexSet = undefined;
+    var glyphs: xtt.GlyphSet = try .init(
+        &ttf,
+        render_ext.opcode_base,
+        ids.glyphset(),
+        a8_format,
+        ttf.scaleForPixelHeight(font_size),
+        &uploaded_glyphs,
+        sink,
+    );
+    defer glyphs.deinit(sink) catch {};
     var glyph_arena: ArenaAllocator = .init(std.heap.page_allocator);
 
     var sliding: bool = false;
@@ -227,7 +291,7 @@ fn run(
                     const pt: XY(i16) = .{ .x = msg.event_x, .y = msg.event_y };
                     if (rectContains(layout.slider, pt)) {
                         sliding = true;
-                        if (try updateFontSize(sink, &font_size, &font, layout.slider, pt.x))
+                        if (try updateFontSize(sink, &font_size, &glyphs, layout.slider, pt.x))
                             dirty = true;
                     }
                 }
@@ -242,7 +306,7 @@ fn run(
                 const msg = try source.read2(.MotionNotify);
                 if (sliding) {
                     const pt: XY(i16) = .{ .x = msg.event_x, .y = msg.event_y };
-                    if (try updateFontSize(sink, &font_size, &font, layout.slider, pt.x))
+                    if (try updateFontSize(sink, &font_size, &glyphs, layout.slider, pt.x))
                         dirty = true;
                 }
             },
@@ -257,12 +321,17 @@ fn run(
                 if (window_size.x != msg.width or window_size.y != msg.height) {
                     std.log.info("WindowSize {}x{}", .{ msg.width, msg.height });
                     window_size = .{ .x = msg.width, .y = msg.height };
-                    try sink.FreePixmap(ids.pixmap());
-                    try sink.CreatePixmap(ids.pixmap(), ids.window().drawable(), .{
-                        .depth = root.depth,
-                        .width = window_size.x,
-                        .height = window_size.y,
-                    });
+                    try x11.render.recreatePixmapPicture(
+                        sink,
+                        render_ext.opcode_base,
+                        ids.pixmap(),
+                        ids.dstPicture(),
+                        ids.window().drawable(),
+                        visual_format,
+                        root.depth,
+                        window_size.x,
+                        window_size.y,
+                    );
                     dirty = true;
                 }
             },
@@ -289,7 +358,7 @@ fn run(
                 &glyph_arena,
                 sink,
                 ids,
-                &font,
+                &glyphs,
                 window_size,
                 font_size,
                 opt.font_file,
@@ -307,7 +376,7 @@ fn run(
 fn updateFontSize(
     sink: *x11.RequestSink,
     font_size: *f32,
-    font: *Font,
+    glyphs: *xtt.GlyphSet,
     slider_rect: x11.Rectangle,
     x: i16,
 ) !bool {
@@ -318,7 +387,7 @@ fn updateFontSize(
         break :blk font_min + (ratio * (font_max - font_min));
     };
     if (new_font_size == font_size.*) return false;
-    try font.change(sink, .{ .size = new_font_size });
+    try glyphs.change(sink, .{ .size = new_font_size });
     font_size.* = new_font_size;
     return true;
 }
@@ -341,7 +410,7 @@ fn render(
     glyph_arena: *ArenaAllocator,
     sink: *x11.RequestSink,
     ids: Ids,
-    font: *Font,
+    glyphs: *xtt.GlyphSet,
     window_size: XY(u16),
     font_size: f32,
     font_file: ?[]const u8,
@@ -381,12 +450,12 @@ fn render(
 
     const margin = 50;
     var writer_buf: [16]u8 = undefined;
-    var writer: Font.TextWriter = .init(.{
-        .font = font,
+    var writer: xtt.Writer = .init(.{
+        .glyph_set = glyphs,
+        .src_picture = ids.srcPicture(),
         .gpa = glyph_arena.allocator(),
         .sink = sink,
-        .gc = gc,
-        .drawable = drawable,
+        .dst_picture = ids.dstPicture(),
         .cursor = .{
             .x = margin,
             .y = 30,
@@ -394,7 +463,7 @@ fn render(
         .left_margin = margin,
         .buffer = &writer_buf,
     });
-    renderText(&writer, margin, font_size, font_file) catch |err| switch (err) {
+    renderText(&writer, drawable, gc, margin, font_size, font_file) catch |err| switch (err) {
         error.WriteFailed => return error.WriteFailed,
         else => |e| std.debug.panic("render text error: {s}", .{@errorName(e)}),
     };
@@ -403,31 +472,33 @@ fn render(
 }
 
 fn renderText(
-    writer: *Font.TextWriter,
+    writer: *xtt.Writer,
+    drawable: x11.Drawable,
+    gc: x11.GraphicsContext,
     margin: i16,
     font_size: f32,
     font_file: ?[]const u8,
-) (error{WriteFailed} || Font.Error)!void {
+) xtt.Writer.Error!void {
     try writer.newline();
     try writer.interface.print("size: {d}", .{font_size});
-    try underline(writer, margin);
+    try underline(drawable, gc, writer, margin);
     try writer.newline();
     if (font_file) |f| {
         try writer.interface.print("{s}", .{f});
     } else {
         try writer.interface.writeAll("builtin font InterVariable.ttf");
     }
-    try underline(writer, margin);
+    try underline(drawable, gc, writer, margin);
     try writer.newline();
     try writer.interface.print("Hello, {s}! These glyphs are missing: こんにちは", .{"World"});
-    try underline(writer, margin);
+    try underline(drawable, gc, writer, margin);
     try writer.newline();
     try writer.newline();
     try writer.interface.writeAll("0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-    try underline(writer, margin);
+    try underline(drawable, gc, writer, margin);
     try writer.newline();
     try writer.interface.writeAll("abcdefghijklmnopqrstuvwxyz");
-    try underline(writer, margin);
+    try underline(drawable, gc, writer, margin);
     try writer.newline();
 
     writer.left_margin = 300;
@@ -465,13 +536,18 @@ fn renderText(
 }
 
 fn underline(
-    writer: *Font.TextWriter,
+    drawable: x11.Drawable,
+    gc: x11.GraphicsContext,
+    text_writer: *xtt.Writer,
     left: i16,
 ) !void {
-    try writer.interface.flush();
-    try writer.sink.PolyFillRectangle(writer.drawable, writer.gc, .initAssume(&[_]x11.Rectangle{
-        .{ .x = left, .y = @intCast(writer.cursor.y), .width = @intCast(writer.cursor.x - left), .height = 1 },
-    }));
+    try text_writer.interface.flush(); // flush to resolve the final cursor position
+    try text_writer.sink.PolyFillRectangle(drawable, gc, .initAssume(&[_]x11.Rectangle{.{
+        .x = left,
+        .y = @intFromFloat(@round(text_writer.cursor.y)),
+        .width = @intFromFloat(@round(text_writer.cursor.x - @as(f32, @floatFromInt(left)))),
+        .height = 1,
+    }}));
 }
 
 fn errExit(comptime fmt: []const u8, args: anytype) noreturn {
@@ -481,9 +557,8 @@ fn errExit(comptime fmt: []const u8, args: anytype) noreturn {
 
 const std = @import("std");
 const x11 = @import("x11");
+const xtt = @import("xtt");
 const XY = x11.XY;
 const assert = std.debug.assert;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const Font = @import("Font");
-const TrueType = Font.TrueType;
 const Cmdline = @import("Cmdline.zig");

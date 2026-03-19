@@ -23,6 +23,7 @@
         "src",
         "test",
         "tools",
+        "xtt",
         "README.md",
     },
 }
