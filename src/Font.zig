@@ -13,7 +13,6 @@ const Font = @This();
 
 ttf: *const TrueType,
 scale: f32,
-color: u32,
 ids: Ids,
 cached_glyphs: *GlyphSet,
 
@@ -21,19 +20,12 @@ pub const max_glyphs = std.math.maxInt(u16);
 
 pub const Error = error{WriteFailed} || TrueType.GlyphBitmapError || error{InvalidUtf8};
 
-/// X11 IDs necessary to render the font.
+/// X11 IDs and configuration for rendering glyphs using the X Render extension.
 pub const Ids = struct {
-    /// The window the font will eventually be rendered to.
-    window: x11.Window,
-    /// The ID reserved for use for temporary graphics contexts for glyph rasterization.
-    glyph_gc: x11.GraphicsContext,
-    /// The ID range and starting offset for glyph pixmaps.
-    range: x11.IdRange,
-    glyph_offset: u29,
-
-    pub fn glyphPixmap(self: Ids, index: Font.GlyphIndex) x11.Pixmap {
-        return self.range.addAssumeCapacity(self.glyph_offset + @intFromEnum(index)).pixmap();
-    }
+    render_ext_opcode: u8,
+    glyphset: x11.render.GlyphSet,
+    src_picture: x11.render.Picture,
+    glyph_format: x11.render.PictureFormat,
 };
 
 /// Information on a glyph.
@@ -45,8 +37,8 @@ const Glyph = struct {
         advance: i16,
     };
 
-    /// The rasterized glyph, or null if empty (e.g. for spaces.)
-    pixmap: ?x11.Pixmap,
+    /// Whether this glyph has pixel data (false for e.g. spaces or missing glyphs).
+    has_pixels: bool,
     /// The measurements for this glyph.
     measurement: Glyph.Metrics,
 };
@@ -57,8 +49,7 @@ pub const TextWriter = struct {
     font: *Font,
     gpa: Allocator,
     sink: *x11.RequestSink,
-    gc: x11.GraphicsContext,
-    drawable: x11.Drawable,
+    dst_picture: x11.render.Picture,
     cursor: x11.XY(i16),
     kerning: bool = true,
     left_margin: i16,
@@ -83,10 +74,8 @@ pub const TextWriter = struct {
         gpa: Allocator,
         /// A sink for the X11 commands.
         sink: *x11.RequestSink,
-        /// The graphics context to draw with.
-        gc: x11.GraphicsContext,
-        /// The drawable to draw to.
-        drawable: x11.Drawable,
+        /// The destination picture to composite glyphs onto.
+        dst_picture: x11.render.Picture,
         /// The initial position to write text at.
         cursor: x11.XY(i16),
         /// Whether or not to enable kerning.
@@ -102,8 +91,7 @@ pub const TextWriter = struct {
             .font = options.font,
             .gpa = options.gpa,
             .sink = options.sink,
-            .gc = options.gc,
-            .drawable = options.drawable,
+            .dst_picture = options.dst_picture,
             .cursor = options.cursor,
             .kerning = options.kerning,
             .left_margin = options.left_margin,
@@ -205,8 +193,7 @@ pub const TextWriter = struct {
         try self.font.draw(.{
             .gpa = self.gpa,
             .sink = self.sink,
-            .gc = self.gc,
-            .drawable = self.drawable,
+            .dst_picture = self.dst_picture,
             .utf8 = utf8,
             .cursor = &self.cursor,
             .kerning = self.kerning,
@@ -229,7 +216,6 @@ pub const TextWriter = struct {
 
 pub const Options = struct {
     size: f32,
-    color: u32,
 };
 
 comptime {
@@ -256,45 +242,36 @@ pub fn init(
     ids: Ids,
     options: Options,
     cached_glyphs_store: *GlyphSet,
+    sink: *x11.RequestSink,
 ) !Font {
     // We later on will assume that there's at least space for the .notdef glyph at 0
     if (ttf.glyphs_len == 0) return error.OutOfMemory;
-    if (ids.range.capacity() < ids.glyph_offset + max_glyphs) return error.OutOfMemory;
     const scale = ttf.scaleForPixelHeight(options.size);
     cached_glyphs_store.* = .initEmpty();
+    try x11.render.CreateGlyphSet(sink, ids.render_ext_opcode, ids.glyphset, ids.glyph_format);
     return .{
         .ttf = ttf,
         .scale = scale,
-        .color = options.color,
         .ids = ids,
         .cached_glyphs = cached_glyphs_store,
     };
 }
 
-fn freePixmaps(self: *Font, sink: *x11.RequestSink) error{WriteFailed}!void {
-    var iter = self.cached_glyphs.bit_set.iterator(.{});
-    while (iter.next()) |glyph_index| {
-        const pixmap = self.ids.glyphPixmap(@enumFromInt(glyph_index));
-        try sink.FreePixmap(pixmap);
-    }
-    // std.ArrayBitSet missing unsetAll
-    @memset(&self.cached_glyphs.bit_set.masks, 0);
-}
-
 pub fn deinit(self: *Font, sink: *x11.RequestSink) !void {
-    try self.freePixmaps(sink);
+    try x11.render.FreeGlyphSet(sink, self.ids.render_ext_opcode, self.ids.glyphset);
     self.* = undefined;
 }
 
-/// Invalidates the cached glyphs, and asks the server to release their pixmap memory.
+/// Invalidates the cached glyphs by freeing and recreating the server-side GlyphSet.
 pub fn invalidateCache(self: *Font, sink: *x11.RequestSink) error{WriteFailed}!void {
-    try self.freePixmaps(sink);
+    try x11.render.FreeGlyphSet(sink, self.ids.render_ext_opcode, self.ids.glyphset);
+    try x11.render.CreateGlyphSet(sink, self.ids.render_ext_opcode, self.ids.glyphset, self.ids.glyph_format);
+    @memset(&self.cached_glyphs.bit_set.masks, 0);
 }
 
 pub const ChangeOptions = struct {
     ttf: ?*const TrueType = null,
     size: ?f32 = null,
-    color: ?u32 = null,
 };
 
 /// Change the font. Properties left null are unchanged. If any properties are changed, the cache
@@ -302,14 +279,12 @@ pub const ChangeOptions = struct {
 pub fn change(self: *Font, sink: *x11.RequestSink, options: ChangeOptions) !void {
     // Get the new values, early out if they haven't changed
     const ttf = options.ttf orelse self.ttf;
-    const color = options.color orelse self.color;
     const scale = if (options.size) |size| self.ttf.scaleForPixelHeight(size) else self.scale;
 
-    if (ttf == self.ttf and color == self.color and scale == self.scale) return;
+    if (ttf == self.ttf and scale == self.scale) return;
 
-    // Update the cached options and invalidate the cached
+    // Update the cached options and invalidate the cache
     self.ttf = ttf;
-    self.color = color;
     self.scale = scale;
 
     try self.invalidateCache(sink);
@@ -318,8 +293,7 @@ pub fn change(self: *Font, sink: *x11.RequestSink, options: ChangeOptions) !void
 pub const DrawOptions = struct {
     gpa: Allocator,
     sink: *x11.RequestSink,
-    gc: x11.GraphicsContext,
-    drawable: x11.Drawable,
+    dst_picture: x11.render.Picture,
     utf8: []const u8,
     cursor: *x11.XY(i16),
     kerning: bool = true,
@@ -338,8 +312,7 @@ pub fn draw(self: *Font, options: DrawOptions) Error!void {
         .{
             .gpa = options.gpa,
             .sink = options.sink,
-            .gc = options.gc,
-            .drawable = options.drawable,
+            .dst_picture = options.dst_picture,
         },
     );
 }
@@ -390,8 +363,7 @@ fn drawOrMeasure(
         .draw => struct {
             gpa: Allocator,
             sink: *x11.RequestSink,
-            gc: x11.GraphicsContext,
-            drawable: x11.Drawable,
+            dst_picture: x11.render.Picture,
         },
         .measure => struct {},
     },
@@ -411,18 +383,19 @@ fn drawOrMeasure(
         // Measure the glyph, and optionally draw it
         const measurement = switch (mode) {
             .draw => b: {
-                const glyph = try self.getGlyph(options.gpa, options.sink, glyph_index);
-                if (glyph.pixmap) |pixmap| {
-                    try options.sink.CopyArea(.{
-                        .src_drawable = pixmap.drawable(),
-                        .dst_drawable = options.drawable,
-                        .gc = options.gc,
-                        .src_x = 0,
-                        .src_y = 0,
-                        .dst_x = @intCast(cursor.x + glyph.measurement.box.x0),
-                        .dst_y = @intCast(cursor.y + glyph.measurement.box.y0),
-                        .width = @intCast(glyph.measurement.box.x1 - glyph.measurement.box.x0),
-                        .height = @intCast(glyph.measurement.box.y1 - glyph.measurement.box.y0),
+                const glyph = try self.ensureGlyph(options.gpa, options.sink, glyph_index);
+                if (glyph.has_pixels) {
+                    try x11.render.CompositeGlyphs32(options.sink, self.ids.render_ext_opcode, .{
+                        .picture_operation = .over,
+                        .src_picture = self.ids.src_picture,
+                        .dst_picture = options.dst_picture,
+                        .mask_format = .none,
+                        .glyphset = self.ids.glyphset,
+                        .src_x = cursor.x,
+                        .src_y = cursor.y,
+                        .delta_x = cursor.x,
+                        .delta_y = cursor.y,
+                        .glyph_id = @intFromEnum(glyph_index),
                     });
                 }
                 break :b glyph.measurement;
@@ -469,8 +442,8 @@ pub fn getGlyphMetrics(self: *const Font, glyph_index: GlyphIndex) Glyph.Metrics
     };
 }
 
-/// Gets a glyph, rasterizign it and adding it to the caceh if necessary.
-pub fn getGlyph(
+/// Ensures a glyph is in the server-side GlyphSet, uploading it if necessary.
+fn ensureGlyph(
     self: *Font,
     gpa: Allocator,
     sink: *x11.RequestSink,
@@ -482,16 +455,15 @@ pub fn getGlyph(
     // Check if the glyph is already in the cache
     if (self.cached_glyphs.isSet(glyph_index)) {
         return .{
-            .pixmap = self.ids.glyphPixmap(glyph_index),
+            .has_pixels = measurement.box.x1 > measurement.box.x0 and
+                measurement.box.y1 > measurement.box.y0,
             .measurement = measurement,
         };
     }
 
-    // If not, add it to the cache
-    const pixmap = rasterize: {
-        const pixmap = self.ids.glyphPixmap(glyph_index);
-
-        // Rasterize the glyph
+    // If not, rasterize and upload it
+    const has_pixels = rasterize: {
+        // Rasterize the glyph to alpha (u8 per pixel)
         var r8: std.ArrayListUnmanaged(u8) = .empty;
         defer r8.deinit(gpa);
         const dims = self.ttf.glyphBitmap(
@@ -501,7 +473,7 @@ pub fn getGlyph(
             self.scale,
             self.scale,
         ) catch |err| switch (err) {
-            error.GlyphNotFound => break :rasterize null,
+            error.GlyphNotFound => break :rasterize false,
             else => |e| return e,
         };
 
@@ -509,71 +481,48 @@ pub fn getGlyph(
         assert(dims.width == measurement.box.x1 - measurement.box.x0 and
             dims.height == measurement.box.y1 - measurement.box.y0);
 
-        // Transcode and color the rasterized glyph
-        const z_pixmap_24 = try gpa.alloc(
-            u8,
-            @as(usize, @intCast(dims.width)) * @as(usize, @intCast(dims.height)) * 4,
-        );
-        defer gpa.free(z_pixmap_24);
-        const color_unorm = std.mem.asBytes(&self.color);
-        const color_float: [3]f32 = .{
-            unormToFloat(color_unorm[0]),
-            unormToFloat(color_unorm[1]),
-            unormToFloat(color_unorm[2]),
+        // Upload alpha data to the server-side GlyphSet
+        const w: u32 = dims.width;
+        const h: u32 = dims.height;
+        const row_stride = (w + 3) & ~@as(u32, 3);
+        const alpha_size = row_stride * h;
+
+        const info: x11.render.GlyphInfo = .{
+            .width = dims.width,
+            .height = dims.height,
+            .x = @intCast(-@as(i32, measurement.box.x0)),
+            .y = @intCast(-@as(i32, measurement.box.y0)),
+            .x_off = measurement.advance,
+            .y_off = 0,
         };
-        for (0..dims.height) |y| {
-            for (0..dims.width) |x| {
-                const a_unorm = r8.items[x + y * @as(usize, @intCast(dims.width))];
-                const a_float = unormToFloat(a_unorm);
-                z_pixmap_24[(y * dims.width + x) * 4 ..][0..4].* = .{
-                    floatToUnorm(color_float[0] * a_float),
-                    floatToUnorm(color_float[1] * a_float),
-                    floatToUnorm(color_float[2] * a_float),
-                    255,
-                };
-            }
+
+        const pad_len = try x11.render.AddGlyphsStart(
+            sink,
+            self.ids.render_ext_opcode,
+            self.ids.glyphset,
+            @intFromEnum(glyph_index),
+            info,
+            alpha_size,
+        );
+
+        // Write alpha data row by row with 4-byte row padding
+        for (0..h) |y| {
+            const row_start = y * @as(usize, dims.width);
+            try sink.writer.writeAll(r8.items[row_start..][0..dims.width]);
+            const row_pad = row_stride - w;
+            if (row_pad > 0) try sink.writer.splatByteAll(0, @intCast(row_pad));
         }
 
-        const gc = self.ids.glyph_gc;
-        try sink.CreatePixmap(pixmap, self.ids.window.drawable(), .{
-            .depth = .@"24",
-            .width = dims.width,
-            .height = dims.height,
-        });
-        try sink.CreateGc(gc, pixmap.drawable(), .{});
-        try sink.PutImage(.{
-            .format = .z_pixmap,
-            .drawable = pixmap.drawable(),
-            .gc_id = gc,
-            .width = dims.width,
-            .height = dims.height,
-            .x = 0,
-            .y = 0,
-            .depth = .@"24",
-        }, .init(z_pixmap_24.ptr, @intCast(z_pixmap_24.len)));
-        try sink.FreeGc(gc);
+        try x11.render.AddGlyphsFinish(sink, pad_len);
 
         // Add the glyph to the cache
         self.cached_glyphs.set(glyph_index);
 
-        break :rasterize pixmap;
+        break :rasterize true;
     };
 
-    // Return the glyph
     return .{
-        .pixmap = pixmap,
+        .has_pixels = has_pixels,
         .measurement = measurement,
     };
-}
-
-// Fast but exact unorm to float.
-fn unormToFloat(u: u8) f32 {
-    const max: f32 = @floatFromInt(255);
-    const r: f32 = 1.0 / (3.0 * max);
-    return @as(f32, @floatFromInt(u)) * 3.0 * r;
-}
-
-// Exact float to unorm.
-fn floatToUnorm(f: f32) u8 {
-    return @intFromFloat(f * 255 + 0.5);
 }
