@@ -119,9 +119,6 @@ pub const TextWriter = struct {
 
     /// Flushes and then advances the cursor by a newline.
     pub fn newline(self: *TextWriter) Error!void {
-        try self.interface.flush();
-        self.cursor.x = self.left_margin;
-        self.cursor.y += self.font.getLineAdvance();
         try self.setCursor(.{
             .x = self.left_margin,
             .y = self.cursor.y + self.font.getLineAdvance(),
