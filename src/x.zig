@@ -5893,31 +5893,38 @@ pub const Presenter = struct {
         p.presenting = true;
     }
 
-    pub fn handleGenericEvent(
-        p: *Presenter,
-        source: *Source,
-        event: *const servermsg.GenericEvent,
-    ) error{ ReadFailed, EndOfStream }!bool {
-        if (event.isPresentCompleteNotify(p.opcode_base)) {
-            const complete = try source.read3Full(.present_CompleteNotify);
-            std.debug.assert(complete.event_id == p.event_id);
-            std.debug.assert(complete.window == p.window_id);
-            if (complete.serial == p.serial) {
-                p.presenting = false;
-            }
-            return true;
-        } else if (event.isPresentIdleNotify(p.opcode_base)) {
-            const idle = try source.read3Full(.present_IdleNotify);
-            std.debug.assert(idle.event_id == p.event_id);
-            std.debug.assert(idle.window == p.window_id);
-            if (idle.pixmap == p.pixmaps[0]) {
-                p.pixmap_idle[0] = true;
-            } else {
-                std.debug.assert(idle.pixmap == p.pixmaps[1]);
-                p.pixmap_idle[1] = true;
-            }
-            return true;
+    pub fn handleCompleteNotify(p: *Presenter, complete: stage3.present_CompleteNotify) error{Protocol}!bool {
+        if (complete.event_id != p.event_id) return false;
+        if (complete.window != p.window_id) {
+            log.err(
+                "present CompleteNotify: event_id matches but window doesn't: expected {f} got {f}",
+                .{ p.window_id, complete.window },
+            );
+            return error.Protocol;
         }
-        return false;
+        if (complete.serial == p.serial) {
+            p.presenting = false;
+        }
+        return true;
+    }
+
+    pub fn handleIdleNotify(p: *Presenter, idle: stage3.present_IdleNotify) error{Protocol}!bool {
+        if (idle.event_id != p.event_id) return false;
+        if (idle.window != p.window_id) {
+            log.err(
+                "present IdleNotify: event_id matches but window doesn't: expected {f} got {f}",
+                .{ p.window_id, idle.window },
+            );
+            return error.Protocol;
+        }
+        if (idle.pixmap == p.pixmaps[0]) {
+            p.pixmap_idle[0] = true;
+        } else if (idle.pixmap == p.pixmaps[1]) {
+            p.pixmap_idle[1] = true;
+        } else {
+            log.err("present IdleNotify: unexpected pixmap {f}", .{idle.pixmap});
+            return error.Protocol;
+        }
+        return true;
     }
 };

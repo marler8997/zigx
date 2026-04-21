@@ -185,10 +185,17 @@ fn run(
             },
             .GenericEvent => {
                 const event = try source.read2(.GenericEvent);
-                if (!try presenter.handleGenericEvent(source, &event)) std.debug.panic(
-                    "unexpected GenericEvent {}",
-                    .{event},
-                );
+                if (event.isPresentCompleteNotify(presenter.opcode_base)) {
+                    const complete = try source.read3Full(.present_CompleteNotify);
+                    if (!try presenter.handleCompleteNotify(
+                        complete,
+                    )) std.debug.panic("unexpected {}", .{complete});
+                } else if (event.isPresentIdleNotify(presenter.opcode_base)) {
+                    const idle = try source.read3Full(.present_IdleNotify);
+                    if (!try presenter.handleIdleNotify(
+                        idle,
+                    )) std.debug.panic("unexpected {}", .{idle});
+                } else std.debug.panic("unexpected {}", .{event});
             },
             .MappingNotify => try source.discardRemaining(),
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
