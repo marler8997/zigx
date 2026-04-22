@@ -59,6 +59,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("examples/runall.zig"),
             .target = target,
             .optimize = .Debug,
+            .single_threaded = true,
         }),
     });
     const run_examples = b.addRunArtifact(examples_exe);
@@ -74,6 +75,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("examples/" ++ example.name ++ ".zig"),
             .optimize = optimize,
             .target = target,
+            .single_threaded = true,
             .imports = &.{
                 .{ .name = "x11", .module = x_mod },
             },
@@ -191,6 +193,7 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path("src/xauth.zig"),
                 .target = target,
                 .optimize = optimize,
+                .single_threaded = true,
                 .imports = &.{
                     .{ .name = "x11", .module = x_mod },
                 },
