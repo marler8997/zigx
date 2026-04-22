@@ -26,11 +26,11 @@ fn sendAll(sock: std.posix.socket_t, data: []const u8) !void {
 export fn ZigXSetErrorHandler(handler: *const fn (*anyopaque, [*:0]const u8) callconv(.c) void, ctx: *anyopaque) void {
     _ = handler;
     _ = ctx;
-    std.log.err("TODO: set error handler!", .{});
+    x11.log.err("TODO: set error handler!", .{});
 }
 fn reportErrorRaw(comptime fmt: []const u8, args: anytype) void {
     // TODO: report to handler
-    std.log.err(fmt, args);
+    x11.log.err(fmt, args);
 }
 fn reportError(comptime fmt: []const u8, args: anytype) error{Reported} {
     reportErrorRaw(fmt, args);
@@ -62,7 +62,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
     // TODO: x11.getDisplay allocates on windows, maybe we cache it on windows?
     // TODO: should an empty string be handled like null as well?
     const display_spec = if (display_spec_opt) |d| std.mem.span(d) else x11.getDisplay();
-    std.log.info("connecting to DISPLAY '{s}'", .{display_spec});
+    x11.log.info("connecting to DISPLAY '{s}'", .{display_spec});
 
     const parsed_display = x11.parseDisplay(display_spec) catch |err|
         return reportError("invalid DISPLAY '{s}': {s}", .{ display_spec, @errorName(err) });
@@ -95,14 +95,14 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
             return reportError("failed to read connect setup with {s}", .{@errorName(err)});
         switch (connect_setup_header.status) {
             .failed => {
-                std.log.debug("no auth connect setup failed, version={}.{}, reason='{f}'", .{
+                x11.log.debug("no auth connect setup failed, version={}.{}, reason='{f}'", .{
                     connect_setup_header.proto_major_ver,
                     connect_setup_header.proto_minor_ver,
                     connect_setup_header.readFailReason(reader.interface()),
                 });
             },
             .authenticate => {
-                std.log.debug("no auth connect setup failed with AUTHENTICATE", .{});
+                x11.log.debug("no auth connect setup failed with AUTHENTICATE", .{});
             },
             .success => break :blk connect_setup_header,
             else => |status| return reportError(
@@ -117,22 +117,22 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
     defer c_allocator.free(buf);
 
     const connect_setup = x11.ConnectSetup{ .buf = buf };
-    std.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
+    x11.log.debug("connect setup reply is {} bytes", .{connect_setup.buf.len});
     var reader: x11.SocketReader = .init(sock);
     x11.readFull(reader.interface(), connect_setup.buf) catch |err|
         return reportError("failed to read connect setup with {s}", .{@errorName(err)});
 
     const fixed = connect_setup.fixed();
     inline for (@typeInfo(@TypeOf(fixed.*)).@"struct".fields) |field| {
-        std.log.debug("{s}: {any}", .{ field.name, @field(fixed, field.name) });
+        x11.log.debug("{s}: {any}", .{ field.name, @field(fixed, field.name) });
     }
-    //std.log.debug("vendor: {s}", .{try connect_setup.getVendorSlice(fixed.vendor_len)});
+    //x11.log.debug("vendor: {s}", .{try connect_setup.getVendorSlice(fixed.vendor_len)});
     const format_list_offset = x11.ConnectSetup.getFormatListOffset(fixed.vendor_len);
     const format_list_limit = x11.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
-    std.log.debug("fmt list off={} limit={}", .{ format_list_offset, format_list_limit });
+    x11.log.debug("fmt list off={} limit={}", .{ format_list_offset, format_list_limit });
     //const formats = try connect_setup.getFormatList(format_list_offset, format_list_limit);
     //for (formats) |format, i| {
-    //    std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
+    //    x11.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
     //}
 
     const display = try c_allocator.create(Display);
@@ -140,14 +140,14 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
 
     const setup_screens_ptr = connect_setup.getScreensPtr(format_list_limit);
     const screens = try c_allocator.alloc(c.Screen, fixed.root_screen_count);
-    std.log.debug("screens allocated to 0x{x}", .{@intFromPtr(screens.ptr)});
+    x11.log.debug("screens allocated to 0x{x}", .{@intFromPtr(screens.ptr)});
     errdefer c_allocator.free(screens);
     for (screens, 0..) |*screen_dst, screen_index| {
         const screen_src = &setup_screens_ptr[screen_index];
         inline for (@typeInfo(@TypeOf(screen_src.*)).@"struct".fields) |field| {
-            std.log.debug("SCREEN {}| {s}: {any}", .{ screen_index, field.name, @field(screen_src, field.name) });
+            x11.log.debug("SCREEN {}| {s}: {any}", .{ screen_index, field.name, @field(screen_src, field.name) });
         }
-        std.log.debug("screen_ptr is 0x{x}", .{@intFromPtr(screen_dst)});
+        x11.log.debug("screen_ptr is 0x{x}", .{@intFromPtr(screen_dst)});
         screen_dst.* = .{
             .display = &display.public,
             .root = @intFromEnum(screen_src.root),
@@ -193,16 +193,16 @@ fn connectSetupAuth(
 
     var addr_buf: [x11.max_sock_filter_addr]u8 = undefined;
     auth_filter.applySocket(sock, &addr_buf) catch |err| {
-        std.log.warn("failed to apply socket to auth filter with {s}", .{@errorName(err)});
+        x11.log.warn("failed to apply socket to auth filter with {s}", .{@errorName(err)});
     };
 
     var auth_it = x11.AuthIterator{ .mem = auth_mapped.mem };
     while (auth_it.next() catch {
-        std.log.warn("auth file '{s}' is invalid", .{auth_filename});
+        x11.log.warn("auth file '{s}' is invalid", .{auth_filename});
         return null;
     }) |entry| {
         if (auth_filter.isFiltered(auth_mapped.mem, entry)) |reason| {
-            std.log.debug("ignoring auth because {s} does not match: {f}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
+            x11.log.debug("ignoring auth because {s} does not match: {f}", .{ @tagName(reason), entry.fmt(auth_mapped.mem) });
             continue;
         }
         const name = entry.name(auth_mapped.mem);
@@ -231,7 +231,7 @@ fn connectSetupAuth(
             return reportError("failed to read connect setup with {s}", .{@errorName(err)});
         switch (connect_setup_header.status) {
             .failed => {
-                std.log.debug("connect setup failed, version={}.{}, reason='{f}'", .{
+                x11.log.debug("connect setup failed, version={}.{}, reason='{f}'", .{
                     connect_setup_header.proto_major_ver,
                     connect_setup_header.proto_minor_ver,
                     connect_setup_header.readFailReason(reader.interface()),
@@ -239,12 +239,12 @@ fn connectSetupAuth(
                 // try the next?
             },
             .authenticate => {
-                std.log.debug("AUTHENTICATE with {f} failed", .{entry.fmt(auth_mapped.mem)});
+                x11.log.debug("AUTHENTICATE with {f} failed", .{entry.fmt(auth_mapped.mem)});
                 // try the next auth
             },
             .success => {
                 // TODO: check version?
-                std.log.debug("SUCCESS! version {}.{}", .{ connect_setup_header.proto_major_ver, connect_setup_header.proto_minor_ver });
+                x11.log.debug("SUCCESS! version {}.{}", .{ connect_setup_header.proto_major_ver, connect_setup_header.proto_minor_ver });
                 return connect_setup_header;
             },
             else => |status| return reportError(
@@ -372,7 +372,7 @@ export fn XCreateGC(
 export fn XMapRaised(display: *c.Display, window: c.Window) c_int {
     const display_full: *Display = @fieldParentPtr("public", display);
 
-    std.log.info("TODO: send ConfigureWindow stack-mode=Above", .{});
+    x11.log.info("TODO: send ConfigureWindow stack-mode=Above", .{});
 
     var write_buf: [100]u8 = undefined;
     var socket_writer = x11.socketWriter(display.fd, &write_buf);
@@ -454,7 +454,7 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
     const len = x11.readOneMsg(reader.interface(), display_full.read_buf) catch |err| handleReadError(display, reader.getError(err).?);
 
     if (len > display_full.read_buf.len) {
-        std.log.err("TODO: realloc read_buf len to be bigger", .{});
+        x11.log.err("TODO: realloc read_buf len to be bigger", .{});
         //c_allocator.realloc();
         x11.readOneMsgFinish(reader.interface(), display_full.read_buf) catch |err| handleReadError(display, reader.getError(err).?);
         @panic("todo");

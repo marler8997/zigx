@@ -231,7 +231,7 @@ pub fn synchronousQueryExtension(
     try sink.writer.flush();
     const extension, _ = try source.readSynchronousReplyFull(sink.sequence, .QueryExtension);
     const result: ?x11.Extension = try .init(extension);
-    std.log.info("extension '{s}': {?}", .{ name.nativeSlice(), result });
+    x11.log.info("extension '{s}': {?}", .{ name.nativeSlice(), result });
     return result;
 }
 

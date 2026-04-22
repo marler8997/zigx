@@ -46,7 +46,7 @@ const is_test = @import("builtin").is_test;
 pub fn init(base: x11.ResourceBase, mask: x11.ResourceMask) error{Protocol}!IdRange {
     const mask_u32: u32 = @intFromEnum(mask);
     if (mask_u32 == 0) {
-        if (!is_test) std.log.err("X11 server provided zero resource id mask", .{});
+        if (!is_test) x11.log.err("X11 server provided zero resource id mask", .{});
         return error.Protocol;
     }
     // u5 can represent all possible values since mask_u32 is not 0 so it cannot have more than 31 0's
@@ -56,7 +56,7 @@ pub fn init(base: x11.ResourceBase, mask: x11.ResourceMask) error{Protocol}!IdRa
         // Mask must have contiguous bits: shifting out trailing zeros must yield a solid run of 1s.
         const shifted = mask_u32 >> shift;
         if (shifted & (shifted + 1) != 0) {
-            if (!is_test) std.log.err("X11 server provided non-contiguous resource id mask: 0x{x}", .{mask_u32});
+            if (!is_test) x11.log.err("X11 server provided non-contiguous resource id mask: 0x{x}", .{mask_u32});
             return error.Protocol;
         }
     }
@@ -64,23 +64,23 @@ pub fn init(base: x11.ResourceBase, mask: x11.ResourceMask) error{Protocol}!IdRa
     const bit_count: u6 = @popCount(mask_u32);
     // Per the X11 spec, the mask must contain at least 18 contiguous bits.
     if (bit_count < 18) {
-        if (!is_test) std.log.err("X11 server provided resource id mask with only {} bits (need at least 18): 0x{x}", .{ bit_count, mask_u32 });
+        if (!is_test) x11.log.err("X11 server provided resource id mask with only {} bits (need at least 18): 0x{x}", .{ bit_count, mask_u32 });
         return error.Protocol;
     }
     const base_u32: u32 = @intFromEnum(base);
     // Resource IDs never have the top three bits set.
     if ((base_u32 | mask_u32) & 0xE0000000 != 0) {
-        if (!is_test) std.log.err("X11 server provided resource ids with top 3 bits set (base=0x{x}, mask=0x{x})", .{ base_u32, mask_u32 });
+        if (!is_test) x11.log.err("X11 server provided resource ids with top 3 bits set (base=0x{x}, mask=0x{x})", .{ base_u32, mask_u32 });
         return error.Protocol;
     }
     // Base can't be 0 since 0 is a placeholder for null
     if (base_u32 == 0) {
-        if (!is_test) std.log.err("X11 server provided zero resource id base", .{});
+        if (!is_test) x11.log.err("X11 server provided zero resource id base", .{});
         return error.Protocol;
     }
     // Base must not overlap with mask bits.
     if (base_u32 & mask_u32 != 0) {
-        if (!is_test) std.log.err("X11 server provided resource id base 0x{x} that overlaps with mask 0x{x}", .{ base_u32, mask_u32 });
+        if (!is_test) x11.log.err("X11 server provided resource id base 0x{x} that overlaps with mask 0x{x}", .{ base_u32, mask_u32 });
         return error.Protocol;
     }
     // Compress base: pack the non-mask bits together.

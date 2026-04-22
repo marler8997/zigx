@@ -58,12 +58,12 @@ pub fn mainCompat(environ: std16.process.Environ, io: std16.Io) !void {
             error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         }) orelse {
-            std.log.err("no screen?", .{});
+            x11.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
         const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
         if (id_range.capacity() < Ids.needed_capacity) {
-            std.log.err("X server id range capacity {} is less than needed {}", .{ id_range.capacity(), Ids.needed_capacity });
+            x11.log.err("X server id range capacity {} is less than needed {}", .{ id_range.capacity(), Ids.needed_capacity });
             std.process.exit(0xff);
         }
         break :blk .{

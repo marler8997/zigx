@@ -87,12 +87,12 @@ fn mainCompat(args_it: *ArgsIterator, environ: std16.process.Environ, io: std16.
             error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         }) orelse {
-            std.log.err("no screen?", .{});
+            x11.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
         const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
         if (id_range.capacity() < Ids.needed_capacity) {
-            std.log.err("X server id range capacity {} is less than needed {}", .{ id_range.capacity(), Ids.needed_capacity });
+            x11.log.err("X server id range capacity {} is less than needed {}", .{ id_range.capacity(), Ids.needed_capacity });
             std.process.exit(0xff);
         }
         break :blk .{
@@ -132,12 +132,12 @@ fn run(
     opt: Options,
 ) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
     const present_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.present.name) orelse {
-        std.log.err("Present extension not available", .{});
+        x11.log.err("Present extension not available", .{});
         std.process.exit(0xff);
     };
 
     const render_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.render.name) orelse {
-        std.log.err("RENDER extension not available", .{});
+        x11.log.err("RENDER extension not available", .{});
         std.process.exit(0xff);
     };
 
@@ -179,11 +179,11 @@ fn run(
         try pict_reader.discardRemaining(source);
         break :blk .{
             maybe_visual_format orelse {
-                std.log.err("no PictFormat for root visual {f}", .{root.visual});
+                x11.log.err("no PictFormat for root visual {f}", .{root.visual});
                 std.process.exit(0xff);
             },
             maybe_a8_format orelse {
-                std.log.err("no A8 PictFormat found", .{});
+                x11.log.err("no A8 PictFormat found", .{});
                 std.process.exit(0xff);
             },
         };
@@ -557,7 +557,7 @@ fn underline(
 }
 
 fn errExit(comptime fmt: []const u8, args: anytype) noreturn {
-    std.log.err(fmt, args);
+    x11.log.err(fmt, args);
     std.process.exit(0xff);
 }
 

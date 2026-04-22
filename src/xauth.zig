@@ -48,17 +48,17 @@ fn mainCompat(args_it: *ArgsIterator, environ: std16.process.Environ, io: std16.
         while (args_it.next()) |arg| {
             if (!std.mem.startsWith(u8, arg, "-")) {
                 if (maybe_cmd != null) {
-                    std.log.err("too many cmdline args", .{});
+                    x11.log.err("too many cmdline args", .{});
                     std.process.exit(1);
                 }
                 maybe_cmd = arg;
             } else if (std.mem.eql(u8, arg, "-f")) {
                 opt.auth_filename = args_it.next() orelse {
-                    std.log.err("missing authfilename after option -f", .{});
+                    x11.log.err("missing authfilename after option -f", .{});
                     std.process.exit(1);
                 };
             } else {
-                std.log.err("invalid option \"{s}\"", .{arg});
+                x11.log.err("invalid option \"{s}\"", .{arg});
                 std.process.exit(1);
             }
         }
@@ -69,7 +69,7 @@ fn mainCompat(args_it: *ArgsIterator, environ: std16.process.Environ, io: std16.
     } else if (std.mem.eql(u8, cmd, "list")) {
         try list(environ, io, opt);
     } else {
-        std.log.err("invalid command \"{s}\"", .{cmd});
+        x11.log.err("invalid command \"{s}\"", .{cmd});
         std.process.exit(1);
     }
 }
@@ -77,7 +77,7 @@ fn mainCompat(args_it: *ArgsIterator, environ: std16.process.Environ, io: std16.
 fn list(environ: std16.process.Environ, io: std16.Io, opt: Opt) !void {
     if (opt.auth_filename) |filename| {
         const file = std16.Io.Dir.cwd().openFile(io, filename, .{}) catch |err| {
-            std.log.err("open '{s}' failed with {s}", .{ filename, @errorName(err) });
+            x11.log.err("open '{s}' failed with {s}", .{ filename, @errorName(err) });
             std.process.exit(1);
         };
         defer file.close(io);
@@ -89,14 +89,14 @@ fn list(environ: std16.process.Environ, io: std16.Io, opt: Opt) !void {
             @typeInfo(x11.AuthFileKind).@"enum".fields,
         )) |kind| {
             if (x11.getAuthFilename(environ, kind, &filename_buf) catch |err| {
-                std.log.err("get auth filename ({s}) failed with {s}", .{ kind.context(), @errorName(err) });
+                x11.log.err("get auth filename ({s}) failed with {s}", .{ kind.context(), @errorName(err) });
                 continue;
             }) |filename| {
                 if (std16.Io.Dir.cwd().openFile(io, filename, .{})) |file| {
                     defer file.close(io);
                     try list2(io, file);
                 } else |err| {
-                    std.log.info("open '{s}' failed with {s}", .{ filename, @errorName(err) });
+                    x11.info("open '{s}' failed with {s}", .{ filename, @errorName(err) });
                 }
             }
         }
