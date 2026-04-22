@@ -1,5 +1,8 @@
 const std = @import("std");
+const std16 = if (zig_atleast_16) std else @import("std16");
 const x11 = @import("x11");
+
+const zig_atleast_16 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
 
 const global = struct {
     pub var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -24,76 +27,74 @@ fn usage() void {
     , .{});
 }
 
-pub fn main() !void {
-    const all_args = try std.process.argsAlloc(global.arena);
+const ArgsIterator = if (zig_atleast_16) std.process.Args.Iterator else std.process.ArgIterator;
+
+pub const main = if (zig_atleast_16) mainAtleast16 else mainBefore16;
+fn mainAtleast16(init: std.process.Init) !void {
+    var args_it = try init.minimal.args.iterateAllocator(init.arena.allocator());
+    try mainCompat(&args_it, init.minimal.environ, init.io);
+}
+fn mainBefore16() !void {
+    var args_it: std.process.ArgIterator = try .initWithAllocator(global.arena);
     // no need to free
+    try mainCompat(&args_it, .{}, .legacy);
+}
+fn mainCompat(args_it: *ArgsIterator, environ: std16.process.Environ, io: std16.Io) !void {
+    _ = args_it.next();
 
     var opt = Opt{};
-    const args = blk: {
-        var new_arg_count: usize = 0;
-        var arg_index: usize = 1;
-        while (arg_index < all_args.len) : (arg_index += 1) {
-            const arg = all_args[arg_index];
+    const cmd: []const u8 = blk: {
+        var maybe_cmd: ?[]const u8 = null;
+        while (args_it.next()) |arg| {
             if (!std.mem.startsWith(u8, arg, "-")) {
-                all_args[new_arg_count] = arg;
-                new_arg_count += 1;
-            } else if (std.mem.eql(u8, arg, "-f")) {
-                arg_index += 1;
-                if (arg_index >= all_args.len) {
-                    std.log.err("missing authfilename after option -f", .{});
+                if (maybe_cmd != null) {
+                    std.log.err("too many cmdline args", .{});
                     std.process.exit(1);
                 }
-                opt.auth_filename = all_args[arg_index];
+                maybe_cmd = arg;
+            } else if (std.mem.eql(u8, arg, "-f")) {
+                opt.auth_filename = args_it.next() orelse {
+                    std.log.err("missing authfilename after option -f", .{});
+                    std.process.exit(1);
+                };
             } else {
                 std.log.err("invalid option \"{s}\"", .{arg});
                 std.process.exit(1);
             }
         }
-        break :blk all_args[0..new_arg_count];
+        break :blk maybe_cmd orelse return usage();
     };
-    if (args.len == 0) {
-        usage();
-        return;
-    }
-    const cmd = args[0];
-    const cmd_args = args[1..];
-
     if (std.mem.eql(u8, cmd, "help")) {
         usage();
     } else if (std.mem.eql(u8, cmd, "list")) {
-        try list(opt, cmd_args);
+        try list(environ, io, opt);
     } else {
         std.log.err("invalid command \"{s}\"", .{cmd});
         std.process.exit(1);
     }
 }
 
-fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
-    if (cmd_args.len != 0) {
-        std.log.err("list command doesn't accept any arguments", .{});
-        std.process.exit(1);
-    }
-
+fn list(environ: std16.process.Environ, io: std16.Io, opt: Opt) !void {
     if (opt.auth_filename) |filename| {
-        const file = std.fs.cwd().openFile(filename, .{}) catch |err| {
+        const file = std16.Io.Dir.cwd().openFile(io, filename, .{}) catch |err| {
             std.log.err("open '{s}' failed with {s}", .{ filename, @errorName(err) });
             std.process.exit(1);
         };
-        defer file.close();
-        try list2(file);
+        defer file.close(io);
+        try list2(io, file);
     } else {
         var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
         for (std.enums.valuesFromFields(
             x11.AuthFileKind,
             @typeInfo(x11.AuthFileKind).@"enum".fields,
         )) |kind| {
-            if (x11.getAuthFilename(kind, &filename_buf) catch |err| {
+            if (x11.getAuthFilename(environ, kind, &filename_buf) catch |err| {
                 std.log.err("get auth filename ({s}) failed with {s}", .{ kind.context(), @errorName(err) });
                 continue;
             }) |filename| {
-                if (std.fs.cwd().openFile(filename, .{})) |file| {
-                    defer file.close();
-                    try list2(file);
+                if (std16.Io.Dir.cwd().openFile(io, filename, .{})) |file| {
+                    defer file.close(io);
+                    try list2(io, file);
                 } else |err| {
                     std.log.info("open '{s}' failed with {s}", .{ filename, @errorName(err) });
                 }
@@ -102,19 +103,19 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
     }
 }
 
-fn list2(file: std.fs.File) !void {
+fn list2(io: std16.Io, file: std16.Io.File) !void {
     var file_read_buf: [4096]u8 = undefined;
-    var file_reader = file.reader(&file_read_buf);
+    var file_reader = file.reader(io, &file_read_buf);
     var reader: x11.AuthReader = .{ .reader = &file_reader.interface };
-    list3(&reader) catch |err| return switch (err) {
+    list3(io, &reader) catch |err| return switch (err) {
         error.ReadFailed => file_reader.err orelse error.ReadFailed,
         else => |e| e,
     };
 }
 
-fn list3(reader: *x11.AuthReader) !void {
+fn list3(io: std16.Io, reader: *x11.AuthReader) !void {
     var stdout_buffer: [1000]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std16.Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
     var entry_index: u32 = 0;
     while (true) : (entry_index += 1) {

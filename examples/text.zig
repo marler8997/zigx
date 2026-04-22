@@ -42,45 +42,49 @@ const Options = struct {
     size: f32 = 24.0,
 };
 
-pub fn main() !void {
+const ArgsIterator = if (zig_atleast_16) std.process.Args.Iterator else std.process.ArgIterator;
+
+pub const main = if (zig_atleast_16) mainAtleast16 else mainBefore16;
+fn mainAtleast16(init: std.process.Init) !void {
+    var args_it = try init.minimal.args.iterateAllocator(init.arena.allocator());
+    try mainCompat(&args_it, init.minimal.environ, init.io);
+}
+fn mainBefore16() !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var args_it: std.process.ArgIterator = try .initWithAllocator(arena.allocator());
+    try mainCompat(&args_it, .{}, .legacy);
+}
+fn mainCompat(args_it: *ArgsIterator, environ: std16.process.Environ, io: std16.Io) !void {
+    _ = args_it.next(); // skip program name
+
     var arena_instance: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
-    // no need to deinit
-    const cmdline = try Cmdline.alloc(arena_instance.allocator());
 
     var opt: Options = .{};
 
-    {
-        var i: usize = 1;
-        while (i < cmdline.len()) : (i += 1) {
-            const arg = cmdline.arg(i);
-            if (std.mem.eql(u8, arg, "--font")) {
-                i += 1;
-                if (i == cmdline.len()) errExit("--font missing arg", .{});
-                opt.font_file = cmdline.arg(i);
-            } else if (std.mem.eql(u8, arg, "--size")) {
-                i += 1;
-                if (i == cmdline.len()) errExit("--size missing arg", .{});
-                const size_str = cmdline.arg(i);
-                opt.size = std.fmt.parseFloat(f32, size_str) catch errExit("invalid --size '{s}'", .{size_str});
-            } else errExit("unknown cmdline option '{s}'", .{arg});
-        }
+    while (args_it.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--font")) {
+            opt.font_file = args_it.next() orelse errExit("--font missing arg", .{});
+        } else if (std.mem.eql(u8, arg, "--size")) {
+            const size_str = args_it.next() orelse errExit("--size missing arg", .{});
+            opt.size = std.fmt.parseFloat(f32, size_str) catch errExit("invalid --size '{s}'", .{size_str});
+        } else errExit("unknown cmdline option '{s}'", .{arg});
     }
 
     try x11.wsaStartup();
 
-    const stream: std.net.Stream, const ids: Ids, const root: Root = blk: {
+    const socket: x11.Socket, const ids: Ids, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
-        var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
-        errdefer x11.disconnect(socket_reader.getStream());
+        var socket_reader, const used_auth = try x11.draft.connect(io, environ, &read_buffer);
+        errdefer x11.disconnect(io, socket_reader.socket);
         _ = used_auth;
-        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
-            error.ReadFailed => return socket_reader.getError().?,
+        const setup = x11.readSetupSuccess(&socket_reader.interface) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         };
         std.log.info("setup reply {f}", .{setup});
-        var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+        var source: x11.Source = .initFinishSetup(&socket_reader.interface, &setup);
         const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
-            error.ReadFailed => return socket_reader.getError().?,
+            error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         }) orelse {
             std.log.err("no screen?", .{});
@@ -92,7 +96,8 @@ pub fn main() !void {
             std.process.exit(0xff);
         }
         break :blk .{
-            socket_reader.getStream(), .{ .range = id_range }, .{
+            socket_reader.socket, .{ .range = id_range },
+            .{
                 .window = screen.root,
                 .visual = screen.root_visual,
                 .depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(
@@ -102,22 +107,23 @@ pub fn main() !void {
             },
         };
     };
-    defer x11.disconnect(stream);
+    defer x11.disconnect(io, socket);
 
     var write_buffer: [1000]u8 = undefined;
     var read_buffer: [1000]u8 = undefined;
-    var socket_writer = x11.socketWriter(stream, &write_buffer);
-    var socket_reader = x11.socketReader(stream, &read_buffer);
+    var socket_writer = x11.socketWriter(io, socket, &write_buffer);
+    var socket_reader = x11.socketReader(io, socket, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
-    var source: x11.Source = .initAfterSetup(socket_reader.interface());
-    run(ids, &root, &sink, &source, &arena_instance, opt) catch |err| switch (err) {
+    var source: x11.Source = .initAfterSetup(&socket_reader.interface);
+    run(io, ids, &root, &sink, &source, &arena_instance, opt) catch |err| switch (err) {
         error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
-        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.err),
         error.UnexpectedMessage => |e| return e,
     };
 }
 
 fn run(
+    io: std16.Io,
     ids: Ids,
     root: *const Root,
     sink: *x11.RequestSink,
@@ -246,10 +252,11 @@ fn run(
 
     const ttf_content = blk: {
         if (opt.font_file) |font_file| {
-            break :blk std.fs.cwd().readFileAlloc(
-                arena_instance.allocator(),
+            break :blk std16.Io.Dir.cwd().readFileAlloc(
+                io,
                 font_file,
-                std.math.maxInt(usize),
+                arena_instance.allocator(),
+                .unlimited,
             ) catch |e| errExit(
                 "read '{s}' failed with {s}",
                 .{ font_file, @errorName(e) },
@@ -554,8 +561,12 @@ fn errExit(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(0xff);
 }
 
+const zig_atleast_16 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
+
 const std = @import("std");
+const std16 = if (zig_atleast_16) std else @import("std16");
 const x11 = @import("x11");
+
 const xtt = @import("xtt");
 const XY = x11.XY;
 const assert = std.debug.assert;

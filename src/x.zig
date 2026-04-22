@@ -27,6 +27,7 @@
 
 const zigversion = @import("zigversion");
 const std = @import("std");
+const std16 = if (zig_atleast_16) std else @import("std16");
 const stdext = @import("stdext.zig");
 const testing = std.testing;
 const builtin = @import("builtin");
@@ -66,30 +67,27 @@ pub const Charset = charset.Charset;
 pub const Slice = zigversion.Slice;
 pub const SliceWithMaxLen = zigversion.SliceWithMaxLen;
 pub const keymap = @import("keymap.zig");
+pub const SocketReader = @import("SocketReader.zig");
+pub const SocketWriter = @import("SocketWriter.zig");
 
 pub const log = std.log.scoped(.x11);
 
-pub const zig_atleast_15_3 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 3 }) != .lt;
+pub const zig_atleast_16 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
+
+const IpAddress = if (zig_atleast_16) std.Io.net.IpAddress else void;
+
+pub const Stream = std16.Io.net.Stream;
+pub const Socket = if (zig_atleast_16) std.Io.net.Socket.Handle else std.net.Stream.Handle;
+pub const FileReaderError = if (zig_atleast_16) std.Io.File.Reader.Error else std.fs.File.ReadError;
 
 // TODO: drop this function when support for 0.15 is dropped.
-pub fn socketWriter(stream: std.net.Stream, buffer: []u8) std.net.Stream.Writer {
-    return stream.writer(buffer);
+pub fn socketWriter(io: std16.Io, socket: Socket, buffer: []u8) SocketWriter {
+    return .init(socket, io, buffer);
 }
 
 // TODO: drop this function when support for 0.15 is dropped.
-pub fn socketReader(stream: std.net.Stream, buffer: []u8) std.net.Stream.Reader {
-    switch (builtin.os.tag) {
-        .windows => {
-            // workaround https://github.com/ziglang/zig/issues/25620
-            if (!zig_atleast_15_3) {
-                var reader = stream.reader(buffer);
-                reader.interface_state.vtable = &@import("netpatch.zig").vtable;
-                return reader;
-            }
-        },
-        else => {},
-    }
-    return stream.reader(buffer);
+pub fn socketReader(io: std16.Io, socket: Socket, buffer: []u8) SocketReader {
+    return .init(socket, io, buffer);
 }
 
 const x_test = @import("test/x_test.zig");
@@ -217,24 +215,29 @@ pub const GetDisplayError = error{
 /// Returns the DISPLAY environment variable for any platform.
 /// On windows it just uses the page allocator and leaks the result.
 /// Use getDisplayPosix which has no possible error for non-windows systems.
-pub fn getDisplay() GetDisplayError!Display {
+pub fn getDisplay(environ: std16.process.Environ) GetDisplayError!Display {
     if (builtin.os.tag == .windows) {
         // we'll just make an allocator and never free it, no
         // big deal
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        return .{ .string = std.process.getEnvVarOwned(arena.allocator(), "DISPLAY") catch |err| switch (err) {
+        return .{ .string = environ.getAlloc(arena.allocator(), "DISPLAY") catch |err| if (zig_atleast_16) switch (err) {
+            error.EnvironmentVariableMissing => null,
+            error.OutOfMemory,
+            error.InvalidWtf8,
+            => |e| return e,
+        } else switch (err) {
             error.EnvironmentVariableNotFound => null,
             error.OutOfMemory,
             error.InvalidWtf8,
             => |e| return e,
         } };
     }
-    return getDisplayPosix();
+    return getDisplayPosix(environ);
 }
 
 /// Posix-specific function to get DISPLAY which cannot fail.
-pub fn getDisplayPosix() Display {
-    return .{ .string = posix.getenv("DISPLAY") };
+pub fn getDisplayPosix(environ: std16.process.Environ) Display {
+    return .{ .string = environ.getPosix("DISPLAY") };
 }
 
 pub const Protocol = enum {
@@ -341,16 +344,59 @@ pub fn parseDisplay(display: Display) InvalidDisplayError!ParsedDisplay {
     return parsed;
 }
 
+pub const Address = if (zig_atleast_16) union(enum) {
+    in: std.Io.net.Ip4Address,
+    in6: std.Io.net.Ip6Address,
+    un: if (std.Io.net.has_unix_sockets) posix.sockaddr.un else void,
+
+    pub fn initIp4(addr: [4]u8, port: u16) Address {
+        return .{ .in = .{ .bytes = addr, .port = port } };
+    }
+    pub fn initIp6(addr: [16]u8, port: u16, flowinfo: u32, scope_id: u32) Address {
+        return .{ .in6 = std.Io.net.Ip6Address.init(addr, port, flowinfo, scope_id) };
+    }
+
+    pub fn initUnix(path: []const u8) error{NameTooLong}!Address {
+        var result: Address = .{ .un = .{ .family = posix.AF.UNIX, .path = undefined } };
+        if (path.len + 1 > result.un.path.len) return error.NameTooLong;
+        @memcpy(result.un.path[0..path.len], path);
+        result.un.path[path.len] = 0;
+        return result;
+    }
+
+    pub fn parseIp4(buf: []const u8, port: u16) !Address {
+        return .{ .in = try std.Io.net.Ip4Address.parse(buf, port) };
+    }
+    pub fn parseIp6(buf: []const u8, port: u16) !Address {
+        return .{ .in6 = try std.Io.net.Ip6Address.parse(buf, port) };
+    }
+
+    pub fn fromIpAddress(ip: std.Io.net.IpAddress) Address {
+        return switch (ip) {
+            .ip4 => |a| .{ .in = a },
+            .ip6 => |a| .{ .in6 = a },
+        };
+    }
+
+    pub fn format(self: Address, w: *std.Io.Writer) error{WriteFailed}!void {
+        switch (self) {
+            .in => |ip4| try ip4.format(w),
+            .in6 => |ip6| try ip6.format(w),
+            .un => |ua| try w.writeAll(std.mem.sliceTo(&ua.path, 0)),
+        }
+    }
+} else std.net.Address;
+
 pub const Host = union(enum) {
-    address: std.net.Address,
+    address: Address,
     domain_name: struct {
         string: []const u8,
         port: u16,
     },
     pub fn initDomainName(host: []const u8, port: u16) Host {
         std.debug.assert(host.len != 0);
-        if (std.net.Address.parseIp4(host, port)) |addr| return .{ .address = addr } else |_| {}
-        if (std.net.Address.parseIp6(host, port)) |addr| return .{ .address = addr } else |_| {}
+        if (Address.parseIp4(host, port)) |addr| return .{ .address = addr } else |_| {}
+        if (Address.parseIp6(host, port)) |addr| return .{ .address = addr } else |_| {}
         // TODO: should/could we check if this is a valid hostname?
         //       maybe not since we might detect this later during DNS resolution?
         return .{ .domain_name = .{ .string = host, .port = port } };
@@ -363,7 +409,7 @@ pub const Host = union(enum) {
     }
 };
 
-fn localhostIp4(port: u16) std.net.Address {
+fn localhostIp4(port: u16) Address {
     return .initIp4([_]u8{ 127, 0, 0, 1 }, port);
 }
 
@@ -375,13 +421,13 @@ pub fn getHost(display: Display, parsed: *const ParsedDisplay) error{X11BadDispl
                 log.err("not sure if it's valid for DISPLAY to host with the unix protocol", .{});
                 return error.X11BadDisplay;
             }
-            var addr: std.net.Address = .{ .un = .{ .family = posix.AF.UNIX, .path = undefined } };
+            var host: Host = .{ .address = .{ .un = .{ .family = posix.AF.UNIX, .path = undefined } } };
             _ = std.fmt.bufPrintZ(
-                &addr.un.path,
+                &host.address.un.path,
                 "/tmp/.X11-unix/X{d}",
                 .{@intFromEnum(parsed.display_num)},
             ) catch unreachable;
-            return .{ .address = addr };
+            return host;
         },
         .tcp, .inet => if (host_or_empty.len == 0) return .{
             .address = localhostIp4(parsed.display_num.asPort()),
@@ -401,7 +447,7 @@ pub fn getHost(display: Display, parsed: *const ParsedDisplay) error{X11BadDispl
         }
         if (host_or_empty[0] == '/') {
             // TODO: should we check if this file exists?
-            return .{ .address = std.net.Address.initUnix(host_or_empty) catch |e| switch (e) {
+            return .{ .address = Address.initUnix(host_or_empty) catch |e| switch (e) {
                 error.NameTooLong => {
                     log.err("unix socket path '{s}' is too long ({})", .{ host_or_empty, host_or_empty.len });
                     return error.X11BadDisplay;
@@ -418,7 +464,7 @@ pub fn getHost(display: Display, parsed: *const ParsedDisplay) error{X11BadDispl
             std.process.exit(0xff);
         }
 
-        var addr: std.net.Address = .{ .un = .{ .family = posix.AF.UNIX, .path = undefined } };
+        var addr: Address = .{ .un = .{ .family = posix.AF.UNIX, .path = undefined } };
         _ = std.fmt.bufPrintZ(
             &addr.un.path,
             "/tmp/.X11-unix/X{d}",
@@ -446,11 +492,13 @@ pub const AuthFileKind = enum {
 /// Note that if an authentication fails, it will reconnect and reset
 /// the given IO.
 pub const Authenticator = struct {
+    environ: std16.process.Environ,
+    io: std16.Io,
     display: Display,
     parsed_display: *const ParsedDisplay,
     host: *const Host,
-    address: *const std.net.Address,
-    stream: std.net.Stream,
+    address: *const Address,
+    socket: Socket,
     stream_read_buffer: []u8,
     filename_buffer: []u8,
     order: Order,
@@ -461,7 +509,7 @@ pub const Authenticator = struct {
     need_reconnect: bool = false,
 
     pub fn deinit(authenticator: *Authenticator) void {
-        authenticator.state.deinit();
+        authenticator.state.deinit(authenticator.io);
         authenticator.* = undefined;
     }
 
@@ -500,15 +548,15 @@ pub const Authenticator = struct {
         connect: AuthIndex,
         read_file: ReadFile,
         done: DoneReason,
-        pub fn deinit(state: *State) void {
+        pub fn deinit(state: *State, io: std16.Io) void {
             switch (state.*) {
                 .connect => {},
-                .read_file => |*r| r.close(),
+                .read_file => |*r| r.close(io),
                 .done => {},
             }
         }
-        pub fn update(state: *State, new_state: State) void {
-            state.deinit();
+        pub fn update(state: *State, io: std16.Io, new_state: State) void {
+            state.deinit(io);
             state.* = new_state;
         }
     };
@@ -517,7 +565,7 @@ pub const Authenticator = struct {
         no_more_auth,
     };
 
-    pub const Success = struct { std.net.Stream.Reader, bool };
+    pub const Success = struct { SocketReader, bool };
 
     pub const Event = union(enum) {
         reply: union(enum) {
@@ -536,15 +584,15 @@ pub const Authenticator = struct {
         open_auth_file_error: struct {
             kind: AuthFileKind,
             filename: []const u8,
-            err: std.fs.File.OpenError,
+            err: std16.Io.File.OpenError,
         },
         auth_file_opened: struct {
             kind: AuthFileKind,
             filename: []const u8,
         },
         io_error: union(enum) {
-            write_error: std.net.Stream.WriteError,
-            read_error: (error{EndOfStream} || std.net.Stream.ReadError),
+            write_error: std16.Io.net.Stream.Writer.Error,
+            read_error: (error{EndOfStream} || std16.Io.net.Stream.Reader.Error),
             protocol,
         },
     };
@@ -553,12 +601,12 @@ pub const Authenticator = struct {
         auth_index: AuthIndex,
         auth_file_kind: AuthFileKind,
         filename: []const u8,
-        file: std.fs.File,
+        file: std16.Io.File,
         read_buf: [400]u8 = undefined,
-        file_reader: std.fs.File.Reader,
+        file_reader: std16.Io.File.Reader,
         reader: AuthReader,
-        pub fn close(self: *ReadFile) void {
-            self.file.close();
+        pub fn close(self: *ReadFile, io: std16.Io) void {
+            self.file.close(io);
         }
     };
 
@@ -567,41 +615,42 @@ pub const Authenticator = struct {
             .connect => |index| switch (authFromIndex(authenticator.order, index)) {
                 .no_auth => {
                     authenticator.connect() catch |e| {
-                        authenticator.state.update(.{ .done = .{ .reconnect_error = e } });
+                        authenticator.state.update(authenticator.io, .{ .done = .{ .reconnect_error = e } });
                         continue;
                     };
-                    authenticator.state.update(index.nextAuthState());
+                    authenticator.state.update(authenticator.io, index.nextAuthState());
                     authenticator.need_reconnect = true;
                     log.info("sending setup with no auth...", .{});
-                    writeSetupNoAuth(authenticator.stream) catch |err| return .{
+                    writeSetupNoAuth(authenticator.io, authenticator.socket) catch |err| return .{
                         .io_error = .{ .write_error = err },
                     };
                     return authenticator.readSetupReply(.{ .used_auth = false });
                 },
                 .auth => |auth_file_kind| {
                     const maybe_auth_filename = getAuthFilename(
+                        authenticator.environ,
                         auth_file_kind,
                         authenticator.filename_buffer,
                     ) catch |err| {
-                        authenticator.state.update(index.nextAuthState());
+                        authenticator.state.update(authenticator.io, index.nextAuthState());
                         return .{ .get_auth_filename_error = .{
                             .kind = auth_file_kind,
                             .err = err,
                         } };
                     };
                     const auth_filename = maybe_auth_filename orelse {
-                        authenticator.state.update(index.nextAuthState());
+                        authenticator.state.update(authenticator.io, index.nextAuthState());
                         continue;
                     };
-                    const file = std.fs.cwd().openFile(auth_filename, .{}) catch |err| {
-                        authenticator.state.update(index.nextAuthState());
+                    const file = std16.Io.Dir.cwd().openFile(authenticator.io, auth_filename, .{}) catch |err| {
+                        authenticator.state.update(authenticator.io, index.nextAuthState());
                         return .{ .open_auth_file_error = .{
                             .kind = auth_file_kind,
                             .filename = auth_filename,
                             .err = err,
                         } };
                     };
-                    authenticator.state.update(.{ .read_file = .{
+                    authenticator.state.update(authenticator.io, .{ .read_file = .{
                         .auth_file_kind = auth_file_kind,
                         .auth_index = index,
                         .filename = auth_filename,
@@ -610,7 +659,7 @@ pub const Authenticator = struct {
                         .file_reader = undefined,
                         .reader = undefined,
                     } });
-                    authenticator.state.read_file.file_reader = .init(file, &authenticator.state.read_file.read_buf);
+                    authenticator.state.read_file.file_reader = file.reader(authenticator.io, &authenticator.state.read_file.read_buf);
                     authenticator.state.read_file.reader = .{ .reader = &authenticator.state.read_file.file_reader.interface };
                 },
             },
@@ -624,11 +673,11 @@ pub const Authenticator = struct {
                     authenticator.auth_count,
                 ) catch |err| {
                     reportAuthReadError(r.filename, err, r.file_reader.err);
-                    authenticator.state.update(r.auth_index.nextAuthState());
+                    authenticator.state.update(authenticator.io, r.auth_index.nextAuthState());
                     continue;
                 }) {
                     .eof => {
-                        authenticator.state.update(r.auth_index.nextAuthState());
+                        authenticator.state.update(authenticator.io, r.auth_index.nextAuthState());
                         continue;
                     },
                     .skip => {
@@ -642,7 +691,7 @@ pub const Authenticator = struct {
                 const auth_index = authenticator.auth_count;
                 authenticator.auth_count += 1;
                 authenticator.connect() catch |e| {
-                    authenticator.state.update(.{ .done = .{ .reconnect_error = e } });
+                    authenticator.state.update(authenticator.io, .{ .done = .{ .reconnect_error = e } });
                     continue;
                 };
                 authenticator.need_reconnect = true;
@@ -650,9 +699,10 @@ pub const Authenticator = struct {
                     "sending setup with auth {} from '{s}' ({s}) ({s})",
                     .{ auth_index, r.filename, r.auth_file_kind.context(), match.name.nativeSlice() },
                 );
-                var write_error: ?std.net.Stream.WriteError = null;
+                var write_error: ?SocketWriter.Error = null;
                 writeSetupWithAuth(
-                    authenticator.stream,
+                    authenticator.io,
+                    authenticator.socket,
                     &r.reader,
                     match.name,
                     match.data_len,
@@ -663,7 +713,7 @@ pub const Authenticator = struct {
                     } },
                     error.ReadFailed, error.EndOfStream => |e| {
                         reportAuthReadError(r.filename, e, r.file_reader.err);
-                        authenticator.state.update(r.auth_index.nextAuthState());
+                        authenticator.state.update(authenticator.io, r.auth_index.nextAuthState());
                         continue;
                     },
                 };
@@ -678,22 +728,22 @@ pub const Authenticator = struct {
     }
     fn connect(authenticator: *Authenticator) ConnectAddressError!void {
         if (authenticator.need_reconnect) {
-            const new_stream = connectAddress(authenticator.address) catch |e| {
+            const new_stream = connectAddress(authenticator.io, authenticator.address) catch |e| {
                 log.err("reconnect to {f} failed with {t}", .{ authenticator.address.*, e });
                 return e;
             };
             log.info("reconnected", .{});
-            std.debug.assert(authenticator.stream.handle != new_stream.handle);
-            disconnect(authenticator.stream);
-            authenticator.stream = new_stream;
+            std.debug.assert(authenticator.socket != new_stream);
+            disconnect(authenticator.io, authenticator.socket);
+            authenticator.socket = new_stream;
             authenticator.need_reconnect = false;
         }
     }
     fn readSetupReply(authenticator: *Authenticator, named: struct { used_auth: bool }) Event {
-        var socket_reader = socketReader(authenticator.stream, authenticator.stream_read_buffer);
-        return switch (readSetupReply1(socket_reader.interface()) catch |err| return switch (err) {
+        var socket_reader = socketReader(authenticator.io, authenticator.socket, authenticator.stream_read_buffer);
+        return switch (readSetupReply1(&socket_reader.interface) catch |err| return switch (err) {
             error.ReadFailed => .{ .io_error = .{
-                .read_error = socket_reader.getError() orelse error.Unexpected,
+                .read_error = socket_reader.err orelse error.Unexpected,
             } },
             error.EndOfStream => |e| .{ .io_error = .{
                 .read_error = e,
@@ -717,7 +767,11 @@ pub const Authenticator = struct {
             },
         };
     }
-    fn reportAuthReadError(filename: []const u8, err: error{ ReadFailed, EndOfStream }, file_error: ?std.fs.File.ReadError) void {
+    fn reportAuthReadError(
+        filename: []const u8,
+        err: error{ ReadFailed, EndOfStream },
+        file_error: ?FileReaderError,
+    ) void {
         switch (err) {
             error.ReadFailed => {
                 const e = file_error orelse error.Unexpected;
@@ -733,9 +787,9 @@ pub const Authenticator = struct {
 // The size of the client's initial setup message if both name and data are empty
 const write_setup_no_auth_len = 12;
 
-fn writeSetupNoAuth(stream: std.net.Stream) std.net.Stream.WriteError!void {
+fn writeSetupNoAuth(io: std16.Io, socket: Socket) SocketWriter.Error!void {
     var write_buffer: [write_setup_no_auth_len]u8 = undefined;
-    var socket_writer = stream.writer(&write_buffer);
+    var socket_writer = socketWriter(io, socket, &write_buffer);
     const w = &socket_writer.interface;
     writeSetupHeader(w, .empty, 0) catch unreachable;
     writeSetupData(w, .empty) catch unreachable;
@@ -745,15 +799,16 @@ fn writeSetupNoAuth(stream: std.net.Stream) std.net.Stream.WriteError!void {
 // name is assumed to be taken from the AuthReader buffer, so, it becomes invalidated
 // as soon as any more data is read from AuthReader.
 fn writeSetupWithAuth(
-    stream: std.net.Stream,
+    io: std16.Io,
+    socket: Socket,
     auth_reader: *AuthReader,
     name: Slice(u16, [*]const u8),
     data_len: u16,
-    out_write_error: *?std.net.Stream.WriteError,
+    out_write_error: *?SocketWriter.Error,
 ) error{ ReadFailed, EndOfStream, WriteFailed }!void {
     std.debug.assert(out_write_error.* == null);
     var write_buffer: [write_setup_no_auth_len + 400]u8 = undefined;
-    var socket_writer = stream.writer(&write_buffer);
+    var socket_writer = socketWriter(io, socket, &write_buffer);
     defer out_write_error.* = socket_writer.err;
     const w = &socket_writer.interface;
     writeSetupHeader(w, name, data_len) catch unreachable;
@@ -818,7 +873,7 @@ fn matchAuthEntry(
     display: Display,
     parsed_display: *const ParsedDisplay,
     host: *const Host,
-    address: *const std.net.Address,
+    address: *const Address,
     auth_reader: *AuthReader,
     entry_index: u32,
 ) error{ ReadFailed, EndOfStream }!union(enum) {
@@ -891,46 +946,88 @@ pub const ConnectError =
     error{UnknownHostName} ||
     ConnectTcpError ||
     ConnectUnixError;
-pub fn connect(addr: *const Host) ConnectError!struct { std.net.Address, std.net.Stream } {
-    switch (addr.*) {
-        .address => |*address| return .{ address.*, try connectAddress(address) },
-        .domain_name => |*host| {
-            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            defer arena.deinit();
-            const list = try getAddressList(arena.allocator(), host.string, host.port);
-            defer list.deinit();
-            var ip4_only = true;
-            while (true) {
-                for (list.addrs) |net_addr| {
-                    const is_ip4 = (net_addr.any.family == posix.AF.INET);
-                    if (is_ip4 != ip4_only) continue;
-                    if (connectTcp(&net_addr)) |stream| {
-                        return .{ net_addr, stream };
-                    } else |err| switch (err) {
-                        error.ConnectionRefused, error.Unexpected => continue,
-                        error.AccessDenied,
-                        error.SystemResources,
-                        => |e| return e,
-                    }
-                }
-                if (!ip4_only) break;
-                ip4_only = false;
-            }
-            if (list.addrs.len == 0) return error.UnknownHostName;
-            return error.ConnectionRefused;
-        },
-    }
+pub fn connect(io: std16.Io, addr: *const Host) ConnectError!struct { Address, Socket } {
+    return switch (addr.*) {
+        .address => |*address| .{ address.*, try connectAddress(io, address) },
+        .domain_name => |*host| if (zig_atleast_16)
+            try connectDomainName16(io, host.string, host.port)
+        else
+            try connectDomainNameLegacy(host.string, host.port),
+    };
 }
 
-const ConnectAddressError = ConnectTcpError || ConnectUnixError;
-fn connectAddress(addr: *const std.net.Address) ConnectAddressError!std.net.Stream {
-    return switch (addr.any.family) {
-        posix.AF.UNIX => try connectUnix(
-            &addr.un,
-            std.mem.sliceTo(&addr.un.path, 0).len,
-        ),
-        else => try connectTcp(addr),
+fn connectDomainNameLegacy(name: []const u8, port: u16) ConnectError!struct { Address, Socket } {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const list = try getAddressList(arena.allocator(), name, port);
+    defer list.deinit();
+    var ip4_only = true;
+    while (true) {
+        for (list.addrs) |net_addr| {
+            const is_ip4 = (net_addr.any.family == posix.AF.INET);
+            if (is_ip4 != ip4_only) continue;
+            if (connectTcpLegacy(&net_addr)) |fd| {
+                return .{ net_addr, fd };
+            } else |err| switch (err) {
+                error.ConnectionRefused, error.Unexpected => continue,
+                error.AccessDenied,
+                error.SystemResources,
+                => |e| return e,
+            }
+        }
+        if (!ip4_only) break;
+        ip4_only = false;
+    }
+    if (list.addrs.len == 0) return error.UnknownHostName;
+    return error.ConnectionRefused;
+}
+
+fn connectDomainName16(io: std.Io, name: []const u8, port: u16) ConnectError!struct { Address, std.posix.fd_t } {
+    const host_name = std.Io.net.HostName.init(name) catch |err| {
+        log.err("invalid hostname '{s}': {t}", .{ name, err });
+        return error.UnknownHostName;
     };
+    var lookup_buf: [32]std.Io.net.HostName.LookupResult = undefined;
+    var lookup_queue: std.Io.Queue(std.Io.net.HostName.LookupResult) = .init(&lookup_buf);
+    host_name.lookup(io, &lookup_queue, .{ .port = port }) catch |err| {
+        log.err("DNS lookup for '{s}' failed: {t}", .{ name, err });
+        return error.UnknownHostName;
+    };
+    // Drain resolved addresses from the queue.
+    var addrs: [32]IpAddress = undefined;
+    var addr_count: usize = 0;
+    while (true) {
+        const result = lookup_queue.getOne(io) catch break; // Closed = done
+        switch (result) {
+            .address => |ip_addr| {
+                if (addr_count < addrs.len) {
+                    addrs[addr_count] = ip_addr;
+                    addr_count += 1;
+                }
+            },
+            .canonical_name => {},
+        }
+    }
+    if (addr_count == 0) return error.UnknownHostName;
+    // Try IPv4 first, then IPv6, matching the legacy behavior.
+    var ip4_only = true;
+    while (true) {
+        for (addrs[0..addr_count]) |*ip_addr| {
+            const is_ip4 = (ip_addr.* == .ip4);
+            if (is_ip4 != ip4_only) continue;
+            if (connectTcp(io, ip_addr)) |fd| {
+                return .{ Address.fromIpAddress(ip_addr.*), fd };
+            } else |err| switch (err) {
+                error.ConnectionRefused, error.Unexpected => continue,
+                error.AccessDenied,
+                error.SystemResources,
+                => |e| return e,
+            }
+        }
+        if (!ip4_only) break;
+        ip4_only = false;
+    }
+    return error.ConnectionRefused;
 }
 
 pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16) ConnectError!*std.net.AddressList {
@@ -954,17 +1051,64 @@ pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16)
     };
 }
 
+const ConnectAddressError = ConnectTcpError || ConnectUnixError;
+fn connectAddress(io: std16.Io, addr: *const Address) ConnectAddressError!Socket {
+    return if (zig_atleast_16) switch (addr.*) {
+        .in => |*ip4| connectTcp(io, &.{ .ip4 = ip4.* }),
+        .in6 => |*ip6| connectTcp(io, &.{ .ip6 = ip6.* }),
+        .un => |*ua| connectUnix16(io, ua, std.mem.sliceTo(&ua.path, 0).len),
+    } else switch (addr.any.family) {
+        posix.AF.UNIX => connectUnix(&addr.un, std.mem.sliceTo(&addr.un.path, 0).len),
+        else => connectTcpLegacy(addr),
+    };
+}
+
 const ConnectTcpError = error{
     AccessDenied,
     ConnectionRefused,
     SystemResources,
     Unexpected,
 };
-fn connectTcp(addr: *const std.net.Address) ConnectTcpError!std.net.Stream {
-    // tcp connections can take a while so let's add a log to know
-    // if we're blocked on it
+fn connectTcp(io: std16.Io, addr: *const std16.Io.net.IpAddress) ConnectTcpError!Socket {
     log.info("connecting to {f}", .{addr.*});
-    return std.net.tcpConnectToAddress(addr.*) catch |err| switch (err) {
+    if (zig_atleast_16) {
+        const stream = std.Io.net.IpAddress.connect(addr, io, .{ .mode = .stream }) catch |err| switch (err) {
+            error.ConnectionRefused,
+            error.ConnectionResetByPeer,
+            error.HostUnreachable,
+            error.NetworkUnreachable,
+            error.ConnectionPending,
+            error.Timeout,
+            => return error.ConnectionRefused,
+            error.SystemResources,
+            error.ProcessFdQuotaExceeded,
+            error.SystemFdQuotaExceeded,
+            => return error.SystemResources,
+            error.AccessDenied,
+            => return error.AccessDenied,
+            error.AddressUnavailable,
+            error.AddressFamilyUnsupported,
+            error.WouldBlock,
+            error.OptionUnsupported,
+            error.ProtocolUnsupportedBySystem,
+            error.ProtocolUnsupportedByAddressFamily,
+            error.SocketModeUnsupported,
+            error.NetworkDown,
+            error.Unexpected,
+            error.Canceled,
+            => |e| {
+                log.err("TCP connect failed unexpectedly with {t}", .{e});
+                return error.Unexpected;
+            },
+        };
+        return stream.socket.handle;
+    } else {
+        return connectTcpLegacy(&addr.toStdAddress());
+    }
+}
+
+fn connectTcpLegacy(addr: *const std.net.Address) ConnectTcpError!Socket {
+    const stream = std.net.tcpConnectToAddress(addr.*) catch |err| switch (err) {
         error.ConnectionTimedOut,
         error.ConnectionRefused,
         error.NetworkUnreachable,
@@ -988,15 +1132,16 @@ fn connectTcp(addr: *const std.net.Address) ConnectTcpError!std.net.Stream {
         error.ProtocolNotSupported,
         error.SocketTypeNotSupported,
         => |e| {
-            log.err("TCP connect to {f} failed unexpectedly with {s}", .{ addr, @errorName(e) });
+            log.err("TCP connect failed unexpectedly with {t}", .{e});
             return error.Unexpected;
         },
     };
+    return stream.handle;
 }
 
-pub fn disconnect(stream: std.net.Stream) void {
-    posix.shutdown(stream.handle, .both) catch {}; // ignore any error here
-    stream.close();
+pub fn disconnect(io: std16.Io, socket: Socket) void {
+    io.vtable.netShutdown(io.userdata, socket, .both) catch {};
+    io.vtable.netClose(io.userdata, (&socket)[0..1]);
 }
 
 const ConnectUnixError = error{
@@ -1011,7 +1156,7 @@ const ConnectUnixError = error{
     SystemFdQuotaExceeded,
     Unexpected,
 };
-pub fn connectUnix(addr: *const posix.sockaddr.un, path_len: usize) ConnectUnixError!std.net.Stream {
+pub fn connectUnix(addr: *const posix.sockaddr.un, path_len: usize) ConnectUnixError!Socket {
     const sock = posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| switch (err) {
         error.SystemResources => |e| return e,
         error.AccessDenied => return error.AccessDenied,
@@ -1053,7 +1198,36 @@ pub fn connectUnix(addr: *const posix.sockaddr.un, path_len: usize) ConnectUnixE
             return error.Unexpected;
         },
     };
-    return .{ .handle = sock };
+    return sock;
+}
+
+fn connectUnix16(io: std.Io, addr: *const posix.sockaddr.un, path_len: usize) ConnectUnixError!Socket {
+    const ua = std.Io.net.UnixAddress.init(std.mem.sliceTo(&addr.path, 0)[0..path_len]) catch
+        return error.Unexpected;
+    const stream = std.Io.net.UnixAddress.connect(&ua, io) catch |err| switch (err) {
+        error.FileNotFound,
+        error.SystemResources,
+        error.AccessDenied,
+        error.PermissionDenied,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        => |e| return e,
+        error.AddressFamilyUnsupported,
+        error.ProtocolUnsupportedBySystem,
+        error.SocketModeUnsupported,
+        error.SymLinkLoop,
+        error.NotDir,
+        error.ReadOnlyFileSystem,
+        error.WouldBlock,
+        error.NetworkDown,
+        error.Unexpected,
+        error.Canceled,
+        => |e| {
+            log.err("connect unix socket unexpectedly failed with {t}", .{e});
+            return error.Unexpected;
+        },
+    };
+    return stream.socket.handle;
 }
 
 fn unexpectedError(e: anyerror) error{Unexpected} {
@@ -1133,26 +1307,30 @@ pub const GetAuthFilenameError = error{
     Unexpected,
 };
 
-pub fn getAuthFilename(kind: AuthFileKind, filename_buf: []u8) GetAuthFilenameError!?[]const u8 {
+pub fn getAuthFilename(environ: std16.process.Environ, kind: AuthFileKind, filename_buf: []u8) GetAuthFilenameError!?[]const u8 {
     switch (kind) {
         .env => {
             if (builtin.os.tag == .windows) {
                 var fba: std.heap.FixedBufferAllocator = .init(filename_buf);
-                if (std.process.getEnvVarOwned(fba.allocator(), "XAUTHORITY")) |filename| {
+                if (environ.getAlloc(fba.allocator(), "XAUTHORITY")) |filename| {
                     return filename;
-                } else |err| return switch (err) {
+                } else |err| return if (zig_atleast_16) switch (err) {
+                    error.OutOfMemory => return error.XauthorityEnvTooBig,
+                    error.EnvironmentVariableMissing => null,
+                    error.InvalidWtf8 => error.XauthorityEnvInvalidUnicode,
+                } else switch (err) {
                     error.OutOfMemory => return error.XauthorityEnvTooBig,
                     error.EnvironmentVariableNotFound => null,
                     error.InvalidWtf8 => error.XauthorityEnvInvalidUnicode,
                 };
             } else {
-                if (posix.getenv("XAUTHORITY")) |xauth| return xauth;
+                if (environ.getPosix("XAUTHORITY")) |xauth| return xauth;
                 return null;
             }
         },
         .home => {
             if (builtin.os.tag == .windows) return null;
-            const home = posix.getenv("HOME") orelse return null;
+            const home = environ.getPosix("HOME") orelse return null;
             const basename = ".Xauthority";
             const len = home.len + 1 + basename.len;
             if (len + 1 > filename_buf.len) return error.HomeTooLong;
@@ -1206,7 +1384,7 @@ pub const AuthFamily = enum(u16) {
 
 fn matchAddr(
     connect_host: *const Host,
-    connect_addr: *const std.net.Address,
+    connect_addr: *const Address,
     file_addr: AuthFileAddr,
 ) bool {
     // todo: we'll probably need this to implement better address matching
@@ -1217,9 +1395,14 @@ fn matchAddr(
                 log.err("expected xauth inet addr to be 4 bytes but got {}", .{file_addr.data.len});
                 return false;
             }
-            if (connect_addr.any.family != posix.AF.INET) return false;
-            comptime std.debug.assert(@sizeOf(@TypeOf(connect_addr.in.sa.addr)) == 4);
-            const addr4 = std.mem.asBytes(&connect_addr.in.sa.addr);
+            const addr4 = if (zig_atleast_16) blk: {
+                if (connect_addr.* != .in) return false;
+                break :blk &connect_addr.in.bytes;
+            } else blk: {
+                if (connect_addr.any.family != posix.AF.INET) return false;
+                break :blk std.mem.asBytes(&connect_addr.in.sa.addr);
+            };
+            comptime std.debug.assert(addr4.len == 4);
             return std.mem.eql(u8, addr4, file_addr.data);
         },
         .inet6 => {
@@ -1227,13 +1410,22 @@ fn matchAddr(
                 log.err("expected xauth inet6 addr to be 16 bytes but got {}", .{file_addr.data.len});
                 return false;
             }
-            if (connect_addr.any.family != posix.AF.INET6) return false;
-            comptime std.debug.assert(@sizeOf(@TypeOf(connect_addr.in6.sa.addr)) == 16);
-            const addr6 = std.mem.asBytes(&connect_addr.in6.sa.addr);
+            const addr6 = if (zig_atleast_16) blk: {
+                if (connect_addr.* != .in6) return false;
+                break :blk &connect_addr.in6.bytes;
+            } else blk: {
+                if (connect_addr.any.family != posix.AF.INET6) return false;
+                break :blk std.mem.asBytes(&connect_addr.in6.sa.addr);
+            };
+            comptime std.debug.assert(addr6.len == 16);
             return std.mem.eql(u8, addr6, file_addr.data);
         },
         .unix => {
-            if (connect_addr.any.family != posix.AF.UNIX) return false;
+            if (zig_atleast_16) {
+                if (connect_addr.* != .un) return false;
+            } else {
+                if (connect_addr.any.family != posix.AF.UNIX) return false;
+            }
             // not sure how to properly compare the paths here so I'm just
             // going to always return true if we've connected to any unix path
             return true;
@@ -1431,11 +1623,11 @@ pub const AuthReader = struct {
 /// Call to handle a WriteFailed on the socket writer and/or RequestSink after the intial setup.
 /// It will either return an error or nothing if the error is a BrokenPipe which means the
 /// connection to the X server has been closed.
-pub fn onWriteError(write_failed: error{WriteFailed}, err: std.net.Stream.WriteError) !void {
+pub fn onWriteError(write_failed: error{WriteFailed}, err: SocketWriter.Error) !void {
     write_failed catch {};
     switch (err) {
-        error.BrokenPipe => {
-            log.info("BrokenPipe", .{});
+        error.SocketUnconnected => {
+            log.info("SocketUnconnected", .{});
         },
         else => |e| return e,
     }
@@ -4140,8 +4332,8 @@ pub const Source = struct {
     pub fn onReadError(
         source: *const Source,
         read_err: error{ ReadFailed, EndOfStream, Protocol },
-        stream_err: ?std.net.Stream.ReadError,
-    ) (error{ EndOfStream, Protocol } || std.net.Stream.ReadError)!void {
+        stream_err: ?SocketReader.Error,
+    ) (error{ EndOfStream, Protocol } || SocketReader.Error)!void {
         switch (read_err) {
             error.ReadFailed => switch (stream_err.?) {
                 error.ConnectionResetByPeer => |e| {
@@ -5560,7 +5752,9 @@ pub fn charsetName(set: Charset) ?[]const u8 {
 // the start of their program to setup WSA on Windows
 pub fn wsaStartup() !void {
     if (builtin.os.tag == .windows) {
-        _ = try windows.WSAStartup(2, 2);
+        if (!zig_atleast_16) {
+            _ = try windows.WSAStartup(2, 2);
+        }
     }
 }
 

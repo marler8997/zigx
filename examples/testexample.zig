@@ -1,6 +1,9 @@
 // A working example to test various parts of the API
 const std = @import("std");
+const std16 = if (zig_atleast_16) std else @import("std16");
 const x11 = @import("x11");
+
+const zig_atleast_16 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
 
 const Endian = std.builtin.Endian;
 
@@ -81,18 +84,26 @@ fn getImageFormat(
     };
 }
 
-pub fn main() !void {
+pub const main = if (zig_atleast_16) mainAtleast16 else mainBefore16;
+fn mainAtleast16(init: std.process.Init.Minimal) !void {
+    var t: @import("Threaded") = .init_single_threaded;
+    try mainCompat(init.environ, t.io());
+}
+fn mainBefore16() !void {
+    try mainCompat(.{}, .legacy);
+}
+pub fn mainCompat(environ: std16.process.Environ, io: std16.Io) !void {
     try x11.wsaStartup();
 
     var read_buffer: [1000]u8 = undefined;
-    var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
-    defer x11.disconnect(socket_reader.getStream());
+    var socket_reader, const used_auth = try x11.draft.connect(io, environ, &read_buffer);
+    defer x11.disconnect(io, socket_reader.socket);
     _ = used_auth;
-    const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
-        error.ReadFailed => return socket_reader.getError().?,
+    const setup = x11.readSetupSuccess(&socket_reader.interface) catch |err| switch (err) {
+        error.ReadFailed => return socket_reader.err.?,
         error.EndOfStream, error.Protocol => |e| return e,
     };
-    var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+    var source: x11.Source = .initFinishSetup(&socket_reader.interface, &setup);
     std.log.info("setup reply {f}", .{setup});
     try source.requireReplyAtLeast(setup.required());
     {
@@ -172,7 +183,7 @@ pub fn main() !void {
     };
 
     var write_buffer: [1000]u8 = undefined;
-    var socket_writer = x11.socketWriter(socket_reader.getStream(), &write_buffer);
+    var socket_writer = x11.socketWriter(io, socket_reader.socket, &write_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
 
     const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
@@ -187,7 +198,7 @@ pub fn main() !void {
     );
     run(&sink, &source, ids, depth, image_format, screen) catch |err| switch (err) {
         error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
-        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.err),
         error.UnexpectedMessage => |e| return e,
     };
 }

@@ -6,6 +6,9 @@
 const std = @import("std");
 const x11 = @import("x11");
 
+const zig_atleast_16 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
+const std16 = if (zig_atleast_16) std else @import("std16");
+
 const initial_window_width = 400;
 const initial_window_height = 400;
 
@@ -43,22 +46,30 @@ const Root = struct {
     depth: x11.Depth,
 };
 
-pub fn main() !void {
+pub const main = if (zig_atleast_16) mainAtleast16 else mainBefore16;
+fn mainAtleast16(init: std.process.Init.Minimal) !void {
+    var t: @import("Threaded") = .init_single_threaded;
+    try mainCompat(init.environ, t.io());
+}
+fn mainBefore16() !void {
+    try mainCompat(.{}, .legacy);
+}
+pub fn mainCompat(environ: std16.process.Environ, io: std16.Io) !void {
     try x11.wsaStartup();
 
-    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const root: Root = blk: {
+    const socket: x11.Socket, const ids: Ids, const keyrange: x11.KeycodeRange, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
-        var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
-        errdefer x11.disconnect(socket_reader.getStream());
+        var socket_reader, const used_auth = try x11.draft.connect(io, environ, &read_buffer);
+        errdefer x11.disconnect(io, socket_reader.socket);
         _ = used_auth;
-        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
-            error.ReadFailed => return socket_reader.getError().?,
+        const setup = x11.readSetupSuccess(&socket_reader.interface) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         };
         std.log.info("setup reply {f}", .{setup});
-        var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+        var source: x11.Source = .initFinishSetup(&socket_reader.interface, &setup);
         const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
-            error.ReadFailed => return socket_reader.getError().?,
+            error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         }) orelse {
             std.log.err("no screen?", .{});
@@ -70,7 +81,7 @@ pub fn main() !void {
             std.process.exit(0xff);
         }
         break :blk .{
-            socket_reader.getStream(),
+            socket_reader.socket,
             .{ .range = id_range },
             try .init(setup.min_keycode, setup.max_keycode),
             .{
@@ -83,26 +94,27 @@ pub fn main() !void {
             },
         };
     };
-    defer x11.disconnect(stream);
+    defer x11.disconnect(io, socket);
 
     var write_buffer: [1000]u8 = undefined;
     var read_buffer: [1000]u8 = undefined;
-    var socket_writer = x11.socketWriter(stream, &write_buffer);
-    var socket_reader = x11.socketReader(stream, &read_buffer);
+    var socket_writer = x11.socketWriter(io, socket, &write_buffer);
+    var socket_reader = x11.socketReader(io, socket, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
-    var source: x11.Source = .initAfterSetup(socket_reader.interface());
-    run(ids, &root, &sink, &socket_reader, &source, keyrange) catch |err| switch (err) {
+    var source: x11.Source = .initAfterSetup(&socket_reader.interface);
+    run(io, ids, &root, &sink, &socket_reader, &source, keyrange) catch |err| switch (err) {
         error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
-        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.err),
         error.UnexpectedMessage => |e| return e,
     };
 }
 
 fn run(
+    io: std16.Io,
     ids: Ids,
     root: *const Root,
     sink: *x11.RequestSink,
-    socket_reader: *std.net.Stream.Reader,
+    socket_reader: *x11.SocketReader,
     source: *x11.Source,
     keyrange: x11.KeycodeRange,
 ) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
@@ -166,7 +178,7 @@ fn run(
 
     var window_width: u16 = initial_window_width;
     var window_height: u16 = initial_window_height;
-    var animate: Animate = .{ .previous_time = std.time.Instant.now() catch @panic("monotonic timer unsupported") };
+    var animate: Animate = .{ .previous_time = std16.Io.Timestamp.now(io, .awake) };
     var animate_frame_ms: i32 = 15;
 
     while (true) {
@@ -174,7 +186,7 @@ fn run(
 
         const action: enum { timeout, socket } = switch (pollSocketReader(socket_reader, 0)) {
             .ready => .socket,
-            .timeout => if (getTimeout(animate.previous_time, animate_frame_ms)) |timeout_ms| switch (pollSocketReader(socket_reader, timeout_ms)) {
+            .timeout => if (getTimeout(io, animate.previous_time, animate_frame_ms)) |timeout_ms| switch (pollSocketReader(socket_reader, timeout_ms)) {
                 .ready => .socket,
                 .timeout => .timeout,
             } else .timeout,
@@ -183,6 +195,7 @@ fn run(
         switch (action) {
             .timeout => {
                 try render(
+                    io,
                     sink,
                     ids.window(),
                     ids.gc(),
@@ -241,6 +254,7 @@ fn run(
                 }
                 if (do_render) {
                     try render(
+                        io,
                         sink,
                         ids.window(),
                         ids.gc(),
@@ -259,6 +273,7 @@ fn run(
                 const expose = try source.read2(.Expose);
                 std.log.info("{}", .{expose});
                 try render(
+                    io,
                     sink,
                     ids.window(),
                     ids.gc(),
@@ -289,11 +304,11 @@ fn run(
     }
 }
 
-fn pollSocketReader(socket_reader: *std.net.Stream.Reader, timeout_ms: i32) enum { ready, timeout } {
-    if (socket_reader.interface().bufferedLen() > 0) return .ready;
+fn pollSocketReader(socket_reader: *x11.SocketReader, timeout_ms: i32) enum { ready, timeout } {
+    if (socket_reader.interface.bufferedLen() > 0) return .ready;
     var poll_fds = [_]std.posix.pollfd{
         .{
-            .fd = socket_reader.getStream().handle,
+            .fd = socket_reader.socket,
             .events = std.posix.POLL.IN,
             .revents = 0,
         },
@@ -306,15 +321,15 @@ fn pollSocketReader(socket_reader: *std.net.Stream.Reader, timeout_ms: i32) enum
     };
 }
 
-pub fn getTimeout(start: std.time.Instant, duration_ms: i32) ?u31 {
-    const now = std.time.Instant.now() catch @panic("monotonic timer unsupported");
-    const since_ms = @divTrunc(now.since(start), std.time.ns_per_ms);
+pub fn getTimeout(io: std16.Io, start: std16.Io.Timestamp, duration_ms: i32) ?u31 {
+    const now = std16.Io.Timestamp.now(io, .awake);
+    const since_ms = start.durationTo(now).toMilliseconds();
     if (since_ms >= duration_ms) return null;
     return @intCast(duration_ms - @as(i32, @intCast(since_ms)));
 }
 
 const Animate = struct {
-    previous_time: std.time.Instant,
+    previous_time: std16.Io.Timestamp,
     progress: f32 = 0,
 };
 
@@ -336,6 +351,7 @@ const Dbe = union(enum) {
 };
 
 fn render(
+    io: std16.Io,
     sink: *x11.RequestSink,
     window: x11.Window,
     gc_id: x11.GraphicsContext,
@@ -346,14 +362,14 @@ fn render(
     window_height: u16,
 ) !void {
     const elapsed_ms = blk: {
-        const now = std.time.Instant.now() catch @panic("monotonic timer unsupported");
-        const elapsed_ms = now.since(animate.previous_time);
+        const now = std16.Io.Timestamp.now(io, .awake);
+        const elapsed_ms = animate.previous_time.durationTo(now).toMilliseconds();
         animate.previous_time = now;
         break :blk elapsed_ms;
     };
 
     const animation_duration_ms: f32 = 2000.0; // 2 seconds for full cycle
-    const elapsed_ms_f32: f32 = @floatFromInt(elapsed_ms / std.time.ns_per_ms);
+    const elapsed_ms_f32: f32 = @floatFromInt(elapsed_ms);
     const progress_increment: f32 = elapsed_ms_f32 / animation_duration_ms;
     animate.progress = @mod(animate.progress + progress_increment, 1.0);
 

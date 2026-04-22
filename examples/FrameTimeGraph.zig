@@ -7,7 +7,7 @@ const highlight_color = 0xcccccc;
 const over_color = 0xcc3333;
 
 font_dims: FontDims,
-previous_time: ?std.time.Instant = null,
+previous_time: ?std16.Io.Timestamp = null,
 frame_times: [history_len]f32 = [1]f32{0} ** history_len,
 cursor: u8 = 0,
 max_ms: f32 = 50,
@@ -20,15 +20,16 @@ pub const FontDims = struct {
 
 pub fn writeRender(
     self: *FrameTimeGraph,
+    io: std16.Io,
     sink: *x11.RequestSink,
     drawable: x11.Drawable,
     gc_id: x11.GraphicsContext,
     window_width: u16,
     window_height: u16,
 ) error{ WriteFailed, TextTooLong }!void {
-    const now = std.time.Instant.now() catch @panic("time not supported");
+    const now = std16.Io.Timestamp.now(io, .awake);
     const elapsed_ms: f32 = if (self.previous_time) |prev|
-        @as(f32, @floatFromInt(now.since(prev))) / std.time.ns_per_ms
+        @as(f32, @floatFromInt(prev.durationTo(now).toMilliseconds()))
     else
         0;
     self.previous_time = now;
@@ -129,5 +130,8 @@ pub fn writeRender(
     self.cursor = (self.cursor + 1) % history_len;
 }
 
+const zig_atleast_16 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
+
 const std = @import("std");
+const std16 = if (zig_atleast_16) std else @import("std16");
 const x11 = @import("x11");
