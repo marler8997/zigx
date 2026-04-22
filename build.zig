@@ -124,13 +124,13 @@ pub fn build(b: *std.Build) void {
         }),
     });
     x11_lib.root_module.addImport("x11", x_mod);
-    x11_lib.addIncludePath(b.path("c/include"));
+    x11_lib.root_module.addIncludePath(b.path("c/include"));
     x11_lib.installHeadersDirectory(
         b.path("c/include/X11"),
         "X11",
         .{},
     );
-    x11_lib.linkLibC();
+    x11_lib.root_module.link_libc = true;
     {
         const install = b.addInstallArtifact(x11_lib, .{});
         b.step("lib", "").dependOn(&install.step);
@@ -146,12 +146,12 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             }),
         });
-        exe.addCSourceFiles(.{
+        exe.root_module.addCSourceFiles(.{
             .files = &.{"c/example/hellox11.c"},
         });
-        exe.addIncludePath(b.path("include"));
-        exe.linkLibC();
-        exe.linkLibrary(x11_lib);
+        exe.root_module.addIncludePath(b.path("include"));
+        exe.root_module.link_libc = true;
+        exe.root_module.linkLibrary(x11_lib);
 
         const install = b.addInstallArtifact(exe, .{});
         b.step("install-hellox11b", "").dependOn(&install.step);
