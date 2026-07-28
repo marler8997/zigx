@@ -15,7 +15,9 @@ jobs:
         include:
           - os: windows-latest
           - os: windows-11-arm
-          - os: macos-latest
+          # Pin macOS to macos-15; macos-latest's Xcode 26.4 SDK doesn't link
+          # with Zig 0.15.2 (ziglang/zig#31658), fixed in later Zig versions.
+          - os: macos-15
           - os: ubuntu-latest
     runs-on: ${{matrix.os}}
 
