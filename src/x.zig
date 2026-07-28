@@ -25,6 +25,7 @@
 // ...todo...
 //
 
+const zigversion = @import("zigversion");
 const std = @import("std");
 const stdext = @import("stdext.zig");
 const testing = std.testing;
@@ -62,8 +63,8 @@ pub const record = @compileError("todo");
 pub const BoundedArray = @import("bounded_array.zig").BoundedArray;
 pub const charset = @import("charset.zig");
 pub const Charset = charset.Charset;
-pub const Slice = @import("x/slice.zig").Slice;
-pub const SliceWithMaxLen = @import("x/slice.zig").SliceWithMaxLen;
+pub const Slice = zigversion.Slice;
+pub const SliceWithMaxLen = zigversion.SliceWithMaxLen;
 pub const keymap = @import("keymap.zig");
 
 pub const log = std.log.scoped(.x11);
@@ -1086,46 +1087,7 @@ const FmtRead = struct {
     }
 };
 
-pub fn ArrayPointer(comptime T: type) type {
-    const err = "ArrayPointer not implemented for " ++ @typeName(T);
-    switch (@typeInfo(T)) {
-        .pointer => |info| {
-            switch (info.size) {
-                .one => {
-                    switch (@typeInfo(info.child)) {
-                        .Array => |array_info| {
-                            return @Type(std.builtin.Type{ .pointer = .{
-                                .size = .Many,
-                                .is_const = true,
-                                .is_volatile = false,
-                                .alignment = @alignOf(array_info.child),
-                                .address_space = info.address_space,
-                                .child = array_info.child,
-                                .is_allowzero = false,
-                                .sentinel = array_info.sentinel,
-                            } });
-                        },
-                        else => @compileError("here"),
-                    }
-                },
-                .slice => {
-                    return @Type(std.builtin.Type{ .pointer = .{
-                        .size = .many,
-                        .is_const = info.is_const,
-                        .is_volatile = info.is_volatile,
-                        .alignment = info.alignment,
-                        .address_space = info.address_space,
-                        .child = info.child,
-                        .is_allowzero = info.is_allowzero,
-                        .sentinel_ptr = info.sentinel_ptr,
-                    } });
-                },
-                else => @compileError(err),
-            }
-        },
-        else => @compileError(err),
-    }
-}
+pub const ArrayPointer = zigversion.ArrayPointer;
 
 pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@TypeOf(s))) {
     switch (@typeInfo(@TypeOf(s))) {
@@ -3929,19 +3891,7 @@ pub const VisualType = extern struct {
     unused: u32,
 };
 
-pub fn NonExhaustive(comptime T: type) type {
-    const info = switch (@typeInfo(T)) {
-        .@"enum" => |info| info,
-        else => |info| @compileError("expected an Enum type but got a(n) " ++ @tagName(info)),
-    };
-    std.debug.assert(info.is_exhaustive);
-    return @Type(std.builtin.Type{ .@"enum" = .{
-        .tag_type = info.tag_type,
-        .fields = info.fields,
-        .decls = &.{},
-        .is_exhaustive = false,
-    } });
-}
+pub const NonExhaustive = zigversion.NonExhaustive;
 pub const ImageByteOrder = enum(u8) {
     lsb_first = 0,
     msb_first = 1,

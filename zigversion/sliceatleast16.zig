@@ -1,0 +1,107 @@
+const std = @import("std");
+
+pub fn Slice(comptime LenType: type, comptime Ptr: type) type {
+    return struct {
+        const Self = @This();
+        const ptr_info = @typeInfo(Ptr).pointer;
+        pub const NativeSlice = @Pointer(
+            .slice,
+            .{
+                .@"const" = ptr_info.is_const,
+                .@"volatile" = ptr_info.is_volatile,
+                .@"align" = ptr_info.alignment,
+                .@"addrspace" = ptr_info.address_space,
+                .@"allowzero" = ptr_info.is_allowzero,
+            },
+            ptr_info.child,
+            ptr_info.sentinel(),
+        );
+
+        ptr: Ptr,
+        len: LenType,
+
+        pub const empty: @This() = .{ .ptr = undefined, .len = 0 };
+
+        pub fn init(ptr: Ptr, len: LenType) @This() {
+            return .{ .ptr = ptr, .len = len };
+        }
+
+        pub fn initAssume(slice: NativeSlice) @This() {
+            return .{ .ptr = slice.ptr, .len = @intCast(slice.len) };
+        }
+
+        pub fn initComptime(comptime ct_slice: NativeSlice) @This() {
+            return .{ .ptr = ct_slice.ptr, .len = @intCast(ct_slice.len) };
+        }
+
+        pub fn nativeSlice(self: @This()) NativeSlice {
+            return self.ptr[0..self.len];
+        }
+
+        pub fn lenCast(self: @This(), comptime NewLenType: type) Slice(NewLenType, Ptr) {
+            return .{ .ptr = self.ptr, .len = @intCast(self.len) };
+        }
+
+        pub const format = switch (@typeInfo(Ptr).pointer.child) {
+            u8 => (struct {
+                pub fn format(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
+                    try writer.writeAll(self.ptr[0..self.len]);
+                }
+            }).format,
+            else => @compileError("can't format non-u8 slice"),
+        };
+    };
+}
+
+pub fn SliceWithMaxLen(comptime LenType: type, comptime Ptr: type, comptime max_len_arg: LenType) type {
+    return struct {
+        pub const max_len = max_len_arg;
+        pub const undefined_max_len: @This() = .{ .ptr = undefined, .len = max_len };
+
+        const Self = @This();
+        const ptr_info = @typeInfo(Ptr).pointer;
+        pub const NativeSlice = @Pointer(
+            .slice,
+            .{
+                .@"const" = ptr_info.is_const,
+                .@"volatile" = ptr_info.is_volatile,
+                .@"align" = ptr_info.alignment,
+                .@"addrspace" = ptr_info.address_space,
+                .@"allowzero" = ptr_info.is_allowzero,
+            },
+            ptr_info.child,
+            ptr_info.sentinel(),
+        );
+
+        ptr: Ptr,
+        len: LenType,
+
+        pub const empty: @This() = .{ .ptr = undefined, .len = 0 };
+
+        pub fn validateMaxLen(self: @This()) void {
+            std.debug.assert(self.len <= max_len);
+        }
+
+        pub fn nativeSlice(self: @This()) NativeSlice {
+            return self.ptr[0..self.len];
+        }
+
+        pub fn initComptime(comptime ct_slice: NativeSlice) @This() {
+            std.debug.assert(ct_slice.len <= max_len);
+            return .{ .ptr = ct_slice.ptr, .len = @intCast(ct_slice.len) };
+        }
+
+        pub fn lenCast(self: @This(), comptime NewLenType: type) Slice(NewLenType, Ptr) {
+            return .{ .ptr = self.ptr, .len = @intCast(self.len) };
+        }
+
+        pub const format = switch (@typeInfo(Ptr).pointer.child) {
+            u8 => (struct {
+                pub fn format(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
+                    try writer.writeAll(self.ptr[0..self.len]);
+                }
+            }).format,
+            else => @compileError("can't format non-u8 slice"),
+        };
+    };
+}

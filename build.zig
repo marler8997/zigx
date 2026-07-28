@@ -1,6 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+const zig_atleast_16 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
+
 /// Create the xtt (x11 true type) module with a custom TrueType module.
 pub fn createXtt(b: *std.Build, zigx_dep: *std.Build.Dependency, TrueType: *std.Build.Module) *std.Build.Module {
     return b.createModule(.{
@@ -38,10 +40,17 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const zigversion_mod = b.createModule(.{
+        .root_source_file = if (zig_atleast_16) b.path("zigversion/atleast16.zig") else b.path("zigversion/before16.zig"),
+    });
+
     // In almost all cases, Zig programs should only use this module, not the
     // library defined below, that's for C programs.
     const x_mod = b.addModule("x11", .{
         .root_source_file = b.path("src/x.zig"),
+        .imports = &.{
+            .{ .name = "zigversion", .module = zigversion_mod },
+        },
     });
 
     const true_type_mod = b.dependency("TrueType", .{}).module("TrueType");
@@ -178,6 +187,9 @@ pub fn build(b: *std.Build) void {
         const x_mod_with_target = b.createModule(.{
             .root_source_file = b.path("src/x.zig"),
             .target = target,
+            .imports = &.{
+                .{ .name = "zigversion", .module = zigversion_mod },
+            },
         });
         const unit_tests = b.addTest(.{
             .root_module = x_mod_with_target,
