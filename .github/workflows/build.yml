@@ -27,5 +27,8 @@ jobs:
       - name: Setup Zig
         uses: marler8997/setup-anyzig@master
 
-      - name: Build
-        run: zig build --summary all install test-non-interactive
+      - name: Build 0.15.2
+        run: zig 0.15.2 build --summary all install test-non-interactive
+
+      - name: Build 0.16.0
+        run: zig 0.16.0 build --summary all install test-non-interactive

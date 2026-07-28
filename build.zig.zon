@@ -2,9 +2,18 @@
     .name = .x11,
     .version = "0.0.0",
     .fingerprint = 0x3220e772e6b06bc9,
-    .zig_version = "0.15.2",
+    .zig_version = "0.16.0",
     .minimum_zig_version = "0.15.2",
     .dependencies = .{
+        .std16 = .{
+            .path = "std16",
+            .lazy = true,
+        },
+        .io = .{
+            .url = "git+https://github.com/marler8997/zig-io#d9e63d8b17fb7567ff8c973d6dbea7e8391a465c",
+            .hash = "io-0.0.0-1IkbBbPlCwCDRE0r-SUWVvR4hUrcA5Rmln2KiKfQqXPN",
+            .lazy = true,
+        },
         .TrueType = .{
             .url = "git+https://codeberg.org/andrewrk/TrueType#b0f9867671a14ce4ed75a05a7e52c927623095e5",
             .hash = "TrueType-0.0.0-Ne-mWMxxAQDit1oHfxlK2lkZAX8P7Wsa2SBPaR_xSpc8",
