@@ -19,8 +19,8 @@ pub const ConnectError = error{
     // Error from authenticate error
     AuthRejected,
 };
-pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
-    const display = x11.getDisplay() catch |err| {
+pub fn connect(io: std16.Io, environ: std16.process.Environ, read_buffer: []u8) ConnectError!x11.Authenticator.Success {
+    const display = x11.getDisplay(environ) catch |err| {
         x11.log.err("failed to get x11 display with {s}", .{@errorName(err)});
         return error.GetDisplay;
     };
@@ -35,7 +35,7 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
             return error.BadDisplay;
         },
     };
-    const address, const initial_stream = x11.connect(&host) catch |err| return switch (err) {
+    const address, const initial_stream = x11.connect(io, &host) catch |err| return switch (err) {
         error.SystemResources,
         error.ConnectionTimedOut,
         error.AccessDenied,
@@ -52,9 +52,11 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
             return e;
         },
     };
-    errdefer x11.disconnect(initial_stream);
+    errdefer x11.disconnect(io, initial_stream);
     x11.log.info("connected to {f}", .{address});
     return try x11.draft.authenticate(
+        environ,
+        io,
         display,
         &parsed_display,
         &host,
@@ -66,11 +68,13 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
 }
 
 pub fn authenticate(
+    environ: std16.process.Environ,
+    io: std16.Io,
     display: x11.Display,
     parsed_display: *const x11.ParsedDisplay,
     host: *const x11.Host,
-    address: *const std.net.Address,
-    stream: std.net.Stream,
+    address: *const x11.Address,
+    socket: x11.Socket,
     stream_read_buffer: []u8,
     opt: struct {
         order: x11.Authenticator.Order = .auth_first,
@@ -78,11 +82,13 @@ pub fn authenticate(
 ) error{AuthRejected}!x11.Authenticator.Success {
     var filename_buffer: [std.fs.max_path_bytes]u8 = undefined;
     var authenticator: x11.Authenticator = .{
+        .environ = environ,
+        .io = io,
         .display = display,
         .parsed_display = parsed_display,
         .host = host,
         .address = address,
-        .stream = stream,
+        .socket = socket,
         .stream_read_buffer = stream_read_buffer,
         .filename_buffer = &filename_buffer,
         .order = opt.order,
@@ -229,5 +235,8 @@ pub fn synchronousQueryExtension(
     return result;
 }
 
+const zig_atleast_16 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
+
 const std = @import("std");
+const std16 = if (zig_atleast_16) std else @import("std16");
 const x11 = @import("../x.zig");

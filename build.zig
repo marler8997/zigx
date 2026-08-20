@@ -43,7 +43,6 @@ pub fn build(b: *std.Build) void {
     const zigversion_mod = b.createModule(.{
         .root_source_file = if (zig_atleast_16) b.path("zigversion/atleast16.zig") else b.path("zigversion/before16.zig"),
     });
-
     // In almost all cases, Zig programs should only use this module, not the
     // library defined below, that's for C programs.
     const x_mod = b.addModule("x11", .{
@@ -52,6 +51,11 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zigversion", .module = zigversion_mod },
         },
     });
+    if (!zig_atleast_16) {
+        if (b.lazyDependency("std16", .{})) |std16_dep| {
+            x_mod.addImport("std16", std16_dep.module("std16"));
+        }
+    }
 
     const true_type_mod = b.dependency("TrueType", .{}).module("TrueType");
     const xtt_mod = b.addModule("xtt", .{
@@ -71,6 +75,11 @@ pub fn build(b: *std.Build) void {
             .single_threaded = true,
         }),
     });
+    if (!zig_atleast_16) {
+        if (b.lazyDependency("std16", .{})) |std16_dep| {
+            examples_exe.root_module.addImport("std16", std16_dep.module("std16"));
+        }
+    }
     const run_examples = b.addRunArtifact(examples_exe);
 
     const test_step = b.step("test", "Run all tests and interactive examples)");
@@ -89,6 +98,16 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "x11", .module = x_mod },
             },
         });
+        if (!zig_atleast_16) {
+            if (b.lazyDependency("std16", .{})) |std16_dep| {
+                example_mod.addImport("std16", std16_dep.module("std16"));
+            }
+        } else {
+            if (b.lazyDependency("io", .{})) |io_dep| {
+                example_mod.addImport("Threaded", io_dep.module("Threaded"));
+            }
+        }
+
         if (example.needs_text) {
             example_mod.addImport("xtt", xtt_mod);
 
@@ -103,6 +122,13 @@ pub fn build(b: *std.Build) void {
             .root_module = example_mod,
         });
 
+        const enabled = switch (target.result.os.tag) {
+            // dbe example not working on 0.16 windows because it uses poll which seems
+            // to have broken on 0.16?
+            .windows => !std.mem.eql(u8, example.name, "dbe"),
+            else => true,
+        };
+
         const exe_check = b.addExecutable(.{
             .name = b.fmt("{s}_check", .{example.name}),
             .root_module = example_mod,
@@ -111,11 +137,13 @@ pub fn build(b: *std.Build) void {
 
         const install = b.addInstallArtifact(exe, .{});
         build_examples_step.dependOn(&install.step);
-        b.getInstallStep().dependOn(&install.step);
+        if (enabled) b.getInstallStep().dependOn(&install.step);
         b.step("build-" ++ example.name, "").dependOn(&install.step);
 
-        run_examples.addArtifactArg(exe);
-        run_examples.step.dependOn(&install.step);
+        if (enabled) {
+            run_examples.addArtifactArg(exe);
+            run_examples.step.dependOn(&install.step);
+        }
 
         const run = b.addRunArtifact(exe);
         run.step.dependOn(&install.step);
@@ -191,6 +219,12 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zigversion", .module = zigversion_mod },
             },
         });
+        if (!zig_atleast_16) {
+            if (b.lazyDependency("std16", .{})) |std16_dep| {
+                x_mod_with_target.addImport("std16", std16_dep.module("std16"));
+            }
+        }
+
         const unit_tests = b.addTest(.{
             .root_module = x_mod_with_target,
         });
@@ -211,6 +245,11 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        if (!zig_atleast_16) {
+            if (b.lazyDependency("std16", .{})) |std16_dep| {
+                xauth_exe.root_module.addImport("std16", std16_dep.module("std16"));
+            }
+        }
         const install = b.addInstallArtifact(xauth_exe, .{});
         b.step("install-xauth", "").dependOn(&install.step);
         test_non_interactive.dependOn(&install.step);

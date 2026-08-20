@@ -1,54 +1,67 @@
 const std = @import("std");
 const x11 = @import("x11");
 
+const zig_atleast_16 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
+const std16 = if (zig_atleast_16) std else @import("std16");
+
 pub const log_level = std.log.Level.info;
 
-pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    const allocator = arena.allocator();
-    const all_args = try std.process.argsAlloc(allocator);
-    if (all_args.len <= 1) {
+const arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+
+const ArgsIterator = if (zig_atleast_16) std.process.Args.Iterator else std.process.ArgIterator;
+
+pub const main = if (zig_atleast_16) mainAtleast16 else mainBefore16;
+fn mainAtleast16(init: std.process.Init) !void {
+    var args_it = try init.minimal.args.iterateAllocator(init.arena.allocator());
+    try mainCompat(&args_it, init.minimal.environ, init.io);
+}
+fn mainBefore16() !void {
+    var arena = arena_instance;
+    var args_it: std.process.ArgIterator = try .initWithAllocator(arena.allocator());
+    try mainCompat(&args_it, .{}, .legacy);
+}
+fn mainCompat(args_it: *ArgsIterator, environ: std16.process.Environ, io: std16.Io) !void {
+    _ = args_it.next(); // skip program name
+    const font_name = args_it.next() orelse {
         std.debug.print("Usage: queryfont FONTNAME\n", .{});
         std.process.exit(0);
-    }
-    const cmd_args = all_args[1..];
-    if (cmd_args.len != 1) {
-        std.log.err("expected 1 cmd arg (FONTNAME) but got {}", .{cmd_args.len});
+    };
+    if (args_it.next() != null) {
+        std.log.err("expected 1 cmd arg (FONTNAME) but got more", .{});
         std.process.exit(1);
     }
-    const font_name = cmd_args[0];
 
     try x11.wsaStartup();
 
-    const stream, const setup = blk: {
+    const socket, const setup = blk: {
         var read_buffer: [1000]u8 = undefined;
-        var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
-        errdefer x11.disconnect(socket_reader.getStream());
+        var socket_reader, const used_auth = try x11.draft.connect(io, environ, &read_buffer);
+        errdefer x11.disconnect(io, socket_reader.socket);
         _ = used_auth;
-        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
-            error.ReadFailed => return socket_reader.getError().?,
+        const setup = x11.readSetupSuccess(&socket_reader.interface) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         };
         std.log.info("setup reply {f}", .{setup});
-        var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+        var source: x11.Source = .initFinishSetup(&socket_reader.interface, &setup);
         const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
-            error.ReadFailed => return socket_reader.getError().?,
+            error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         }) orelse {
             std.log.err("no screen?", .{});
             std.process.exit(0xff);
         };
         _ = screen;
-        break :blk .{ socket_reader.getStream(), setup };
+        break :blk .{ socket_reader.socket, setup };
     };
-    defer x11.disconnect(stream);
+    defer x11.disconnect(io, socket);
 
     var write_buffer: [1000]u8 = undefined;
     var read_buffer: [1000]u8 = undefined;
-    var socket_writer = x11.socketWriter(stream, &write_buffer);
-    var socket_reader = x11.socketReader(stream, &read_buffer);
+    var socket_writer = x11.socketWriter(io, socket, &write_buffer);
+    var socket_reader = x11.socketReader(io, socket, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
-    var source: x11.Source = .initAfterSetup(socket_reader.interface());
+    var source: x11.Source = .initAfterSetup(&socket_reader.interface);
 
     const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
     const font_id = id_range.addAssumeCapacity(0).font();
@@ -61,10 +74,10 @@ pub fn main() !void {
     })) |e| return x11.onWriteError(e, socket_writer.err.?);
 
     var stdout_buffer: [1000]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std16.Io.File.stdout().writer(io, &stdout_buffer);
     streamFont(&source, sink.sequence, &stdout_writer.interface) catch |err| switch (err) {
         error.WriteFailed => return stdout_writer.err.?,
-        error.ReadFailed => return socket_reader.getError().?,
+        error.ReadFailed => return socket_reader.err.?,
         error.EndOfStream, error.Protocol, error.UnexpectedMessage => |e| return e,
     };
 }

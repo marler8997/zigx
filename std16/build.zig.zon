@@ -1,0 +1,12 @@
+.{
+    .name = .std16,
+    .version = "0.0.0",
+    .fingerprint = 0xda34ab1eec55af90,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
