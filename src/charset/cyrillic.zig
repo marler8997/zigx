@@ -95,9 +95,9 @@ pub const Cyrillic = enum(u8) {
     capital_hard_sign = 255,
 
     pub fn toCombined(self: Cyrillic) Combined {
-        return @enumFromInt((@as(u16, 6) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 6) << 8) | @backingInt(self)));
     }
     pub fn next(self: Cyrillic) Cyrillic {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

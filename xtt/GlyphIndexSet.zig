@@ -6,13 +6,13 @@ comptime {
 bit_set: std.StaticBitSet(std.math.maxInt(GlyphIndexInt) + 1),
 
 pub fn initEmpty() GlyphIndexSet {
-    return .{ .bit_set = .initEmpty() };
+    return .{ .bit_set = .empty };
 }
 pub fn isSet(self: *const GlyphIndexSet, glyph_index: TrueType.GlyphIndex) bool {
-    return self.bit_set.isSet(@intFromEnum(glyph_index));
+    return self.bit_set.isSet(@backingInt(glyph_index));
 }
 pub fn set(self: *GlyphIndexSet, glyph_index: TrueType.GlyphIndex) void {
-    self.bit_set.set(@intFromEnum(glyph_index));
+    self.bit_set.set(@backingInt(glyph_index));
 }
 pub fn clear(self: *GlyphIndexSet) void {
     @memset(&self.bit_set.masks, 0);

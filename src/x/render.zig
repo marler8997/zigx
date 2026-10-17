@@ -10,7 +10,7 @@ pub const Picture = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) Picture {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn format(v: Picture, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -26,7 +26,7 @@ pub const GlyphSet = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) GlyphSet {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn format(v: GlyphSet, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -42,7 +42,7 @@ pub const PictureFormat = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) PictureFormat {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn format(v: PictureFormat, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -196,7 +196,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.query_version),
+            @backingInt(Opcode.query_version),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeInt(sink.writer, &offset, u32, major_version);
@@ -234,7 +234,7 @@ pub const PictureFormatInfo = extern struct {
         try writer.print(
             "id={} type={f} depth={} colormap={} direct={any}",
             .{
-                @intFromEnum(self.id),
+                @backingInt(self.id),
                 x11.fmtEnum(self.type),
                 self.depth,
                 self.colormap,
@@ -259,16 +259,16 @@ pub fn CreatePicture(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.create_picture),
+        @backingInt(Opcode.create_picture),
     });
     try x11.writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(picture_id));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(drawable_id));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(format_id));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(picture_id));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(drawable_id));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(format_id));
     try x11.writeInt(sink.writer, &offset, u32, msg.option_mask);
-    inline for (std.meta.fields(create_picture.Options)) |field| {
-        if (!x11.isDefaultValue(&options, field)) {
-            try x11.writeInt(sink.writer, &offset, u32, x11.optionToU32(@field(options, field.name)));
+    inline for (@typeInfo(create_picture.Options).@"struct".field_names) |field_name| {
+        if (!x11.isDefaultValue(&options, field_name)) {
+            try x11.writeInt(sink.writer, &offset, u32, x11.optionToU32(@field(options, field_name)));
         }
     }
     std.debug.assert(msg.len == offset);
@@ -289,9 +289,9 @@ fn inspectCreatePicture(options: *const create_picture.Options) struct {
     ;
     var len: u18 = non_option_len;
     var option_mask: u32 = 0;
-    inline for (std.meta.fields(create_picture.Options)) |field| {
-        if (!x11.isDefaultValue(options, field)) {
-            option_mask |= @field(create_picture.option_flag, field.name);
+    inline for (@typeInfo(create_picture.Options).@"struct".field_names) |field_name| {
+        if (!x11.isDefaultValue(options, field_name)) {
+            option_mask |= @field(create_picture.option_flag, field_name);
             len += 4;
         }
     }
@@ -339,7 +339,7 @@ pub const create_picture = struct {
         subwindow_mode: x11.SubWindowMode = .clip_by_children,
         poly_edge: PolyEdge = .sharp,
         poly_mode: PolyMode = .precise,
-        dither: x11.Atom = @enumFromInt(0), // optional
+        dither: x11.Atom = @fromBackingInt(@intCast(0)), // optional
         component_alpha: bool = false,
     };
 };
@@ -382,18 +382,18 @@ pub fn Composite(sink: *x11.RequestSink, ext_opcode: u8, named: struct {
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.composite),
+        @backingInt(Opcode.composite),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeAll(sink.writer, &offset, &[_]u8{
-        @intFromEnum(named.picture_operation),
+        @backingInt(named.picture_operation),
         0, // padding
         0, // padding
         0, // padding
     });
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.src_picture));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.mask_picture));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.dst_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(named.src_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(named.mask_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(named.dst_picture));
     try x11.writeInt(sink.writer, &offset, i16, named.src_x);
     try x11.writeInt(sink.writer, &offset, i16, named.src_y);
     try x11.writeInt(sink.writer, &offset, i16, named.mask_x);
@@ -419,10 +419,10 @@ pub fn FreePicture(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.free_picture),
+        @backingInt(Opcode.free_picture),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(picture_id));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(picture_id));
     std.debug.assert(offset == msg_len);
     sink.sequence +%= 1;
 }
@@ -445,14 +445,14 @@ pub fn FillRectangles(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.fill_rectangles),
+        @backingInt(Opcode.fill_rectangles),
     });
     try x11.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
     try x11.writeAll(sink.writer, &offset, &[_]u8{
-        @intFromEnum(named.picture_operation),
+        @backingInt(named.picture_operation),
         0, 0, 0, // padding
     });
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.dst_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(named.dst_picture));
     try x11.writeInt(sink.writer, &offset, u16, named.color.red);
     try x11.writeInt(sink.writer, &offset, u16, named.color.green);
     try x11.writeInt(sink.writer, &offset, u16, named.color.blue);
@@ -486,10 +486,10 @@ pub fn CreateSolidFill(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.create_solid_fill),
+        @backingInt(Opcode.create_solid_fill),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(picture_id));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(picture_id));
     try x11.writeInt(sink.writer, &offset, u16, color.red);
     try x11.writeInt(sink.writer, &offset, u16, color.green);
     try x11.writeInt(sink.writer, &offset, u16, color.blue);
@@ -520,11 +520,11 @@ pub fn CreateGlyphSet(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.create_glyph_set),
+        @backingInt(Opcode.create_glyph_set),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(gsid));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(format));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(gsid));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(format));
     std.debug.assert(offset == msg_len);
     sink.sequence +%= 1;
 }
@@ -538,10 +538,10 @@ pub fn FreeGlyphSet(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.free_glyph_set),
+        @backingInt(Opcode.free_glyph_set),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(gsid));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(gsid));
     std.debug.assert(offset == msg_len);
     sink.sequence +%= 1;
 }
@@ -563,10 +563,10 @@ pub fn AddGlyphsStart(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.add_glyphs),
+        @backingInt(Opcode.add_glyphs),
     });
     try x11.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(gsid));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(gsid));
     try x11.writeInt(sink.writer, &offset, u32, 1); // num glyphs
     try x11.writeInt(sink.writer, &offset, u32, glyph_id); // glyph id
     // GlyphInfo
@@ -612,17 +612,17 @@ pub fn CompositeGlyphs16(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.composite_glyphs_16),
+        @backingInt(Opcode.composite_glyphs_16),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeAll(sink.writer, &offset, &[_]u8{
-        @intFromEnum(named.picture_operation),
+        @backingInt(named.picture_operation),
         0, 0, 0, // padding
     });
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.src_picture));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.dst_picture));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.mask_format));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(named.glyphset));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(named.src_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(named.dst_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(named.mask_format));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(named.glyphset));
     try x11.writeInt(sink.writer, &offset, i16, named.src_x);
     try x11.writeInt(sink.writer, &offset, i16, named.src_y);
     // GLYPHELT16: len=1, pad, delta_x, delta_y, glyph_id
@@ -649,7 +649,7 @@ pub fn QueryPictFormats(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.query_pict_formats),
+        @backingInt(Opcode.query_pict_formats),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     std.debug.assert(offset == msg_len);

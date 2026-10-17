@@ -150,8 +150,8 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
         std.log.debug("screen_ptr is 0x{x}", .{@intFromPtr(screen_dst)});
         screen_dst.* = .{
             .display = &display.public,
-            .root = @intFromEnum(screen_src.root),
-            .root_visual_num = @intFromEnum(screen_src.root_visual),
+            .root = @backingInt(screen_src.root),
+            .root_visual_num = @backingInt(screen_src.root_visual),
             .white_pixel = @intCast(screen_src.white_pixel),
             .black_pixel = @intCast(screen_src.black_pixel),
         };
@@ -169,7 +169,7 @@ fn openDisplay(display_spec_opt: ?[*:0]const u8) error{ Reported, OutOfMemory }!
             .nscreens = @intCast(fixed.root_screen_count),
             .screens = screens.ptr,
         },
-        .resource_id_base = @intFromEnum(fixed.resource_id_base),
+        .resource_id_base = @backingInt(fixed.resource_id_base),
         .next_resource_id_offset = 0,
         .gc_list = .{},
         .read_buf = read_buf,
@@ -323,11 +323,11 @@ export fn XCreateSimpleWindow(
             .visual_id = .fromInt(display.screens[0].root_visual_num),
         }, .{}) catch |e| break :blk e;
         sink.writer.flush() catch |e| break :blk e;
-        return @intFromEnum(new_window);
+        return @backingInt(new_window);
     };
     reportErrorRaw("failed to send CreateWindow message with {s}", .{@errorName(err)});
     generateErrorEvent(display_full);
-    return @intFromEnum(new_window);
+    return @backingInt(new_window);
 }
 
 //export fn XSetStandardProperties
@@ -468,7 +468,7 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
                     .serial = e.sequence,
                     .send_event = @intFromBool((display_full.read_buf[0] & 0x80) != 0),
                     .display = display,
-                    .window = @intFromEnum(e.window),
+                    .window = @backingInt(e.window),
                     .x = e.x,
                     .y = e.y,
                     .width = e.width,
@@ -484,10 +484,10 @@ export fn XNextEvent(display: *c.Display, event: *c.XEvent) c_int {
                     .serial = k.sequence,
                     .send_event = @intFromBool((display_full.read_buf[0] & 0x80) != 0),
                     .display = display,
-                    .window = @intFromEnum(k.event),
-                    .root = @intFromEnum(k.root),
-                    .subwindow = @intFromEnum(k.child),
-                    .time = @intFromEnum(k.time),
+                    .window = @backingInt(k.event),
+                    .root = @backingInt(k.root),
+                    .subwindow = @backingInt(k.child),
+                    .time = @backingInt(k.time),
                     .x = k.event_x,
                     .y = k.event_y,
                     .x_root = k.root_x,

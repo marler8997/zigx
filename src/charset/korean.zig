@@ -93,9 +93,9 @@ pub const Korean = enum(u8) {
     won = 255,
 
     pub fn toCombined(self: Korean) Combined {
-        return @enumFromInt((@as(u16, 14) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 14) << 8) | @backingInt(self)));
     }
     pub fn next(self: Korean) Korean {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

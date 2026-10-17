@@ -21,9 +21,9 @@ pub const Apl = enum(u8) {
     right_tack = 252,
 
     pub fn toCombined(self: Apl) Combined {
-        return @enumFromInt((@as(u16, 11) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 11) << 8) | @backingInt(self)));
     }
     pub fn next(self: Apl) Apl {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

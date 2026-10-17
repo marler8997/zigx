@@ -7,7 +7,7 @@ pub const Full = struct {
         var result: Full = undefined;
         for (&result.array) |*entry_ref| {
             // TODO: initialize to VoidSymbol instead of 0
-            entry_ref.* = [1]x11.charset.Combined{@enumFromInt(0)} ** 4;
+            entry_ref.* = @splat(@fromBackingInt(@intCast(0)));
         }
         return result;
     }
@@ -35,7 +35,7 @@ pub const Full = struct {
             for (0..reply.flexible) |index| {
                 const keysym_u32 = try source.takeReplyInt(u32);
                 if (index < 4) {
-                    keymap.array[keycode - 8][index] = @enumFromInt(@as(u16, @truncate(keysym_u32)));
+                    keymap.array[keycode - 8][index] = @fromBackingInt(@intCast(@as(u16, @truncate(keysym_u32))));
                 }
             }
         }
@@ -45,6 +45,6 @@ pub const Full = struct {
 
     pub fn getKeysym(self: Full, keycode: u8, mod: x11.KeycodeMod) error{KeycodeTooSmall}!x11.charset.Combined {
         if (keycode < 8) return error.KeycodeTooSmall;
-        return self.array[keycode - 8][@intFromEnum(mod)];
+        return self.array[keycode - 8][@backingInt(mod)];
     }
 };

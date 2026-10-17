@@ -51,7 +51,7 @@ pub fn queryVersion(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.query_version),
+        @backingInt(Opcode.query_version),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeInt(sink.writer, &offset, u32, major_version);
@@ -77,11 +77,11 @@ pub fn selectInput(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.select_input),
+        @backingInt(Opcode.select_input),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeInt(sink.writer, &offset, u32, eid);
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(window));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(window));
     try x11.writeInt(sink.writer, &offset, u32, @bitCast(event_mask));
     std.debug.assert(offset == msg_len);
     sink.sequence +%= 1;
@@ -119,11 +119,11 @@ pub fn presentPixmap(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.pixmap),
+        @backingInt(Opcode.pixmap),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(window));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(pixmap));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(window));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(pixmap));
     try x11.writeInt(sink.writer, &offset, u32, serial);
     try x11.writeInt(sink.writer, &offset, u32, 0); // valid = None
     try x11.writeInt(sink.writer, &offset, u32, 0); // update = None

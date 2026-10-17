@@ -25,13 +25,9 @@
 // ...todo...
 //
 
-const zigversion = @import("zigversion");
 const std = @import("std");
-const stdext = @import("stdext.zig");
 const testing = std.testing;
 const builtin = @import("builtin");
-const posix = std.posix;
-const windows = std.os.windows;
 
 pub const draft = @import("x/draft.zig");
 
@@ -63,34 +59,11 @@ pub const record = @compileError("todo");
 pub const BoundedArray = @import("bounded_array.zig").BoundedArray;
 pub const charset = @import("charset.zig");
 pub const Charset = charset.Charset;
-pub const Slice = zigversion.Slice;
-pub const SliceWithMaxLen = zigversion.SliceWithMaxLen;
+pub const Slice = @import("slice.zig").Slice;
+pub const SliceWithMaxLen = @import("slice.zig").SliceWithMaxLen;
 pub const keymap = @import("keymap.zig");
 
 pub const log = std.log.scoped(.x11);
-
-pub const zig_atleast_15_3 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 3 }) != .lt;
-
-// TODO: drop this function when support for 0.15 is dropped.
-pub fn socketWriter(stream: std.net.Stream, buffer: []u8) std.net.Stream.Writer {
-    return stream.writer(buffer);
-}
-
-// TODO: drop this function when support for 0.15 is dropped.
-pub fn socketReader(stream: std.net.Stream, buffer: []u8) std.net.Stream.Reader {
-    switch (builtin.os.tag) {
-        .windows => {
-            // workaround https://github.com/ziglang/zig/issues/25620
-            if (!zig_atleast_15_3) {
-                var reader = stream.reader(buffer);
-                reader.interface_state.vtable = &@import("netpatch.zig").vtable;
-                return reader;
-            }
-        },
-        else => {},
-    }
-    return stream.reader(buffer);
-}
 
 const x_test = @import("test/x_test.zig");
 
@@ -210,31 +183,33 @@ pub const Display = struct {
 };
 
 pub const GetDisplayError = error{
-    OutOfMemory,
-    InvalidWtf8,
+    DisplayTooLong,
 };
 
-/// Returns the DISPLAY environment variable for any platform.
-/// On windows it just uses the page allocator and leaks the result.
-/// Use getDisplayPosix which has no possible error for non-windows systems.
-pub fn getDisplay() GetDisplayError!Display {
+/// Large enough for any reasonable DISPLAY, see getDisplay.
+pub const max_display_len = 512;
+
+/// Returns the DISPLAY environment variable for any platform. On windows the
+/// value is converted to WTF-8 into `buf` (see max_display_len), it's unused on
+/// other platforms. Use getDisplayPosix which has no possible error for non-windows systems.
+pub fn getDisplay(environ: std.process.Environ, buf: []u8) GetDisplayError!Display {
     if (builtin.os.tag == .windows) {
-        // we'll just make an allocator and never free it, no
-        // big deal
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        return .{ .string = std.process.getEnvVarOwned(arena.allocator(), "DISPLAY") catch |err| switch (err) {
-            error.EnvironmentVariableNotFound => null,
-            error.OutOfMemory,
-            error.InvalidWtf8,
-            => |e| return e,
-        } };
+        const value = environ.getWindows(std.unicode.wtf8ToWtf16LeStringLiteral("DISPLAY")) orelse return .{ .string = null };
+        const len = std.unicode.calcWtf8Len(value);
+        if (len > buf.len) {
+            log.err("DISPLAY is {} bytes but the buffer is only {}", .{ len, buf.len });
+            return error.DisplayTooLong;
+        }
+        const written = std.unicode.wtf16LeToWtf8(buf, value);
+        std.debug.assert(written == len);
+        return .{ .string = buf[0..len] };
     }
-    return getDisplayPosix();
+    return getDisplayPosix(environ);
 }
 
 /// Posix-specific function to get DISPLAY which cannot fail.
-pub fn getDisplayPosix() Display {
-    return .{ .string = posix.getenv("DISPLAY") };
+pub fn getDisplayPosix(environ: std.process.Environ) Display {
+    return .{ .string = environ.getPosix("DISPLAY") };
 }
 
 pub const Protocol = enum {
@@ -341,30 +316,68 @@ pub fn parseDisplay(display: Display) InvalidDisplayError!ParsedDisplay {
     return parsed;
 }
 
+/// A unix domain socket path stored inline.
+pub const UnixPath = struct {
+    buf: [max_len]u8,
+    len: std.math.IntFittingRange(0, max_len),
+
+    /// The size of sockaddr_un.path on linux.
+    pub const max_len = 108;
+
+    pub fn init(path: []const u8) error{NameTooLong}!UnixPath {
+        if (path.len > max_len) return error.NameTooLong;
+        var result: UnixPath = .{ .buf = undefined, .len = @intCast(path.len) };
+        @memcpy(result.buf[0..path.len], path);
+        return result;
+    }
+    pub fn initDisplayNum(display_num: DisplayNum) UnixPath {
+        var result: UnixPath = .{ .buf = undefined, .len = undefined };
+        result.len = @intCast((std.fmt.bufPrint(
+            &result.buf,
+            "/tmp/.X11-unix/X{d}",
+            .{@backingInt(display_num)},
+        ) catch unreachable).len);
+        return result;
+    }
+    pub fn slice(path: *const UnixPath) []const u8 {
+        return path.buf[0..path.len];
+    }
+};
+
+pub const Address = union(enum) {
+    ip: std.Io.net.IpAddress,
+    unix: UnixPath,
+    pub fn format(address: Address, writer: *std.Io.Writer) error{WriteFailed}!void {
+        switch (address) {
+            .ip => |ip| try ip.format(writer),
+            .unix => |*path| try writer.print("unix:{s}", .{path.slice()}),
+        }
+    }
+};
+
 pub const Host = union(enum) {
-    address: std.net.Address,
+    address: Address,
     domain_name: struct {
         string: []const u8,
         port: u16,
     },
     pub fn initDomainName(host: []const u8, port: u16) Host {
         std.debug.assert(host.len != 0);
-        if (std.net.Address.parseIp4(host, port)) |addr| return .{ .address = addr } else |_| {}
-        if (std.net.Address.parseIp6(host, port)) |addr| return .{ .address = addr } else |_| {}
+        if (std.Io.net.IpAddress.parse(host, port)) |ip| return .{ .address = .{ .ip = ip } } else |_| {}
         // TODO: should/could we check if this is a valid hostname?
         //       maybe not since we might detect this later during DNS resolution?
         return .{ .domain_name = .{ .string = host, .port = port } };
     }
     pub fn format(host: Host, writer: *std.Io.Writer) error{WriteFailed}!void {
         switch (host) {
-            .address => |*address| try address.format(writer),
+            .address => |address| try address.format(writer),
             .domain_name => |d| try writer.print("{s}:{}", .{ d.string, d.port }),
         }
     }
 };
 
-fn localhostIp4(port: u16) std.net.Address {
-    return .initIp4([_]u8{ 127, 0, 0, 1 }, port);
+fn localhostIp4(port: u16) Address {
+    return .{ .ip = .{ .ip4 = .loopback(port) } };
 }
 
 pub fn getHost(display: Display, parsed: *const ParsedDisplay) error{X11BadDisplay}!Host {
@@ -375,13 +388,7 @@ pub fn getHost(display: Display, parsed: *const ParsedDisplay) error{X11BadDispl
                 log.err("not sure if it's valid for DISPLAY to host with the unix protocol", .{});
                 return error.X11BadDisplay;
             }
-            var addr: std.net.Address = .{ .un = .{ .family = posix.AF.UNIX, .path = undefined } };
-            _ = std.fmt.bufPrintZ(
-                &addr.un.path,
-                "/tmp/.X11-unix/X{d}",
-                .{@intFromEnum(parsed.display_num)},
-            ) catch unreachable;
-            return .{ .address = addr };
+            return .{ .address = .{ .unix = .initDisplayNum(parsed.display_num) } };
         },
         .tcp, .inet => if (host_or_empty.len == 0) return .{
             .address = localhostIp4(parsed.display_num.asPort()),
@@ -401,30 +408,23 @@ pub fn getHost(display: Display, parsed: *const ParsedDisplay) error{X11BadDispl
         }
         if (host_or_empty[0] == '/') {
             // TODO: should we check if this file exists?
-            return .{ .address = std.net.Address.initUnix(host_or_empty) catch |e| switch (e) {
+            return .{ .address = .{ .unix = UnixPath.init(host_or_empty) catch |e| switch (e) {
                 error.NameTooLong => {
                     log.err("unix socket path '{s}' is too long ({})", .{ host_or_empty, host_or_empty.len });
                     return error.X11BadDisplay;
                 },
-            } };
+            } } };
         }
         return .initDomainName(host_or_empty, parsed.display_num.asPort());
     } else {
         if (builtin.os.tag == .windows) {
             log.err(
                 "unsure how to connect to DISPLAY {f} on windows without a hostname. Expected something like 'localhost:{}'",
-                .{ display, @intFromEnum(parsed.display_num) },
+                .{ display, @backingInt(parsed.display_num) },
             );
             std.process.exit(0xff);
         }
-
-        var addr: std.net.Address = .{ .un = .{ .family = posix.AF.UNIX, .path = undefined } };
-        _ = std.fmt.bufPrintZ(
-            &addr.un.path,
-            "/tmp/.X11-unix/X{d}",
-            .{@intFromEnum(parsed.display_num)},
-        ) catch unreachable;
-        return .{ .address = addr };
+        return .{ .address = .{ .unix = .initDisplayNum(parsed.display_num) } };
     }
 }
 
@@ -446,11 +446,13 @@ pub const AuthFileKind = enum {
 /// Note that if an authentication fails, it will reconnect and reset
 /// the given IO.
 pub const Authenticator = struct {
+    io: std.Io,
+    environ: std.process.Environ,
     display: Display,
     parsed_display: *const ParsedDisplay,
     host: *const Host,
-    address: *const std.net.Address,
-    stream: std.net.Stream,
+    address: *const Address,
+    stream: std.Io.net.Stream,
     stream_read_buffer: []u8,
     filename_buffer: []u8,
     order: Order,
@@ -517,7 +519,7 @@ pub const Authenticator = struct {
         no_more_auth,
     };
 
-    pub const Success = struct { std.net.Stream.Reader, bool };
+    pub const Success = struct { std.Io.net.Stream.Reader, bool };
 
     pub const Event = union(enum) {
         reply: union(enum) {
@@ -536,15 +538,15 @@ pub const Authenticator = struct {
         open_auth_file_error: struct {
             kind: AuthFileKind,
             filename: []const u8,
-            err: std.fs.File.OpenError,
+            err: std.Io.File.OpenError,
         },
         auth_file_opened: struct {
             kind: AuthFileKind,
             filename: []const u8,
         },
         io_error: union(enum) {
-            write_error: std.net.Stream.WriteError,
-            read_error: (error{EndOfStream} || std.net.Stream.ReadError),
+            write_error: std.Io.net.Stream.Writer.Error,
+            read_error: (error{EndOfStream} || std.Io.net.Stream.Reader.Error),
             protocol,
         },
     };
@@ -553,12 +555,12 @@ pub const Authenticator = struct {
         auth_index: AuthIndex,
         auth_file_kind: AuthFileKind,
         filename: []const u8,
-        file: std.fs.File,
+        file: std.Io.File,
         read_buf: [400]u8 = undefined,
-        file_reader: std.fs.File.Reader,
+        file_reader: std.Io.File.Reader,
         reader: AuthReader,
         pub fn close(self: *ReadFile) void {
-            self.file.close();
+            self.file.close(self.file_reader.io);
         }
     };
 
@@ -573,13 +575,14 @@ pub const Authenticator = struct {
                     authenticator.state.update(index.nextAuthState());
                     authenticator.need_reconnect = true;
                     log.info("sending setup with no auth...", .{});
-                    writeSetupNoAuth(authenticator.stream) catch |err| return .{
+                    writeSetupNoAuth(authenticator.io, authenticator.stream) catch |err| return .{
                         .io_error = .{ .write_error = err },
                     };
                     return authenticator.readSetupReply(.{ .used_auth = false });
                 },
                 .auth => |auth_file_kind| {
                     const maybe_auth_filename = getAuthFilename(
+                        authenticator.environ,
                         auth_file_kind,
                         authenticator.filename_buffer,
                     ) catch |err| {
@@ -593,7 +596,7 @@ pub const Authenticator = struct {
                         authenticator.state.update(index.nextAuthState());
                         continue;
                     };
-                    const file = std.fs.cwd().openFile(auth_filename, .{}) catch |err| {
+                    const file = std.Io.Dir.cwd().openFile(authenticator.io, auth_filename, .{}) catch |err| {
                         authenticator.state.update(index.nextAuthState());
                         return .{ .open_auth_file_error = .{
                             .kind = auth_file_kind,
@@ -610,7 +613,7 @@ pub const Authenticator = struct {
                         .file_reader = undefined,
                         .reader = undefined,
                     } });
-                    authenticator.state.read_file.file_reader = .init(file, &authenticator.state.read_file.read_buf);
+                    authenticator.state.read_file.file_reader = .init(file, authenticator.io, &authenticator.state.read_file.read_buf);
                     authenticator.state.read_file.reader = .{ .reader = &authenticator.state.read_file.file_reader.interface };
                 },
             },
@@ -650,8 +653,9 @@ pub const Authenticator = struct {
                     "sending setup with auth {} from '{s}' ({s}) ({s})",
                     .{ auth_index, r.filename, r.auth_file_kind.context(), match.name.nativeSlice() },
                 );
-                var write_error: ?std.net.Stream.WriteError = null;
+                var write_error: ?std.Io.net.Stream.Writer.Error = null;
                 writeSetupWithAuth(
+                    authenticator.io,
                     authenticator.stream,
                     &r.reader,
                     match.name,
@@ -678,22 +682,22 @@ pub const Authenticator = struct {
     }
     fn connect(authenticator: *Authenticator) ConnectAddressError!void {
         if (authenticator.need_reconnect) {
-            const new_stream = connectAddress(authenticator.address) catch |e| {
+            const new_stream = connectAddress(authenticator.io, authenticator.address) catch |e| {
                 log.err("reconnect to {f} failed with {t}", .{ authenticator.address.*, e });
                 return e;
             };
             log.info("reconnected", .{});
-            std.debug.assert(authenticator.stream.handle != new_stream.handle);
-            disconnect(authenticator.stream);
+            std.debug.assert(authenticator.stream.socket.handle != new_stream.socket.handle);
+            disconnect(authenticator.io, authenticator.stream);
             authenticator.stream = new_stream;
             authenticator.need_reconnect = false;
         }
     }
     fn readSetupReply(authenticator: *Authenticator, named: struct { used_auth: bool }) Event {
-        var socket_reader = socketReader(authenticator.stream, authenticator.stream_read_buffer);
-        return switch (readSetupReply1(socket_reader.interface()) catch |err| return switch (err) {
+        var socket_reader = authenticator.stream.reader(authenticator.io, authenticator.stream_read_buffer);
+        return switch (readSetupReply1(&socket_reader.interface) catch |err| return switch (err) {
             error.ReadFailed => .{ .io_error = .{
-                .read_error = socket_reader.getError() orelse error.Unexpected,
+                .read_error = socket_reader.err orelse error.Unexpected,
             } },
             error.EndOfStream => |e| .{ .io_error = .{
                 .read_error = e,
@@ -708,7 +712,7 @@ pub const Authenticator = struct {
                 // I'd like to implement this flow, maybe it would allow us to try
                 // another authentication method without reconnecting, but, I've
                 // never seen this happen so I can't test a solution yet.
-                (if (builtin.mode == .Debug) std.debug.panic else log.err)(
+                (if (builtin.mode == .debug) std.debug.panic else log.err)(
                     "TODO: handle authenticate reply from X server",
                     .{},
                 );
@@ -717,7 +721,7 @@ pub const Authenticator = struct {
             },
         };
     }
-    fn reportAuthReadError(filename: []const u8, err: error{ ReadFailed, EndOfStream }, file_error: ?std.fs.File.ReadError) void {
+    fn reportAuthReadError(filename: []const u8, err: error{ ReadFailed, EndOfStream }, file_error: ?std.Io.File.Reader.Error) void {
         switch (err) {
             error.ReadFailed => {
                 const e = file_error orelse error.Unexpected;
@@ -733,9 +737,9 @@ pub const Authenticator = struct {
 // The size of the client's initial setup message if both name and data are empty
 const write_setup_no_auth_len = 12;
 
-fn writeSetupNoAuth(stream: std.net.Stream) std.net.Stream.WriteError!void {
+fn writeSetupNoAuth(io: std.Io, stream: std.Io.net.Stream) std.Io.net.Stream.Writer.Error!void {
     var write_buffer: [write_setup_no_auth_len]u8 = undefined;
-    var socket_writer = stream.writer(&write_buffer);
+    var socket_writer = stream.writer(io, &write_buffer);
     const w = &socket_writer.interface;
     writeSetupHeader(w, .empty, 0) catch unreachable;
     writeSetupData(w, .empty) catch unreachable;
@@ -745,15 +749,16 @@ fn writeSetupNoAuth(stream: std.net.Stream) std.net.Stream.WriteError!void {
 // name is assumed to be taken from the AuthReader buffer, so, it becomes invalidated
 // as soon as any more data is read from AuthReader.
 fn writeSetupWithAuth(
-    stream: std.net.Stream,
+    io: std.Io,
+    stream: std.Io.net.Stream,
     auth_reader: *AuthReader,
     name: Slice(u16, [*]const u8),
     data_len: u16,
-    out_write_error: *?std.net.Stream.WriteError,
+    out_write_error: *?std.Io.net.Stream.Writer.Error,
 ) error{ ReadFailed, EndOfStream, WriteFailed }!void {
     std.debug.assert(out_write_error.* == null);
     var write_buffer: [write_setup_no_auth_len + 400]u8 = undefined;
-    var socket_writer = stream.writer(&write_buffer);
+    var socket_writer = stream.writer(io, &write_buffer);
     defer out_write_error.* = socket_writer.err;
     const w = &socket_writer.interface;
     writeSetupHeader(w, name, data_len) catch unreachable;
@@ -785,7 +790,7 @@ fn readSetupReply1(reader: *std.Io.Reader) error{ ReadFailed, EndOfStream, Proto
         authenticate = 2,
         _,
     };
-    switch (@as(Status, @enumFromInt(status))) {
+    switch (@as(Status, @fromBackingInt(@intCast(status)))) {
         .failed => {
             reader.seek += 1;
             const reason_len = try reader.takeByte();
@@ -818,7 +823,7 @@ fn matchAuthEntry(
     display: Display,
     parsed_display: *const ParsedDisplay,
     host: *const Host,
-    address: *const std.net.Address,
+    address: *const Address,
     auth_reader: *AuthReader,
     entry_index: u32,
 ) error{ ReadFailed, EndOfStream }!union(enum) {
@@ -875,15 +880,15 @@ pub const DisplayNum = enum(u16) {
 
     pub fn fromInt(int: u16) error{BadDisplayNumber}!DisplayNum {
         if (int > max_display_num) return error.BadDisplayNumber;
-        return @enumFromInt(int);
+        return @fromBackingInt(@intCast(int));
     }
 
     pub fn asPort(self: DisplayNum) u16 {
-        return TcpBasePort + @as(u16, @intFromEnum(self));
+        return TcpBasePort + @as(u16, @backingInt(self));
     }
 
     pub fn format(self: DisplayNum, writer: *std.Io.Writer) error{WriteFailed}!void {
-        try writer.print("{}", .{@intFromEnum(self)});
+        try writer.print("{}", .{@backingInt(self)});
     }
 };
 
@@ -891,56 +896,62 @@ pub const ConnectError =
     error{UnknownHostName} ||
     ConnectTcpError ||
     ConnectUnixError;
-pub fn connect(addr: *const Host) ConnectError!struct { std.net.Address, std.net.Stream } {
-    switch (addr.*) {
-        .address => |*address| return .{ address.*, try connectAddress(address) },
-        .domain_name => |*host| {
-            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            defer arena.deinit();
-            const list = try getAddressList(arena.allocator(), host.string, host.port);
-            defer list.deinit();
+pub fn connect(io: std.Io, host: *const Host) ConnectError!struct { Address, std.Io.net.Stream } {
+    switch (host.*) {
+        .address => |*address| return .{ address.*, try connectAddress(io, address) },
+        .domain_name => |*d| {
+            var addr_buf: [16]std.Io.net.IpAddress = undefined;
+            const addrs = try lookup(io, d.string, d.port, &addr_buf);
             var ip4_only = true;
             while (true) {
-                for (list.addrs) |net_addr| {
-                    const is_ip4 = (net_addr.any.family == posix.AF.INET);
-                    if (is_ip4 != ip4_only) continue;
-                    if (connectTcp(&net_addr)) |stream| {
-                        return .{ net_addr, stream };
+                for (addrs) |*ip| {
+                    if ((ip.* == .ip4) != ip4_only) continue;
+                    if (connectTcp(io, ip)) |stream| {
+                        return .{ .{ .ip = ip.* }, stream };
                     } else |err| switch (err) {
                         error.ConnectionRefused, error.Unexpected => continue,
                         error.AccessDenied,
                         error.SystemResources,
+                        error.Canceled,
                         => |e| return e,
                     }
                 }
                 if (!ip4_only) break;
                 ip4_only = false;
             }
-            if (list.addrs.len == 0) return error.UnknownHostName;
+            if (addrs.len == 0) return error.UnknownHostName;
             return error.ConnectionRefused;
         },
     }
 }
 
 const ConnectAddressError = ConnectTcpError || ConnectUnixError;
-fn connectAddress(addr: *const std.net.Address) ConnectAddressError!std.net.Stream {
-    return switch (addr.any.family) {
-        posix.AF.UNIX => try connectUnix(
-            &addr.un,
-            std.mem.sliceTo(&addr.un.path, 0).len,
-        ),
-        else => try connectTcp(addr),
+fn connectAddress(io: std.Io, addr: *const Address) ConnectAddressError!std.Io.net.Stream {
+    return switch (addr.*) {
+        .ip => |*ip| try connectTcp(io, ip),
+        .unix => |*path| try connectUnix(io, path.slice()),
     };
 }
 
-pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16) ConnectError!*std.net.AddressList {
-    return std.net.getAddressList(allocator, name, port) catch |err| switch (err) {
+/// Resolves `name` to the IP addresses stored in `addr_buf`, any beyond its length are ignored.
+pub fn lookup(
+    io: std.Io,
+    name: []const u8,
+    port: u16,
+    addr_buf: []std.Io.net.IpAddress,
+) ConnectError![]std.Io.net.IpAddress {
+    const host_name = std.Io.net.HostName.init(name) catch |err| {
+        log.err("invalid host name '{s}': {t}", .{ name, err });
+        return error.UnknownHostName;
+    };
+    // lookup is guaranteed not to block with a capacity of at least 16
+    var queue_buf: [32]std.Io.net.HostName.LookupResult = undefined;
+    var queue: std.Io.Queue(std.Io.net.HostName.LookupResult) = .init(&queue_buf);
+    host_name.lookup(io, &queue, .{ .port = port }) catch |err| switch (err) {
+        error.UnknownHostName, error.NoAddressReturned => return error.UnknownHostName,
         error.SystemResources,
-        error.AccessDenied,
+        error.Canceled,
         => |e| return e,
-        error.ConnectionResetByPeer,
-        error.ConnectionTimedOut,
-        => return error.ConnectionRefused,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
         => return error.SystemResources,
@@ -948,26 +959,40 @@ pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16)
         // we'll just handle them as unexpected errors until we know there's a reason to handle
         // specific errors.
         else => |e| {
-            log.err("resolve DNS name '{s}' (port {}) failed with {s}", .{ name, port, @errorName(e) });
+            log.err("resolve DNS name '{s}' (port {}) failed with {t}", .{ name, port, e });
             return error.Unexpected;
         },
     };
+    var len: usize = 0;
+    while (queue.getOne(io)) |result| switch (result) {
+        .address => |addr| if (len < addr_buf.len) {
+            addr_buf[len] = addr;
+            len += 1;
+        },
+        .canonical_name => {},
+    } else |err| switch (err) {
+        error.Closed => {},
+        error.Canceled => |e| return e,
+    }
+    return addr_buf[0..len];
 }
 
 const ConnectTcpError = error{
     AccessDenied,
     ConnectionRefused,
     SystemResources,
+    Canceled,
     Unexpected,
 };
-fn connectTcp(addr: *const std.net.Address) ConnectTcpError!std.net.Stream {
+fn connectTcp(io: std.Io, addr: *const std.Io.net.IpAddress) ConnectTcpError!std.Io.net.Stream {
     // tcp connections can take a while so let's add a log to know
     // if we're blocked on it
     log.info("connecting to {f}", .{addr.*});
-    return std.net.tcpConnectToAddress(addr.*) catch |err| switch (err) {
-        error.ConnectionTimedOut,
+    return addr.connect(io, .{ .mode = .stream, .protocol = .tcp }) catch |err| switch (err) {
+        error.Timeout,
         error.ConnectionRefused,
         error.NetworkUnreachable,
+        error.HostUnreachable,
         error.ConnectionPending,
         error.ConnectionResetByPeer,
         => return error.ConnectionRefused,
@@ -975,85 +1000,54 @@ fn connectTcp(addr: *const std.net.Address) ConnectTcpError!std.net.Stream {
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
         => return error.SystemResources,
-        error.AccessDenied,
-        error.PermissionDenied,
-        => return error.AccessDenied,
-        error.AddressInUse,
-        error.AddressNotAvailable,
-        error.WouldBlock,
-        error.Unexpected,
-        error.FileNotFound,
-        error.AddressFamilyNotSupported,
-        error.ProtocolFamilyNotAvailable,
-        error.ProtocolNotSupported,
-        error.SocketTypeNotSupported,
-        => |e| {
-            log.err("TCP connect to {f} failed unexpectedly with {s}", .{ addr, @errorName(e) });
+        error.AccessDenied => return error.AccessDenied,
+        error.Canceled => |e| return e,
+        else => |e| {
+            log.err("TCP connect to {f} failed unexpectedly with {t}", .{ addr.*, e });
             return error.Unexpected;
         },
     };
 }
 
-pub fn disconnect(stream: std.net.Stream) void {
-    posix.shutdown(stream.handle, .both) catch {}; // ignore any error here
-    stream.close();
+pub fn disconnect(io: std.Io, stream: std.Io.net.Stream) void {
+    stream.shutdown(io, .both) catch {}; // ignore any error here
+    stream.close(io);
 }
 
 const ConnectUnixError = error{
     FileNotFound,
     SystemResources,
-    ConnectionTimedOut,
     AccessDenied,
     PermissionDenied,
     ConnectionRefused,
-    AddressNotAvailable,
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
+    Canceled,
     Unexpected,
 };
-pub fn connectUnix(addr: *const posix.sockaddr.un, path_len: usize) ConnectUnixError!std.net.Stream {
-    const sock = posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch |err| switch (err) {
-        error.SystemResources => |e| return e,
-        error.AccessDenied => return error.AccessDenied,
-        error.ProcessFdQuotaExceeded,
-        error.SystemFdQuotaExceeded,
-        => return error.SystemResources,
-        error.AddressFamilyNotSupported,
-        error.ProtocolFamilyNotAvailable,
-        error.ProtocolNotSupported,
-        error.SocketTypeNotSupported,
-        error.Unexpected,
-        => |e| {
-            log.err("create unix socket unexpectedly failed with {s}", .{@errorName(e)});
+pub fn connectUnix(io: std.Io, path: []const u8) ConnectUnixError!std.Io.net.Stream {
+    const addr = std.Io.net.UnixAddress.init(path) catch |err| switch (err) {
+        error.NameTooLong => {
+            log.err("unix socket path '{s}' is too long ({})", .{ path, path.len });
             return error.Unexpected;
         },
     };
-    errdefer posix.close(sock);
-
-    // TODO: should we set any socket options?
-    const addr_len: posix.socklen_t = @intCast(@offsetOf(posix.sockaddr.un, "path") + path_len + 1);
-    posix.connect(sock, @ptrCast(addr), addr_len) catch |err| switch (err) {
+    return addr.connect(io) catch |err| switch (err) {
         error.FileNotFound,
         error.SystemResources,
-        error.ConnectionTimedOut,
         error.AccessDenied,
         error.PermissionDenied,
-        error.Unexpected,
         error.ConnectionRefused,
-        error.AddressNotAvailable,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        error.Canceled,
+        error.Unexpected,
         => |e| return e,
-        error.ConnectionResetByPeer,
-        error.WouldBlock,
-        error.NetworkUnreachable,
-        error.AddressFamilyNotSupported,
-        error.AddressInUse,
-        error.ConnectionPending,
-        => |e| {
-            log.err("connect unix socket unexpectedly failed with {s}", .{@errorName(e)});
+        else => |e| {
+            log.err("connect unix socket '{s}' unexpectedly failed with {t}", .{ path, e });
             return error.Unexpected;
         },
     };
-    return .{ .handle = sock };
 }
 
 fn unexpectedError(e: anyerror) error{Unexpected} {
@@ -1087,7 +1081,14 @@ const FmtRead = struct {
     }
 };
 
-pub const ArrayPointer = zigversion.ArrayPointer;
+pub fn ArrayPointer(comptime T: type) type {
+    const info = switch (@typeInfo(T)) {
+        .pointer => |info| info,
+        else => @compileError("ArrayPointer not implemented for " ++ @typeName(T)),
+    };
+    if (info.size != .slice) @compileError("ArrayPointer not implemented for " ++ @typeName(T));
+    return @Pointer(.many, info.attrs, info.child, info.sentinel());
+}
 
 pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@TypeOf(s))) {
     switch (@typeInfo(@TypeOf(s))) {
@@ -1121,38 +1122,22 @@ pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@Ty
 
 pub const GetAuthFilenameError = error{
     XauthorityEnvTooBig,
-    XauthorityEnvInvalidUnicode,
     HomeTooLong,
-
-    AccessDenied,
-    SystemResources,
-    InputOutput,
-    SymLinkLoop,
-    FileBusy,
-
-    Unexpected,
 };
 
-pub fn getAuthFilename(kind: AuthFileKind, filename_buf: []u8) GetAuthFilenameError!?[]const u8 {
+pub fn getAuthFilename(environ: std.process.Environ, kind: AuthFileKind, filename_buf: []u8) GetAuthFilenameError!?[]const u8 {
     switch (kind) {
         .env => {
             if (builtin.os.tag == .windows) {
-                var fba: std.heap.FixedBufferAllocator = .init(filename_buf);
-                if (std.process.getEnvVarOwned(fba.allocator(), "XAUTHORITY")) |filename| {
-                    return filename;
-                } else |err| return switch (err) {
-                    error.OutOfMemory => return error.XauthorityEnvTooBig,
-                    error.EnvironmentVariableNotFound => null,
-                    error.InvalidWtf8 => error.XauthorityEnvInvalidUnicode,
-                };
-            } else {
-                if (posix.getenv("XAUTHORITY")) |xauth| return xauth;
-                return null;
+                const xauth = environ.getWindows(std.unicode.wtf8ToWtf16LeStringLiteral("XAUTHORITY")) orelse return null;
+                if (std.unicode.calcWtf8Len(xauth) > filename_buf.len) return error.XauthorityEnvTooBig;
+                return filename_buf[0..std.unicode.wtf16LeToWtf8(filename_buf, xauth)];
             }
+            return environ.getPosix("XAUTHORITY");
         },
         .home => {
             if (builtin.os.tag == .windows) return null;
-            const home = posix.getenv("HOME") orelse return null;
+            const home = environ.getPosix("HOME") orelse return null;
             const basename = ".Xauthority";
             const len = home.len + 1 + basename.len;
             if (len + 1 > filename_buf.len) return error.HomeTooLong;
@@ -1206,7 +1191,7 @@ pub const AuthFamily = enum(u16) {
 
 fn matchAddr(
     connect_host: *const Host,
-    connect_addr: *const std.net.Address,
+    connect_addr: *const Address,
     file_addr: AuthFileAddr,
 ) bool {
     // todo: we'll probably need this to implement better address matching
@@ -1217,27 +1202,32 @@ fn matchAddr(
                 log.err("expected xauth inet addr to be 4 bytes but got {}", .{file_addr.data.len});
                 return false;
             }
-            if (connect_addr.any.family != posix.AF.INET) return false;
-            comptime std.debug.assert(@sizeOf(@TypeOf(connect_addr.in.sa.addr)) == 4);
-            const addr4 = std.mem.asBytes(&connect_addr.in.sa.addr);
-            return std.mem.eql(u8, addr4, file_addr.data);
+            const ip4 = switch (connect_addr.*) {
+                .ip => |ip| switch (ip) {
+                    .ip4 => |ip4| ip4,
+                    .ip6 => return false,
+                },
+                .unix => return false,
+            };
+            return std.mem.eql(u8, &ip4.bytes, file_addr.data);
         },
         .inet6 => {
             if (file_addr.data.len != 16) {
                 log.err("expected xauth inet6 addr to be 16 bytes but got {}", .{file_addr.data.len});
                 return false;
             }
-            if (connect_addr.any.family != posix.AF.INET6) return false;
-            comptime std.debug.assert(@sizeOf(@TypeOf(connect_addr.in6.sa.addr)) == 16);
-            const addr6 = std.mem.asBytes(&connect_addr.in6.sa.addr);
-            return std.mem.eql(u8, addr6, file_addr.data);
+            const ip6 = switch (connect_addr.*) {
+                .ip => |ip| switch (ip) {
+                    .ip4 => return false,
+                    .ip6 => |ip6| ip6,
+                },
+                .unix => return false,
+            };
+            return std.mem.eql(u8, &ip6.bytes, file_addr.data);
         },
-        .unix => {
-            if (connect_addr.any.family != posix.AF.UNIX) return false;
-            // not sure how to properly compare the paths here so I'm just
-            // going to always return true if we've connected to any unix path
-            return true;
-        },
+        // not sure how to properly compare the paths here so I'm just
+        // going to always return true if we've connected to any unix path
+        .unix => connect_addr.* == .unix,
         .wild => true,
         _ => return false,
     };
@@ -1251,9 +1241,9 @@ fn matchDisplayNum(
     // My guess is this means it applies to all displays
     if (file_display_num_string.len == 0) return true;
     if (std.fmt.parseInt(u16, file_display_num_string, 10)) |file_display_num| {
-        return @intFromEnum(connect_parsed_display.display_num) == file_display_num;
+        return @backingInt(connect_parsed_display.display_num) == file_display_num;
     } else |_| {}
-    (if (builtin.mode == .Debug) std.debug.panic else log.err)(
+    (if (builtin.mode == .debug) std.debug.panic else log.err)(
         "TODO: implement matching display '{s}' against num '{s}'",
         .{ connect_display_string, file_display_num_string },
     );
@@ -1329,7 +1319,7 @@ pub const AuthReader = struct {
         std.debug.assert(self.state == .family);
         if (self.reader.takeInt(u16, .big)) |int| {
             self.state = .{ .dynamic_len = .addr };
-            return @enumFromInt(int);
+            return @fromBackingInt(@intCast(int));
         } else |err| return switch (err) {
             error.EndOfStream => null,
             else => |e| e,
@@ -1429,13 +1419,13 @@ pub const AuthReader = struct {
 };
 
 /// Call to handle a WriteFailed on the socket writer and/or RequestSink after the intial setup.
-/// It will either return an error or nothing if the error is a BrokenPipe which means the
-/// connection to the X server has been closed.
-pub fn onWriteError(write_failed: error{WriteFailed}, err: std.net.Stream.WriteError) !void {
+/// It will either return an error or nothing if the error means the connection to the X server
+/// has been closed (std maps EPIPE to SocketUnconnected).
+pub fn onWriteError(write_failed: error{WriteFailed}, err: std.Io.net.Stream.Writer.Error) !void {
     write_failed catch {};
     switch (err) {
-        error.BrokenPipe => {
-            log.info("BrokenPipe", .{});
+        error.ConnectionResetByPeer, error.SocketUnconnected => |e| {
+            log.info("connection closed ({t})", .{e});
         },
         else => |e| return e,
     }
@@ -1450,23 +1440,23 @@ pub const RequestSink = struct {
         var offset: usize = 0;
 
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.create_window),
+            @backingInt(Opcode.create_window),
             args.depth,
         });
         try writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(args.window_id));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(args.parent_window_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(args.window_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(args.parent_window_id));
         try writeInt(sink.writer, &offset, i16, args.x);
         try writeInt(sink.writer, &offset, i16, args.y);
         try writeInt(sink.writer, &offset, u16, args.width);
         try writeInt(sink.writer, &offset, u16, args.height);
         try writeInt(sink.writer, &offset, u16, args.border_width);
-        try writeInt(sink.writer, &offset, u16, @intFromEnum(args.class));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(args.visual_id));
+        try writeInt(sink.writer, &offset, u16, @backingInt(args.class));
+        try writeInt(sink.writer, &offset, u32, @backingInt(args.visual_id));
         try writeInt(sink.writer, &offset, u32, @bitCast(msg.option_mask));
-        inline for (std.meta.fields(window.Options)) |field| {
-            if (!isDefaultValue(&options, field)) {
-                try writeInt(sink.writer, &offset, u32, optionToU32(@field(options, field.name)));
+        inline for (@typeInfo(window.Options).@"struct".field_names) |field_name| {
+            if (!isDefaultValue(&options, field_name)) {
+                try writeInt(sink.writer, &offset, u32, optionToU32(@field(options, field_name)));
             }
         }
         std.debug.assert(msg.len == offset);
@@ -1477,15 +1467,15 @@ pub const RequestSink = struct {
         const msg = inspectChangeWindowAttributes(&options);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.change_window_attributes),
+            @backingInt(Opcode.change_window_attributes),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(window_id));
         try writeInt(sink.writer, &offset, u32, @bitCast(msg.option_mask));
-        inline for (std.meta.fields(window.Options)) |field| {
-            if (!isDefaultValue(&options, field)) {
-                try writeInt(sink.writer, &offset, u32, optionToU32(@field(options, field.name)));
+        inline for (@typeInfo(window.Options).@"struct".field_names) |field_name| {
+            if (!isDefaultValue(&options, field_name)) {
+                try writeInt(sink.writer, &offset, u32, optionToU32(@field(options, field_name)));
             }
         }
         std.debug.assert(msg.len == offset);
@@ -1496,11 +1486,11 @@ pub const RequestSink = struct {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.destroy_window),
+            @backingInt(Opcode.destroy_window),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(window_id));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
@@ -1509,11 +1499,11 @@ pub const RequestSink = struct {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.map_window),
+            @backingInt(Opcode.map_window),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(w));
+        try writeInt(sink.writer, &offset, u32, @backingInt(w));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
@@ -1522,11 +1512,11 @@ pub const RequestSink = struct {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.unmap_window),
+            @backingInt(Opcode.unmap_window),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(w));
+        try writeInt(sink.writer, &offset, u32, @backingInt(w));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
@@ -1539,15 +1529,15 @@ pub const RequestSink = struct {
         const msg = inspectConfigureWindow(&options);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.configure_window),
+            @backingInt(Opcode.configure_window),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(window_id));
         try writeInt(sink.writer, &offset, u32, @bitCast(msg.option_mask));
-        inline for (std.meta.fields(configure_window.Options)) |field| {
-            if (!isDefaultValue(&options, field)) {
-                try writeInt(sink.writer, &offset, u32, optionToU32(@field(options, field.name)));
+        inline for (@typeInfo(configure_window.Options).@"struct".field_names) |field_name| {
+            if (!isDefaultValue(&options, field_name)) {
+                try writeInt(sink.writer, &offset, u32, optionToU32(@field(options, field_name)));
             }
         }
         std.debug.assert(msg.len == offset);
@@ -1561,9 +1551,9 @@ pub const RequestSink = struct {
         const non_option_len: u18 = configure_window.non_option_len;
         var len: u18 = non_option_len;
         var option_mask: configure_window.OptionMask = .{};
-        inline for (std.meta.fields(configure_window.Options)) |field| {
-            if (!isDefaultValue(options, field)) {
-                @field(option_mask, field.name) = 1;
+        inline for (@typeInfo(configure_window.Options).@"struct".field_names) |field_name| {
+            if (!isDefaultValue(options, field_name)) {
+                @field(option_mask, field_name) = 1;
                 len += 4;
             }
         }
@@ -1573,11 +1563,11 @@ pub const RequestSink = struct {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.query_tree),
+            @backingInt(Opcode.query_tree),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(window_id));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
@@ -1586,7 +1576,7 @@ pub const RequestSink = struct {
         const msg_len = intern_atom.getLen(args.name.len);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.intern_atom),
+            @backingInt(Opcode.intern_atom),
             @intFromBool(args.only_if_exists),
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
@@ -1624,13 +1614,13 @@ pub const RequestSink = struct {
         std.debug.assert(msg_len & 3 == 0);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.change_property),
-            @intFromEnum(mode),
+            @backingInt(Opcode.change_property),
+            @backingInt(mode),
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(property));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(property_type));
+        try writeInt(sink.writer, &offset, u32, @backingInt(window_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(property));
+        try writeInt(sink.writer, &offset, u32, @backingInt(property_type));
         try writeAll(sink.writer, &offset, &[_]u8{
             @intCast(@sizeOf(T) * 8),
             0, // unused
@@ -1670,13 +1660,13 @@ pub const RequestSink = struct {
         const msg_len = 24;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.get_property),
+            @backingInt(Opcode.get_property),
             @intFromBool(named.delete),
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.property));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.type));
+        try writeInt(sink.writer, &offset, u32, @backingInt(window_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.property));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.type));
         try writeInt(sink.writer, &offset, u32, named.offset);
         try writeInt(sink.writer, &offset, u32, named.len);
         std.debug.assert(offset == msg_len);
@@ -1696,19 +1686,19 @@ pub const RequestSink = struct {
         const msg_len = 24;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.grab_pointer),
+            @backingInt(Opcode.grab_pointer),
             if (named.owner_events) 1 else 0,
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.grab_window));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.grab_window));
         try writeInt(sink.writer, &offset, u16, @bitCast(named.event_mask));
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(named.pointer_mode),
-            @intFromEnum(named.keyboard_mode),
+            @backingInt(named.pointer_mode),
+            @backingInt(named.keyboard_mode),
         });
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.confine_to));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.cursor));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.time));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.confine_to));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.cursor));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.time));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
@@ -1717,11 +1707,11 @@ pub const RequestSink = struct {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.ungrab_pointer),
+            @backingInt(Opcode.ungrab_pointer),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(time));
+        try writeInt(sink.writer, &offset, u32, @backingInt(time));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
@@ -1739,12 +1729,12 @@ pub const RequestSink = struct {
         const msg_len = 24;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.warp_pointer),
+            @backingInt(Opcode.warp_pointer),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.src_window));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.dst_window));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.src_window));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.dst_window));
         try writeInt(sink.writer, &offset, i16, named.src_x);
         try writeInt(sink.writer, &offset, i16, named.src_y);
         try writeInt(sink.writer, &offset, u16, named.src_width);
@@ -1764,11 +1754,11 @@ pub const RequestSink = struct {
         const msg_len = non_list_len + std.mem.alignForward(u16, name.len, 4);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.open_font),
+            @backingInt(Opcode.open_font),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(font_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(font_id));
         try writeInt(sink.writer, &offset, u16, name.len);
         try writeAll(sink.writer, &offset, &[_]u8{ 0, 0 }); // unused
         try writeAll(sink.writer, &offset, name.nativeSlice());
@@ -1781,11 +1771,11 @@ pub const RequestSink = struct {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.close_font),
+            @backingInt(Opcode.close_font),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(font_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(font_id));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
@@ -1794,11 +1784,11 @@ pub const RequestSink = struct {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.query_font),
+            @backingInt(Opcode.query_font),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(font));
+        try writeInt(sink.writer, &offset, u32, @backingInt(font));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
@@ -1813,7 +1803,7 @@ pub const RequestSink = struct {
         const msg_len = non_list_len + std.mem.alignForward(u16, pattern.len, 4);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.list_fonts),
+            @backingInt(Opcode.list_fonts),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
@@ -1837,11 +1827,11 @@ pub const RequestSink = struct {
         const msg_len = non_list_len + std.mem.alignForward(u16, text.len * 2, 4);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.query_text_extents),
+            @backingInt(Opcode.query_text_extents),
             @intCast(text.len % 2), // odd_length
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(font_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(font_id));
         for (text.nativeSlice()) |c| {
             try writeInt(sink.writer, &offset, u16, std.mem.nativeToBig(u16, c));
         }
@@ -1861,12 +1851,12 @@ pub const RequestSink = struct {
         const msg_len = 16;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.create_pixmap),
+            @backingInt(Opcode.create_pixmap),
             named.depth.byte(),
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(id));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(drawable));
+        try writeInt(sink.writer, &offset, u32, @backingInt(id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(drawable));
         try writeInt(sink.writer, &offset, u16, named.width);
         try writeInt(sink.writer, &offset, u16, named.height);
         std.debug.assert(msg_len == offset);
@@ -1877,11 +1867,11 @@ pub const RequestSink = struct {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.free_pixmap),
+            @backingInt(Opcode.free_pixmap),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(id));
         std.debug.assert(msg_len == offset);
         sink.sequence +%= 1;
     }
@@ -1890,16 +1880,16 @@ pub const RequestSink = struct {
         const msg = inspectCreateGc(&opt);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.create_gc),
+            @backingInt(Opcode.create_gc),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(gc));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(drawable));
+        try writeInt(sink.writer, &offset, u32, @backingInt(gc));
+        try writeInt(sink.writer, &offset, u32, @backingInt(drawable));
         try writeInt(sink.writer, &offset, u32, @bitCast(msg.option_mask));
-        inline for (std.meta.fields(CreateGcOptions)) |field| {
-            if (!isDefaultValue(opt, field)) {
-                try writeInt(sink.writer, &offset, u32, optionToU32(@field(opt, field.name)));
+        inline for (@typeInfo(CreateGcOptions).@"struct".field_names) |field_name| {
+            if (!isDefaultValue(opt, field_name)) {
+                try writeInt(sink.writer, &offset, u32, optionToU32(@field(opt, field_name)));
             }
         }
         std.debug.assert(msg.len == offset);
@@ -1909,15 +1899,15 @@ pub const RequestSink = struct {
         const msg = inspectChangeGc(&opt);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.change_gc),
+            @backingInt(Opcode.change_gc),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, @intCast(msg.len >> 2));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(gc));
+        try writeInt(sink.writer, &offset, u32, @backingInt(gc));
         try writeInt(sink.writer, &offset, u32, @bitCast(msg.option_mask));
-        inline for (std.meta.fields(ChangeGcOptions)) |field| {
-            if (!isDefaultValue(opt, field)) {
-                try writeInt(sink.writer, &offset, u32, optionToU32(@field(opt, field.name)));
+        inline for (@typeInfo(ChangeGcOptions).@"struct".field_names) |field_name| {
+            if (!isDefaultValue(opt, field_name)) {
+                try writeInt(sink.writer, &offset, u32, optionToU32(@field(opt, field_name)));
             }
         }
         std.debug.assert(msg.len == offset);
@@ -1928,11 +1918,11 @@ pub const RequestSink = struct {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.free_gc),
+            @backingInt(Opcode.free_gc),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(gc));
+        try writeInt(sink.writer, &offset, u32, @backingInt(gc));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
@@ -1946,11 +1936,11 @@ pub const RequestSink = struct {
         const msg_len = 16;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.clear_area),
+            @backingInt(Opcode.clear_area),
             if (named.exposures) 1 else 0,
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(window_id));
         try writeInt(sink.writer, &offset, i16, area.x);
         try writeInt(sink.writer, &offset, i16, area.y);
         try writeInt(sink.writer, &offset, u16, area.width);
@@ -1976,13 +1966,13 @@ pub const RequestSink = struct {
         const msg_len = 28;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.copy_area),
+            @backingInt(Opcode.copy_area),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.src_drawable));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.dst_drawable));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.gc));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.src_drawable));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.dst_drawable));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.gc));
         try writeInt(sink.writer, &offset, i16, named.src_x);
         try writeInt(sink.writer, &offset, i16, named.src_y);
         try writeInt(sink.writer, &offset, i16, named.dst_x);
@@ -2003,12 +1993,12 @@ pub const RequestSink = struct {
         const msg_len: u18 = poly_line_header_size + points.len * 4; // each point is 4 bytes (i16 x, i16 y)
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.poly_line),
-            @intFromEnum(coordinate_mode),
+            @backingInt(Opcode.poly_line),
+            @backingInt(coordinate_mode),
         });
         try writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(drawable));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(gc));
+        try writeInt(sink.writer, &offset, u32, @backingInt(drawable));
+        try writeInt(sink.writer, &offset, u32, @backingInt(gc));
         for (points.nativeSlice()) |point| {
             try writeInt(sink.writer, &offset, i16, point.x);
             try writeInt(sink.writer, &offset, i16, point.y);
@@ -2024,7 +2014,7 @@ pub const RequestSink = struct {
         gc: GraphicsContext,
         rectangles: Slice(u18, [*]const Rectangle),
     ) error{WriteFailed}!void {
-        try sink.polyRectangle(drawable, gc, rectangles, @intFromEnum(Opcode.poly_rectangle));
+        try sink.polyRectangle(drawable, gc, rectangles, @backingInt(Opcode.poly_rectangle));
     }
 
     pub inline fn PolyFillRectangle(
@@ -2033,7 +2023,7 @@ pub const RequestSink = struct {
         gc: GraphicsContext,
         rectangles: Slice(u18, [*]const Rectangle),
     ) error{WriteFailed}!void {
-        try sink.polyRectangle(drawable, gc, rectangles, @intFromEnum(Opcode.poly_fill_rectangle));
+        try sink.polyRectangle(drawable, gc, rectangles, @backingInt(Opcode.poly_fill_rectangle));
     }
 
     fn polyRectangle(
@@ -2055,8 +2045,8 @@ pub const RequestSink = struct {
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(drawable));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(gc));
+        try writeInt(sink.writer, &offset, u32, @backingInt(drawable));
+        try writeInt(sink.writer, &offset, u32, @backingInt(gc));
         for (rectangles.nativeSlice()) |rectangle| {
             try writeInt(sink.writer, &offset, i16, rectangle.x);
             try writeInt(sink.writer, &offset, i16, rectangle.y);
@@ -2089,12 +2079,12 @@ pub const RequestSink = struct {
         const msg_len: u18 = put_image.non_list_len + image_size + @as(u18, pad_len);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.put_image),
-            @intFromEnum(args.format),
+            @backingInt(Opcode.put_image),
+            @backingInt(args.format),
         });
         try writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(args.drawable));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(args.gc_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(args.drawable));
+        try writeInt(sink.writer, &offset, u32, @backingInt(args.gc_id));
         try writeInt(sink.writer, &offset, u16, args.width);
         try writeInt(sink.writer, &offset, u16, args.height);
         try writeInt(sink.writer, &offset, i16, args.x);
@@ -2143,11 +2133,11 @@ pub const RequestSink = struct {
         ;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.get_image),
-            @intFromEnum(named.format),
+            @backingInt(Opcode.get_image),
+            @backingInt(named.format),
         });
         try writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(named.drawable));
+        try writeInt(sink.writer, &offset, u32, @backingInt(named.drawable));
         try writeInt(sink.writer, &offset, i16, named.x);
         try writeInt(sink.writer, &offset, i16, named.y);
         try writeInt(sink.writer, &offset, u16, named.width);
@@ -2186,12 +2176,12 @@ pub const RequestSink = struct {
         };
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.poly_text8),
+            @backingInt(Opcode.poly_text8),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(drawable));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(gc));
+        try writeInt(sink.writer, &offset, u32, @backingInt(drawable));
+        try writeInt(sink.writer, &offset, u32, @backingInt(gc));
         try writeInt(sink.writer, &offset, i16, pos.x);
         try writeInt(sink.writer, &offset, i16, pos.y);
         for (items) |item| switch (item) {
@@ -2206,7 +2196,7 @@ pub const RequestSink = struct {
             .font_change => |font| {
                 try sink.writer.writeByte(255);
                 offset += 1;
-                try writeInt(sink.writer, &offset, u32, @intFromEnum(font));
+                try writeInt(sink.writer, &offset, u32, @backingInt(font));
             },
         };
         try writePad4(sink.writer, &offset);
@@ -2250,12 +2240,12 @@ pub const RequestSink = struct {
             + std.mem.alignForward(u16, text.len, 4);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.image_text8),
+            @backingInt(Opcode.image_text8),
             text.len,
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(drawable));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(gc));
+        try writeInt(sink.writer, &offset, u32, @backingInt(drawable));
+        try writeInt(sink.writer, &offset, u32, @backingInt(gc));
         try writeInt(sink.writer, &offset, i16, pos.x);
         try writeInt(sink.writer, &offset, i16, pos.y);
         try writeAll(sink.writer, &offset, text.nativeSlice());
@@ -2274,13 +2264,13 @@ pub const RequestSink = struct {
         const msg_len = 16;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.create_colormap),
-            @intFromEnum(alloc),
+            @backingInt(Opcode.create_colormap),
+            @backingInt(alloc),
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(id));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
-        try writeInt(sink.writer, &offset, u32, @intFromEnum(visual));
+        try writeInt(sink.writer, &offset, u32, @backingInt(id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(window_id));
+        try writeInt(sink.writer, &offset, u32, @backingInt(visual));
         std.debug.assert(msg_len == offset);
         sink.sequence +%= 1;
     }
@@ -2291,7 +2281,7 @@ pub const RequestSink = struct {
         const msg_len = non_list_len + std.mem.alignForward(u16, name.len, 4);
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.query_extension),
+            @backingInt(Opcode.query_extension),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
@@ -2314,7 +2304,7 @@ pub const RequestSink = struct {
         const msg_len = 8;
         var offset: usize = 0;
         try writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(Opcode.get_keyboard_mapping),
+            @backingInt(Opcode.get_keyboard_mapping),
             0, // unused
         });
         try writeInt(sink.writer, &offset, u16, msg_len >> 2);
@@ -2376,15 +2366,15 @@ pub const ResourceBase = enum(u32) {
     _,
 
     pub fn add(r: ResourceBase, offset: u32) Resource {
-        return @enumFromInt(@intFromEnum(r) + offset);
+        return @fromBackingInt(@intCast(@backingInt(r) + offset));
     }
 
     pub fn fromInt(i: u32) ResourceBase {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn format(v: ResourceBase, writer: *std.Io.Writer) error{WriteFailed}!void {
-        try writer.print("ResourceBase({})", .{@intFromEnum(v)});
+        try writer.print("ResourceBase({})", .{@backingInt(v)});
     }
 };
 
@@ -2392,11 +2382,11 @@ pub const ResourceMask = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) ResourceMask {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn format(v: ResourceMask, writer: *std.Io.Writer) error{WriteFailed}!void {
-        try writer.print("ResourceMask(0x{x})", .{@intFromEnum(v)});
+        try writer.print("ResourceMask(0x{x})", .{@backingInt(v)});
     }
 };
 
@@ -2407,43 +2397,43 @@ pub const Resource = enum(u32) {
     _,
 
     pub fn window(r: Resource) Window {
-        return @enumFromInt(@intFromEnum(r));
+        return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
     pub fn drawable(r: Resource) Drawable {
-        return @enumFromInt(@intFromEnum(r));
+        return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
     pub fn font(r: Resource) Font {
-        return @enumFromInt(@intFromEnum(r));
+        return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
     pub fn fontable(r: Resource) Fontable {
-        return @enumFromInt(@intFromEnum(r));
+        return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
     pub fn graphicsContext(r: Resource) GraphicsContext {
-        return @enumFromInt(@intFromEnum(r));
+        return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
     pub fn pixmap(r: Resource) Pixmap {
-        return @enumFromInt(@intFromEnum(r));
+        return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
     pub fn picture(r: Resource) render.Picture {
-        return @enumFromInt(@intFromEnum(r));
+        return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
     pub fn glyphSet(r: Resource) render.GlyphSet {
-        return @enumFromInt(@intFromEnum(r));
+        return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
     pub fn colormap(r: Resource) Colormap {
-        return @enumFromInt(@intFromEnum(r));
+        return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
     pub fn fixesRegion(r: Resource) fixes.Region {
-        return @enumFromInt(@intFromEnum(r));
+        return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
     pub fn format(v: Resource, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -2463,7 +2453,7 @@ pub const Drawable = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) Drawable {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn format(v: Drawable, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -2479,14 +2469,14 @@ pub const Window = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) Window {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn resource(w: Window) Resource {
-        return @enumFromInt(@intFromEnum(w));
+        return @fromBackingInt(@intCast(@backingInt(w)));
     }
     pub fn drawable(w: Window) Drawable {
-        return @enumFromInt(@intFromEnum(w));
+        return @fromBackingInt(@intCast(@backingInt(w)));
     }
 
     pub fn format(v: Window, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -2502,7 +2492,7 @@ pub const Cursor = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) Cursor {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn format(v: Cursor, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -2518,11 +2508,11 @@ pub const Font = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) Font {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn fontable(f: Font) Fontable {
-        return @enumFromInt(@intFromEnum(f));
+        return @fromBackingInt(@intCast(@backingInt(f)));
     }
 
     pub fn format(v: Font, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -2538,15 +2528,15 @@ pub const Fontable = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) Fontable {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn graphicsContext(f: Fontable) GraphicsContext {
-        return @enumFromInt(@intFromEnum(f));
+        return @fromBackingInt(@intCast(@backingInt(f)));
     }
 
     pub fn font(f: Fontable) Font {
-        return @enumFromInt(@intFromEnum(f));
+        return @fromBackingInt(@intCast(@backingInt(f)));
     }
 
     pub fn format(v: Fontable, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -2562,7 +2552,7 @@ pub const Colormap = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) Colormap {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn format(v: Colormap, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -2575,7 +2565,7 @@ pub const Colormap = enum(u32) {
 
 pub const Visual = enum(u32) {
     pub fn fromInt(i: u32) Visual {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     copy_from_parent = 0,
@@ -2591,11 +2581,11 @@ pub const Pixmap = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) Pixmap {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn drawable(p: Pixmap) Drawable {
-        return @enumFromInt(@intFromEnum(p));
+        return @fromBackingInt(@intCast(@backingInt(p)));
     }
 
     pub fn format(v: Pixmap, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -2613,11 +2603,11 @@ pub const GraphicsContext = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) GraphicsContext {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn fontable(g: GraphicsContext) Fontable {
-        return @enumFromInt(@intFromEnum(g));
+        return @fromBackingInt(@intCast(@backingInt(g)));
     }
 
     pub fn format(v: GraphicsContext, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -2636,7 +2626,7 @@ pub const GraphicsContext = enum(u32) {
 /// value is reserved for use in requests to represent the current server time.
 pub const Timestamp = enum(u32) {
     pub fn fromInt(i: u32) GraphicsContext {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     /// X11 `CurrentTime`. Never generated by the server.
@@ -2720,16 +2710,19 @@ pub const WinGravity = enum(u4) {
     static = 10,
 };
 
-pub fn isDefaultValue(s: anytype, comptime field: std.builtin.Type.StructField) bool {
-    const default_value_ptr = @as(?*align(1) const field.type, @ptrCast(field.default_value_ptr)) orelse
-        @compileError("isDefaultValue was called on field '" ++ field.name ++ "' which has no default value");
-    switch (@typeInfo(field.type)) {
+pub fn isDefaultValue(s: anytype, comptime field_name: []const u8) bool {
+    const T = switch (@typeInfo(@TypeOf(s))) {
+        .pointer => |info| info.child,
+        else => @TypeOf(s),
+    };
+    const default_value = @field(@as(T, .{}), field_name);
+    switch (@typeInfo(@FieldType(T, field_name))) {
         .optional => {
-            comptime std.debug.assert(default_value_ptr.* == null); // we're assuming all Optionals default to null
-            return @field(s, field.name) == null;
+            comptime std.debug.assert(default_value == null); // we're assuming all Optionals default to null
+            return @field(s, field_name) == null;
         },
         else => {
-            return @field(s, field.name) == default_value_ptr.*;
+            return @field(s, field_name) == default_value;
         },
     }
 }
@@ -2738,11 +2731,11 @@ pub fn optionToU32(value: anytype) u32 {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
         .bool => return @intFromBool(value),
-        .@"enum" => return @intFromEnum(value),
+        .@"enum" => return @backingInt(value),
         .optional => |opt| {
             switch (@typeInfo(opt.child)) {
                 .bool => return @intFromBool(value.?),
-                .@"enum" => return @intFromEnum(value.?),
+                .@"enum" => return @backingInt(value.?),
                 else => {},
             }
         },
@@ -2887,9 +2880,9 @@ fn inspectCreateWindow(options: *const window.Options) struct {
     ;
     var len: u18 = non_option_len;
     var option_mask: window.OptionMask = .{};
-    inline for (std.meta.fields(window.Options)) |field| {
-        if (!isDefaultValue(options, field)) {
-            @field(option_mask, field.name) = 1;
+    inline for (@typeInfo(window.Options).@"struct".field_names) |field_name| {
+        if (!isDefaultValue(options, field_name)) {
+            @field(option_mask, field_name) = 1;
             len += 4;
         }
     }
@@ -2908,9 +2901,9 @@ fn inspectChangeWindowAttributes(options: *const window.Options) struct {
     ;
     var len: u18 = non_option_len;
     var option_mask: window.OptionMask = .{};
-    inline for (std.meta.fields(window.Options)) |field| {
-        if (!isDefaultValue(options, field)) {
-            @field(option_mask, field.name) = 1;
+    inline for (@typeInfo(window.Options).@"struct".field_names) |field_name| {
+        if (!isDefaultValue(options, field_name)) {
+            @field(option_mask, field_name) = 1;
             len += 4;
         }
     }
@@ -2926,19 +2919,19 @@ pub const change_window_attributes = struct {
     ;
     pub const max_len = non_option_len + (15 * 4); // 15 possible 4-byte options
     pub fn serialize(buf: [*]u8, window_id: Window, options: window.Options) u16 {
-        buf[0] = @intFromEnum(Opcode.change_window_attributes);
+        buf[0] = @backingInt(Opcode.change_window_attributes);
         buf[1] = 0; // unused
 
         // buf[2-3] is the len, set at the end of the function
 
-        writeIntNative(u32, buf + 4, @intFromEnum(window_id));
+        writeIntNative(u32, buf + 4, @backingInt(window_id));
         var request_len: u16 = non_option_len;
         var option_mask: window.OptionMask = .{};
 
-        inline for (std.meta.fields(window.Options)) |field| {
-            if (!isDefaultValue(options, field)) {
-                writeIntNative(u32, buf + request_len, optionToU32(@field(options, field.name)));
-                @field(option_mask, field.name) = 1;
+        inline for (@typeInfo(window.Options).@"struct".field_names) |field_name| {
+            if (!isDefaultValue(options, field_name)) {
+                writeIntNative(u32, buf + request_len, optionToU32(@field(options, field_name)));
+                @field(option_mask, field_name) = 1;
                 request_len += 4;
             }
         }
@@ -3013,7 +3006,7 @@ pub const configure_window = struct {
 pub const query_tree = struct {
     pub const len = 8;
     pub const Reply = extern struct {
-        kind: enum(u8) { Reply = @intFromEnum(ServerMsgKind.Reply) },
+        kind: enum(u8) { Reply = @backingInt(ServerMsgKind.Reply) },
         _unused_pad: u8,
         sequence: u16,
         word_len: u32,
@@ -3056,7 +3049,7 @@ pub const change_property = struct {
 
 pub const get_property = struct {
     pub const Reply = extern struct {
-        kind: enum(u8) { Reply = @intFromEnum(ServerMsgKind.Reply) },
+        kind: enum(u8) { Reply = @backingInt(ServerMsgKind.Reply) },
         value_format: u8,
         sequence: u16,
         word_len: u32,
@@ -3095,7 +3088,7 @@ pub const SyncMode = enum(u1) { synchronous = 0, asynchronous = 1 };
 pub const get_font_path = struct {
     pub const len = 4;
     pub fn serialize(buf: [*]u8) void {
-        buf[0] = @intFromEnum(Opcode.get_font_path);
+        buf[0] = @backingInt(Opcode.get_font_path);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
     }
@@ -3197,8 +3190,8 @@ pub const create_colormap = struct {
         alloc: enum(u8) { none, all },
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
-        buf[0] = @intFromEnum(Opcode.create_colormap);
-        buf[1] = @intFromEnum(args.alloc);
+        buf[0] = @backingInt(Opcode.create_colormap);
+        buf[1] = @backingInt(args.alloc);
         writeIntNative(u16, buf + 2, len >> 2);
         writeIntNative(u32, buf + 4, args.id);
         writeIntNative(u32, buf + 8, args.window_id);
@@ -3209,10 +3202,10 @@ pub const create_colormap = struct {
 pub const free_colormap = struct {
     pub const len = 8;
     pub fn serialize(buf: [*]u8, id: Colormap) void {
-        buf[0] = @intFromEnum(Opcode.free_colormap);
+        buf[0] = @backingInt(Opcode.free_colormap);
         buf[1] = 0; // unused
         writeIntNative(u16, buf + 2, len >> 2);
-        writeIntNative(u32, buf + 4, @intFromEnum(id));
+        writeIntNative(u32, buf + 4, @backingInt(id));
     }
 };
 
@@ -3230,9 +3223,9 @@ fn inspectCreateGc(options: *const CreateGcOptions) struct {
 
     var len: u18 = non_option_len;
     var option_mask: GcOptionMask = .{};
-    inline for (std.meta.fields(CreateGcOptions)) |field| {
-        if (!isDefaultValue(options, field)) {
-            @field(option_mask, field.name) = 1;
+    inline for (@typeInfo(CreateGcOptions).@"struct".field_names) |field_name| {
+        if (!isDefaultValue(options, field_name)) {
+            @field(option_mask, field_name) = 1;
             len += 4;
         }
     }
@@ -3252,9 +3245,9 @@ fn inspectChangeGc(options: *const ChangeGcOptions) struct {
 
     var len: u18 = non_option_len;
     var option_mask: GcOptionMask = .{};
-    inline for (std.meta.fields(ChangeGcOptions)) |field| {
-        if (!isDefaultValue(options, field)) {
-            @field(option_mask, field.name) = 1;
+    inline for (@typeInfo(ChangeGcOptions).@"struct".field_names) |field_name| {
+        if (!isDefaultValue(options, field_name)) {
+            @field(option_mask, field_name) = 1;
             len += 4;
         }
     }
@@ -3514,7 +3507,7 @@ pub const ErrorCode = enum(u8) {
     pixmap = 4,
     atom = 5,
     cursor = 6,
-    font = @intFromEnum(ErrorCodeFont.font),
+    font = @backingInt(ErrorCodeFont.font),
     match = 8,
     drawable = 9,
     access = 10,
@@ -3522,8 +3515,8 @@ pub const ErrorCode = enum(u8) {
     colormap = 12,
     gcontext = 13,
     id_choice = 14,
-    name = @intFromEnum(ErrorCodeOpcode.name),
-    length = @intFromEnum(ErrorCodeOpcode.length),
+    name = @backingInt(ErrorCodeOpcode.name),
+    length = @backingInt(ErrorCodeOpcode.length),
     implementation = 17,
 };
 
@@ -3666,10 +3659,8 @@ test "ServerMsgKind fromByte" {
 }
 
 pub fn enumNamedValue(comptime E: type, e: E) ?E {
-    if (@typeInfo(E).@"enum".is_exhaustive) @compileError("enumNamedValue only valid on non-exhaustive enums");
-    return inline for (@typeInfo(E).@"enum".fields) |f| {
-        if (@intFromEnum(e) == f.value) break e;
-    } else null;
+    if (@typeInfo(E).@"enum".mode == .exhaustive) @compileError("enumNamedValue only valid on non-exhaustive enums");
+    return if (std.enums.tagName(E, e) == null) null else e;
 }
 
 /// This type is equivalent to SETofKEYBUTMASK
@@ -3711,24 +3702,24 @@ pub const KeyButtonMask = packed struct(u16) {
         var result: u2 = 0;
         if (mask.shift) result += 1;
         if (mask.hasAnyModFlag()) result += 2;
-        return @enumFromInt(result);
+        return @fromBackingInt(@intCast(result));
     }
 
     pub fn format(kbm: KeyButtonMask, writer: *std.Io.Writer) error{WriteFailed}!void {
         var any = false;
 
         try writer.writeAll("KeyButtonMask{");
-        inline for (std.meta.fields(KeyButtonMask)) |fld| {
-            if (comptime std.mem.startsWith(u8, fld.name, "_"))
+        inline for (@typeInfo(KeyButtonMask).@"struct".field_names) |field_name| {
+            if (comptime std.mem.startsWith(u8, field_name, "_"))
                 continue;
 
-            const value = @field(kbm, fld.name);
+            const value = @field(kbm, field_name);
 
             if (value) {
                 if (any) {
                     try writer.writeAll("|");
                 }
-                try writer.writeAll(fld.name);
+                try writer.writeAll(field_name);
                 any = true;
             }
         }
@@ -3891,7 +3882,16 @@ pub const VisualType = extern struct {
     unused: u32,
 };
 
-pub const NonExhaustive = zigversion.NonExhaustive;
+pub fn NonExhaustive(comptime T: type) type {
+    const info = switch (@typeInfo(T)) {
+        .@"enum" => |info| info,
+        else => |info| @compileError("expected an Enum type but got a(n) " ++ @tagName(info)),
+    };
+    std.debug.assert(info.mode == .exhaustive);
+    var values: [info.field_values.len]info.tag_type = undefined;
+    for (&values, info.field_values) |*value, field_value| value.* = field_value;
+    return @Enum(info.tag_type, .nonexhaustive, info.field_names, &values);
+}
 pub const ImageByteOrder = enum(u8) {
     lsb_first = 0,
     msb_first = 1,
@@ -3938,8 +3938,8 @@ pub const Setup = extern struct {
             "release=0x{x} res(base=0x{x} mask=0x{x}) motion-buf={} max-req={} screen-count={} format-count={} image-endian={f} bmp(order={} scan-unit={} scan-pad={}) keycodes={}-{}",
             .{
                 setup.release_number,
-                @intFromEnum(setup.resource_id_base),
-                @intFromEnum(setup.resource_id_mask),
+                @backingInt(setup.resource_id_base),
+                @backingInt(setup.resource_id_mask),
                 setup.motion_buffer_size,
                 setup.max_request_len,
                 setup.root_screen_count,
@@ -4140,8 +4140,8 @@ pub const Source = struct {
     pub fn onReadError(
         source: *const Source,
         read_err: error{ ReadFailed, EndOfStream, Protocol },
-        stream_err: ?std.net.Stream.ReadError,
-    ) (error{ EndOfStream, Protocol } || std.net.Stream.ReadError)!void {
+        stream_err: ?std.Io.net.Stream.Reader.Error,
+    ) (error{ EndOfStream, Protocol } || std.Io.net.Stream.Reader.Error)!void {
         switch (read_err) {
             error.ReadFailed => switch (stream_err.?) {
                 error.ConnectionResetByPeer => |e| {
@@ -4251,7 +4251,7 @@ pub const Source = struct {
         std.debug.assert(@as(ServerMsgCategory, kind) == category);
         var result: @field(servermsg, @tagName(category)) = undefined;
         result.kind = switch (@typeInfo(@TypeOf(result.kind))) {
-            .@"enum" => @enumFromInt(kind.toByte()),
+            .@"enum" => @fromBackingInt(@intCast(kind.toByte())),
             .int => kind.toByte(),
             else => @compileError("unhandled type " ++ @typeName(@TypeOf(result.kind))),
         };
@@ -4573,7 +4573,7 @@ comptime {
 // A common view of many of the x11 events, cast multiple kinds
 // of events to this in order to handle them with common code
 pub const CommonEvent = extern struct {
-    kind: enum(u8) { ButtonPress = @intFromEnum(ServerMsgKind.ButtonPress) },
+    kind: enum(u8) { ButtonPress = @backingInt(ServerMsgKind.ButtonPress) },
     flexible: u8,
     sequence: u16,
     timestamp: Timestamp,
@@ -4612,7 +4612,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(Error) == 32);
     }
     pub const Error = extern struct {
-        kind: enum(u8) { Error = @intFromEnum(ServerMsgKind.Error) },
+        kind: enum(u8) { Error = @backingInt(ServerMsgKind.Error) },
         code: NonExhaustive(ErrorCode),
         sequence: u16,
         generic: u32,
@@ -4633,7 +4633,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(Reply) == 8);
     }
     pub const Reply = extern struct {
-        kind: enum(u8) { Reply = @intFromEnum(ServerMsgKind.Reply) },
+        kind: enum(u8) { Reply = @backingInt(ServerMsgKind.Reply) },
         flexible: u8 align(1),
         sequence: u16 align(1),
         word_count: u32 align(1),
@@ -4646,7 +4646,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(KeyPress) == 32);
     }
     pub const KeyPress = extern struct {
-        kind: enum(u8) { KeyPress = @intFromEnum(ServerMsgKind.KeyPress) },
+        kind: enum(u8) { KeyPress = @backingInt(ServerMsgKind.KeyPress) },
         keycode: u8,
         sequence: u16,
         timestamp: Timestamp,
@@ -4668,7 +4668,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(KeyRelease) == 32);
     }
     pub const KeyRelease = extern struct {
-        kind: enum(u8) { KeyPress = @intFromEnum(ServerMsgKind.KeyRelease) },
+        kind: enum(u8) { KeyPress = @backingInt(ServerMsgKind.KeyRelease) },
         keycode: u8,
         sequence: u16,
         timestamp: Timestamp,
@@ -4690,7 +4690,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(ButtonPress) == 32);
     }
     pub const ButtonPress = extern struct {
-        kind: enum(u8) { ButtonPress = @intFromEnum(ServerMsgKind.ButtonPress) },
+        kind: enum(u8) { ButtonPress = @backingInt(ServerMsgKind.ButtonPress) },
         button: u8,
         sequence: u16,
         timestamp: Timestamp,
@@ -4715,7 +4715,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(ButtonRelease) == 32);
     }
     pub const ButtonRelease = extern struct {
-        kind: enum(u8) { ButtonRelease = @intFromEnum(ServerMsgKind.ButtonRelease) },
+        kind: enum(u8) { ButtonRelease = @backingInt(ServerMsgKind.ButtonRelease) },
         button: u8,
         sequence: u16,
         timestamp: Timestamp,
@@ -4737,7 +4737,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(EnterNotify) == 32);
     }
     pub const MotionNotify = extern struct {
-        kind: enum(u8) { MotionNotify = @intFromEnum(ServerMsgKind.MotionNotify) },
+        kind: enum(u8) { MotionNotify = @backingInt(ServerMsgKind.MotionNotify) },
         detail: NonExhaustive(enum(u8) {
             normal = 0,
             hint = 1,
@@ -4765,7 +4765,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(EnterNotify) == 32);
     }
     pub const EnterNotify = extern struct {
-        kind: enum(u8) { EnterNotify = @intFromEnum(ServerMsgKind.EnterNotify) },
+        kind: enum(u8) { EnterNotify = @backingInt(ServerMsgKind.EnterNotify) },
         detail: NonExhaustive(enum(u8) {
             ancestor = 0,
             virtual = 1,
@@ -4798,7 +4798,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(LeaveNotify) == 32);
     }
     pub const LeaveNotify = extern struct {
-        kind: enum(u8) { LeaveNotify = @intFromEnum(ServerMsgKind.LeaveNotify) },
+        kind: enum(u8) { LeaveNotify = @backingInt(ServerMsgKind.LeaveNotify) },
         detail: NonExhaustive(enum(u8) {
             ancestor = 0,
             virtual = 1,
@@ -4832,7 +4832,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(FocusIn) == 32);
     }
     pub const FocusIn = extern struct {
-        kind: enum(u8) { FocusIn = @intFromEnum(ServerMsgKind.FocusIn) },
+        kind: enum(u8) { FocusIn = @backingInt(ServerMsgKind.FocusIn) },
         detail: NonExhaustive(FocusDetail),
         sequence: u16,
         event: Window,
@@ -4843,7 +4843,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(FocusOut) == 32);
     }
     pub const FocusOut = extern struct {
-        kind: enum(u8) { FocusOut = @intFromEnum(ServerMsgKind.FocusOut) },
+        kind: enum(u8) { FocusOut = @backingInt(ServerMsgKind.FocusOut) },
         detail: NonExhaustive(FocusDetail),
         sequence: u16,
         event: Window,
@@ -4855,14 +4855,14 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(KeymapNotify) == 32);
     }
     pub const KeymapNotify = extern struct {
-        kind: enum(u8) { KeymapNotify = @intFromEnum(ServerMsgKind.KeymapNotify) },
+        kind: enum(u8) { KeymapNotify = @backingInt(ServerMsgKind.KeymapNotify) },
         keys: [31]u8,
     };
     comptime {
         std.debug.assert(@sizeOf(Expose) == 32);
     }
     pub const Expose = extern struct {
-        kind: enum(u8) { Expose = @intFromEnum(ServerMsgKind.Expose) },
+        kind: enum(u8) { Expose = @backingInt(ServerMsgKind.Expose) },
         unused: u8,
         sequence: u16,
         window: Window,
@@ -4878,7 +4878,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(GraphicsExposure) == 32);
     }
     pub const GraphicsExposure = extern struct {
-        kind: enum(u8) { GraphicsExposure = @intFromEnum(ServerMsgKind.GraphicsExposure) },
+        kind: enum(u8) { GraphicsExposure = @backingInt(ServerMsgKind.GraphicsExposure) },
         unused: u8,
         sequence: u16,
         drawable: Drawable,
@@ -4896,7 +4896,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(NoExposure) == 32);
     }
     pub const NoExposure = extern struct {
-        kind: enum(u8) { NoExposure = @intFromEnum(ServerMsgKind.NoExposure) },
+        kind: enum(u8) { NoExposure = @backingInt(ServerMsgKind.NoExposure) },
         unused: u8,
         sequence: u16,
         drawable: Drawable,
@@ -4909,7 +4909,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(VisibilityNotify) == 32);
     }
     pub const VisibilityNotify = extern struct {
-        kind: enum(u8) { VisibilityNotify = @intFromEnum(ServerMsgKind.VisibilityNotify) },
+        kind: enum(u8) { VisibilityNotify = @backingInt(ServerMsgKind.VisibilityNotify) },
         unused: u8,
         sequence: u16,
         window: Window,
@@ -4925,7 +4925,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(CreateNotify) == 32);
     }
     pub const CreateNotify = extern struct {
-        kind: enum(u8) { CreateNotify = @intFromEnum(ServerMsgKind.CreateNotify) },
+        kind: enum(u8) { CreateNotify = @backingInt(ServerMsgKind.CreateNotify) },
         unused: u8,
         sequence: u16,
         parent: Window,
@@ -4946,7 +4946,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(DestroyNotify) == 32);
     }
     pub const DestroyNotify = extern struct {
-        kind: enum(u8) { DestroyNotify = @intFromEnum(ServerMsgKind.DestroyNotify) },
+        kind: enum(u8) { DestroyNotify = @backingInt(ServerMsgKind.DestroyNotify) },
         unused: u8,
         sequence: u16,
         event: Window,
@@ -4958,7 +4958,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(UnmapNotify) == 32);
     }
     pub const UnmapNotify = extern struct {
-        kind: enum(u8) { UnmapNotify = @intFromEnum(ServerMsgKind.UnmapNotify) },
+        kind: enum(u8) { UnmapNotify = @backingInt(ServerMsgKind.UnmapNotify) },
         unused: u8,
         sequence: u16,
         event: Window,
@@ -4974,7 +4974,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(MapNotify) == 32);
     }
     pub const MapNotify = extern struct {
-        kind: enum(u8) { MapNotify = @intFromEnum(ServerMsgKind.MapNotify) },
+        kind: enum(u8) { MapNotify = @backingInt(ServerMsgKind.MapNotify) },
         unused: u8,
         sequence: u16,
         event: Window,
@@ -4990,7 +4990,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(MapRequest) == 32);
     }
     pub const MapRequest = extern struct {
-        kind: enum(u8) { MapRequest = @intFromEnum(ServerMsgKind.MapRequest) },
+        kind: enum(u8) { MapRequest = @backingInt(ServerMsgKind.MapRequest) },
         unused: u8,
         sequence: u16,
         parent: Window,
@@ -5002,7 +5002,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(ReparentNotify) == 32);
     }
     pub const ReparentNotify = extern struct {
-        kind: enum(u8) { ReparentNotify = @intFromEnum(ServerMsgKind.ReparentNotify) },
+        kind: enum(u8) { ReparentNotify = @backingInt(ServerMsgKind.ReparentNotify) },
         unused: u8,
         sequence: u16,
         event: Window,
@@ -5021,7 +5021,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(ConfigureNotify) == 32);
     }
     pub const ConfigureNotify = extern struct {
-        kind: enum(u8) { ConfigureNotify = @intFromEnum(ServerMsgKind.ConfigureNotify) },
+        kind: enum(u8) { ConfigureNotify = @backingInt(ServerMsgKind.ConfigureNotify) },
         unused: u8,
         sequence: u16,
         event: Window,
@@ -5043,7 +5043,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(ConfigureRequest) == 32);
     }
     pub const ConfigureRequest = extern struct {
-        kind: enum(u8) { ConfigureRequest = @intFromEnum(ServerMsgKind.ConfigureRequest) },
+        kind: enum(u8) { ConfigureRequest = @backingInt(ServerMsgKind.ConfigureRequest) },
         stack_mode: NonExhaustive(enum(u8) {
             above = 0,
             below = 1,
@@ -5077,7 +5077,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(GravityNotify) == 32);
     }
     pub const GravityNotify = extern struct {
-        kind: enum(u8) { GravityNotify = @intFromEnum(ServerMsgKind.GravityNotify) },
+        kind: enum(u8) { GravityNotify = @backingInt(ServerMsgKind.GravityNotify) },
         unused: u8,
         sequence: u16,
         event: Window,
@@ -5091,7 +5091,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(ResizeRequest) == 32);
     }
     pub const ResizeRequest = extern struct {
-        kind: enum(u8) { ResizeRequest = @intFromEnum(ServerMsgKind.ResizeRequest) },
+        kind: enum(u8) { ResizeRequest = @backingInt(ServerMsgKind.ResizeRequest) },
         unused: u8,
         sequence: u16,
         window: Window,
@@ -5104,7 +5104,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(CirculateNotify) == 32);
     }
     pub const CirculateNotify = extern struct {
-        kind: enum(u8) { CirculateNotify = @intFromEnum(ServerMsgKind.CirculateNotify) },
+        kind: enum(u8) { CirculateNotify = @backingInt(ServerMsgKind.CirculateNotify) },
         unused: u8,
         sequence: u16,
         event: Window,
@@ -5121,7 +5121,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(CirculateRequest) == 32);
     }
     pub const CirculateRequest = extern struct {
-        kind: enum(u8) { CirculateRequest = @intFromEnum(ServerMsgKind.CirculateRequest) },
+        kind: enum(u8) { CirculateRequest = @backingInt(ServerMsgKind.CirculateRequest) },
         unused: u8,
         sequence: u16,
         parent: Window,
@@ -5138,7 +5138,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(PropertyNotify) == 32);
     }
     pub const PropertyNotify = extern struct {
-        kind: enum(u8) { PropertyNotify = @intFromEnum(ServerMsgKind.PropertyNotify) },
+        kind: enum(u8) { PropertyNotify = @backingInt(ServerMsgKind.PropertyNotify) },
         unused: u8,
         sequence: u16,
         window: Window,
@@ -5155,7 +5155,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(SelectionClear) == 32);
     }
     pub const SelectionClear = extern struct {
-        kind: enum(u8) { SelectionClear = @intFromEnum(ServerMsgKind.SelectionClear) },
+        kind: enum(u8) { SelectionClear = @backingInt(ServerMsgKind.SelectionClear) },
         unused: u8,
         sequence: u16,
         time: Timestamp,
@@ -5168,7 +5168,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(SelectionRequest) == 32);
     }
     pub const SelectionRequest = extern struct {
-        kind: enum(u8) { SelectionRequest = @intFromEnum(ServerMsgKind.SelectionRequest) },
+        kind: enum(u8) { SelectionRequest = @backingInt(ServerMsgKind.SelectionRequest) },
         unused: u8,
         sequence: u16,
         time: Timestamp,
@@ -5184,7 +5184,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(SelectionNotify) == 32);
     }
     pub const SelectionNotify = extern struct {
-        kind: enum(u8) { SelectionNotify = @intFromEnum(ServerMsgKind.SelectionNotify) },
+        kind: enum(u8) { SelectionNotify = @backingInt(ServerMsgKind.SelectionNotify) },
         unused: u8,
         sequence: u16,
         time: Timestamp,
@@ -5199,7 +5199,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(ColormapNotify) == 32);
     }
     pub const ColormapNotify = extern struct {
-        kind: enum(u8) { ColormapNotify = @intFromEnum(ServerMsgKind.ColormapNotify) },
+        kind: enum(u8) { ColormapNotify = @backingInt(ServerMsgKind.ColormapNotify) },
         unused: u8,
         sequence: u16,
         window: Window,
@@ -5219,7 +5219,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(ClientMessage) == 32);
     }
     pub const ClientMessage = extern struct {
-        kind: enum(u8) { ClientMessage = @intFromEnum(ServerMsgKind.ClientMessage) },
+        kind: enum(u8) { ClientMessage = @backingInt(ServerMsgKind.ClientMessage) },
         format: u8,
         sequence: u16,
         window: Window,
@@ -5231,7 +5231,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(MappingNotify) == 32);
     }
     pub const MappingNotify = extern struct {
-        kind: enum(u8) { MappingNotify = @intFromEnum(ServerMsgKind.MappingNotify) },
+        kind: enum(u8) { MappingNotify = @backingInt(ServerMsgKind.MappingNotify) },
         unused: u8,
         sequence: u16,
         request: NonExhaustive(enum(u8) {
@@ -5248,7 +5248,7 @@ pub const servermsg = struct {
         std.debug.assert(@sizeOf(GenericEvent) == 12);
     }
     pub const GenericEvent = extern struct {
-        kind: enum(u8) { GenericEvent = @intFromEnum(ServerMsgKind.GenericEvent) },
+        kind: enum(u8) { GenericEvent = @backingInt(ServerMsgKind.GenericEvent) },
         /// The extension's opcode base value
         ext_opcode_base: u8 align(1),
         sequence: u16 align(1),
@@ -5258,11 +5258,11 @@ pub const servermsg = struct {
 
         pub fn isPresentCompleteNotify(event: *const GenericEvent, opcode_base: u8) bool {
             return event.ext_opcode_base == opcode_base and
-                event.type == @intFromEnum(present.EventType.complete_notify);
+                event.type == @backingInt(present.EventType.complete_notify);
         }
         pub fn isPresentIdleNotify(event: *const GenericEvent, opcode_base: u8) bool {
             return event.ext_opcode_base == opcode_base and
-                event.type == @intFromEnum(present.EventType.idle_notify);
+                event.type == @backingInt(present.EventType.idle_notify);
         }
     };
 
@@ -5302,7 +5302,7 @@ pub const GrabResult = enum(u8) {
     not_viewable = 3,
     frozen = 4,
     pub fn fromFlexible(flexible: u8) NonExhaustive(GrabResult) {
-        return @enumFromInt(flexible);
+        return @fromBackingInt(@intCast(flexible));
     }
 };
 
@@ -5553,15 +5553,7 @@ pub const Extension = struct {
 };
 
 pub fn charsetName(set: Charset) ?[]const u8 {
-    return if (stdext.enums.hasName(set)) @tagName(set) else null;
-}
-
-// any application that supports windows can call this at
-// the start of their program to setup WSA on Windows
-pub fn wsaStartup() !void {
-    if (builtin.os.tag == .windows) {
-        _ = try windows.WSAStartup(2, 2);
-    }
+    return std.enums.tagName(Charset, set);
 }
 
 /// returns a formatter that will print the enum value name if it exists,
@@ -5575,14 +5567,14 @@ pub fn FmtEnum(comptime T: type) type {
 
         const Self = @This();
         pub fn format(self: Self, writer: *std.Io.Writer) error{WriteFailed}!void {
-            if (@typeInfo(T).@"enum".is_exhaustive) {
+            if (@typeInfo(T).@"enum".mode == .exhaustive) {
                 try writer.print("{s}", .{@tagName(self.value)});
             } else {
-                @setEvalBranchQuota(@typeInfo(T).@"enum".fields.len);
+                @setEvalBranchQuota(@typeInfo(T).@"enum".field_names.len);
                 if (std.enums.tagName(T, self.value)) |name| {
                     try writer.print("{s}", .{name});
                 } else {
-                    try writer.print("?({d})", .{@intFromEnum(self.value)});
+                    try writer.print("?({d})", .{@backingInt(self.value)});
                 }
             }
         }
@@ -5638,7 +5630,7 @@ pub const KeyboardMappingIterator = struct {
     pub fn readSyms(self: *KeyboardMappingIterator, source: *Source) ![]charset.Combined {
         for (0..self.syms_per_keycode) |index| {
             const keysym_u32 = try source.takeReplyInt(u32);
-            self.syms_buffer[index] = @enumFromInt(@as(u16, @truncate(keysym_u32)));
+            self.syms_buffer[index] = @fromBackingInt(@intCast(@as(u16, @truncate(keysym_u32))));
         }
         return self.syms_buffer[0..self.syms_per_keycode];
     }
@@ -5739,24 +5731,24 @@ pub const PolyPointSink = struct {
             }
             const start_offset = msg_sink.writer.end;
             writeAllNoFlush(msg_sink.writer, &[_]u8{
-                @intFromEnum(switch (point_sink.kind) {
+                @backingInt(switch (point_sink.kind) {
                     .line => Opcode.poly_line,
                     .fill => Opcode.fill_poly,
                 }),
                 switch (point_sink.kind) {
-                    .line => @intFromEnum(point_sink.coordinate_mode),
+                    .line => @backingInt(point_sink.coordinate_mode),
                     .fill => 0,
                 },
             });
             // the message length (filled in at the end)
             writeIntNoFlush(msg_sink.writer, u16, undefined);
-            writeIntNoFlush(msg_sink.writer, u32, @intFromEnum(point_sink.drawable));
-            writeIntNoFlush(msg_sink.writer, u32, @intFromEnum(point_sink.gc));
+            writeIntNoFlush(msg_sink.writer, u32, @backingInt(point_sink.drawable));
+            writeIntNoFlush(msg_sink.writer, u32, @backingInt(point_sink.gc));
             switch (point_sink.kind) {
                 .line => {},
                 .fill => |fill_shape| writeAllNoFlush(msg_sink.writer, &[_]u8{
-                    @intFromEnum(fill_shape),
-                    @intFromEnum(point_sink.coordinate_mode),
+                    @backingInt(fill_shape),
+                    @backingInt(point_sink.coordinate_mode),
                     0,
                     0,
                 }),

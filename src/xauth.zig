@@ -1,10 +1,7 @@
 const std = @import("std");
 const x11 = @import("x11");
 
-const global = struct {
-    pub var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    pub const arena = arena_instance.allocator();
-};
+pub const std_options: std.Options = .{ .io_vtable = .threaded };
 
 const Opt = struct {
     auth_filename: ?[]const u8 = null,
@@ -24,76 +21,70 @@ fn usage() void {
     , .{});
 }
 
-pub fn main() !void {
-    const all_args = try std.process.argsAlloc(global.arena);
-    // no need to free
+pub fn main(init: std.process.Init.Minimal) !void {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    // only allocates on windows, no need to free
+    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    var arg_it = try init.args.iterateAllocator(arena.allocator());
+    _ = arg_it.skip();
 
     var opt = Opt{};
-    const args = blk: {
-        var new_arg_count: usize = 0;
-        var arg_index: usize = 1;
-        while (arg_index < all_args.len) : (arg_index += 1) {
-            const arg = all_args[arg_index];
-            if (!std.mem.startsWith(u8, arg, "-")) {
-                all_args[new_arg_count] = arg;
-                new_arg_count += 1;
-            } else if (std.mem.eql(u8, arg, "-f")) {
-                arg_index += 1;
-                if (arg_index >= all_args.len) {
-                    std.log.err("missing authfilename after option -f", .{});
-                    std.process.exit(1);
-                }
-                opt.auth_filename = all_args[arg_index];
+    var maybe_cmd: ?[:0]const u8 = null;
+    var cmd_arg_count: usize = 0;
+    while (arg_it.next()) |arg| {
+        if (!std.mem.startsWith(u8, arg, "-")) {
+            if (maybe_cmd == null) {
+                maybe_cmd = arg;
             } else {
-                std.log.err("invalid option \"{s}\"", .{arg});
-                std.process.exit(1);
+                cmd_arg_count += 1;
             }
+        } else if (std.mem.eql(u8, arg, "-f")) {
+            opt.auth_filename = arg_it.next() orelse {
+                std.log.err("missing authfilename after option -f", .{});
+                std.process.exit(1);
+            };
+        } else {
+            std.log.err("invalid option \"{s}\"", .{arg});
+            std.process.exit(1);
         }
-        break :blk all_args[0..new_arg_count];
-    };
-    if (args.len == 0) {
+    }
+    const cmd = maybe_cmd orelse {
         usage();
         return;
-    }
-    const cmd = args[0];
-    const cmd_args = args[1..];
-
+    };
     if (std.mem.eql(u8, cmd, "help")) {
         usage();
     } else if (std.mem.eql(u8, cmd, "list")) {
-        try list(opt, cmd_args);
+        try list(io, init.environ, opt, cmd_arg_count);
     } else {
         std.log.err("invalid command \"{s}\"", .{cmd});
         std.process.exit(1);
     }
 }
 
-fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
-    if (cmd_args.len != 0) {
+fn list(io: std.Io, environ: std.process.Environ, opt: Opt, cmd_arg_count: usize) !void {
+    if (cmd_arg_count != 0) {
         std.log.err("list command doesn't accept any arguments", .{});
         std.process.exit(1);
     }
 
     if (opt.auth_filename) |filename| {
-        const file = std.fs.cwd().openFile(filename, .{}) catch |err| {
+        const file = std.Io.Dir.cwd().openFile(io, filename, .{}) catch |err| {
             std.log.err("open '{s}' failed with {s}", .{ filename, @errorName(err) });
             std.process.exit(1);
         };
-        defer file.close();
-        try list2(file);
+        defer file.close(io);
+        try list2(io, file);
     } else {
-        var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
-        for (std.enums.valuesFromFields(
-            x11.AuthFileKind,
-            @typeInfo(x11.AuthFileKind).@"enum".fields,
-        )) |kind| {
-            if (x11.getAuthFilename(kind, &filename_buf) catch |err| {
+        var filename_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        for (std.meta.tags(x11.AuthFileKind)) |kind| {
+            if (x11.getAuthFilename(environ, kind, &filename_buf) catch |err| {
                 std.log.err("get auth filename ({s}) failed with {s}", .{ kind.context(), @errorName(err) });
                 continue;
             }) |filename| {
-                if (std.fs.cwd().openFile(filename, .{})) |file| {
-                    defer file.close();
-                    try list2(file);
+                if (std.Io.Dir.cwd().openFile(io, filename, .{})) |file| {
+                    defer file.close(io);
+                    try list2(io, file);
                 } else |err| {
                     std.log.info("open '{s}' failed with {s}", .{ filename, @errorName(err) });
                 }
@@ -102,19 +93,19 @@ fn list(opt: Opt, cmd_args: []const [:0]const u8) !void {
     }
 }
 
-fn list2(file: std.fs.File) !void {
+fn list2(io: std.Io, file: std.Io.File) !void {
     var file_read_buf: [4096]u8 = undefined;
-    var file_reader = file.reader(&file_read_buf);
+    var file_reader = file.reader(io, &file_read_buf);
     var reader: x11.AuthReader = .{ .reader = &file_reader.interface };
-    list3(&reader) catch |err| return switch (err) {
+    list3(io, &reader) catch |err| return switch (err) {
         error.ReadFailed => file_reader.err orelse error.ReadFailed,
         else => |e| e,
     };
 }
 
-fn list3(reader: *x11.AuthReader) !void {
+fn list3(io: std.Io, reader: *x11.AuthReader) !void {
     var stdout_buffer: [1000]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
     var entry_index: u32 = 0;
     while (true) : (entry_index += 1) {

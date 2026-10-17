@@ -1,9 +1,9 @@
 const Combined = @import("combined.zig").Combined;
 pub const Keyboardxkb = enum(u8) {
     pub fn toCombined(self: Keyboardxkb) Combined {
-        return @enumFromInt((@as(u16, 254) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 254) << 8) | @backingInt(self)));
     }
     pub fn next(self: Keyboardxkb) Keyboardxkb {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

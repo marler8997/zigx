@@ -4,18 +4,7 @@ pub fn Slice(comptime LenType: type, comptime Ptr: type) type {
     return struct {
         const Self = @This();
         const ptr_info = @typeInfo(Ptr).pointer;
-        pub const NativeSlice = @Type(std.builtin.Type{
-            .pointer = .{
-                .size = .slice,
-                .is_const = ptr_info.is_const,
-                .is_volatile = ptr_info.is_volatile,
-                .alignment = ptr_info.alignment,
-                .address_space = ptr_info.address_space,
-                .child = ptr_info.child,
-                .is_allowzero = ptr_info.is_allowzero,
-                .sentinel_ptr = ptr_info.sentinel_ptr,
-            },
-        });
+        pub const NativeSlice = @Pointer(.slice, ptr_info.attrs, ptr_info.child, ptr_info.sentinel());
 
         ptr: Ptr,
         len: LenType,
@@ -60,18 +49,7 @@ pub fn SliceWithMaxLen(comptime LenType: type, comptime Ptr: type, comptime max_
 
         const Self = @This();
         const ptr_info = @typeInfo(Ptr).pointer;
-        pub const NativeSlice = @Type(std.builtin.Type{
-            .pointer = .{
-                .size = .slice,
-                .is_const = ptr_info.is_const,
-                .is_volatile = ptr_info.is_volatile,
-                .alignment = ptr_info.alignment,
-                .address_space = ptr_info.address_space,
-                .child = ptr_info.child,
-                .is_allowzero = ptr_info.is_allowzero,
-                .sentinel_ptr = ptr_info.sentinel_ptr,
-            },
-        });
+        pub const NativeSlice = @Pointer(.slice, ptr_info.attrs, ptr_info.child, ptr_info.sentinel());
 
         ptr: Ptr,
         len: LenType,

@@ -1,3 +1,5 @@
+pub const std_options: std.Options = .{ .io_vtable = .threaded };
+
 // A working example to test various parts of the API
 const std = @import("std");
 const x11 = @import("x11");
@@ -81,18 +83,17 @@ fn getImageFormat(
     };
 }
 
-pub fn main() !void {
-    try x11.wsaStartup();
-
+pub fn main(init: std.process.Init.Minimal) !void {
+    const io = std.Io.Threaded.global_single_threaded.io();
     var read_buffer: [1000]u8 = undefined;
-    var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
-    defer x11.disconnect(socket_reader.getStream());
+    var socket_reader, const used_auth = try x11.draft.connect(io, init.environ, &read_buffer);
+    defer x11.disconnect(io, socket_reader.stream);
     _ = used_auth;
-    const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
-        error.ReadFailed => return socket_reader.getError().?,
+    const setup = x11.readSetupSuccess(&socket_reader.interface) catch |err| switch (err) {
+        error.ReadFailed => return socket_reader.err.?,
         error.EndOfStream, error.Protocol => |e| return e,
     };
-    var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+    var source: x11.Source = .initFinishSetup(&socket_reader.interface, &setup);
     std.log.info("setup reply {f}", .{setup});
     try source.requireReplyAtLeast(setup.required());
     {
@@ -172,7 +173,7 @@ pub fn main() !void {
     };
 
     var write_buffer: [1000]u8 = undefined;
-    var socket_writer = x11.socketWriter(socket_reader.getStream(), &write_buffer);
+    var socket_writer = socket_reader.stream.writer(io, &write_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
 
     const id_range = try x11.IdRange.init(setup.resource_id_base, setup.resource_id_mask);
@@ -187,7 +188,7 @@ pub fn main() !void {
     );
     run(&sink, &source, ids, depth, image_format, screen) catch |err| switch (err) {
         error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
-        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.err),
         error.UnexpectedMessage => |e| return e,
     };
 }
@@ -270,7 +271,7 @@ fn run(
         }
         if (!found_window) std.debug.panic(
             "our window {} was not in the tree",
-            .{@intFromEnum(ids.window())},
+            .{@backingInt(ids.window())},
         );
     }
 

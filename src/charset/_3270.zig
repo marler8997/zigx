@@ -32,9 +32,9 @@ pub const _3270 = enum(u8) {
     _3270_enter = 30,
 
     pub fn toCombined(self: _3270) Combined {
-        return @enumFromInt((@as(u16, 253) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 253) << 8) | @backingInt(self)));
     }
     pub fn next(self: _3270) _3270 {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

@@ -85,9 +85,9 @@ pub const Publish = enum(u8) {
     cursor = 255,
 
     pub fn toCombined(self: Publish) Combined {
-        return @enumFromInt((@as(u16, 10) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 10) << 8) | @backingInt(self)));
     }
     pub fn next(self: Publish) Publish {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

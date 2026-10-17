@@ -43,8 +43,8 @@ pub const Charset = enum(u8) {
     keyboard = 255,
 
     pub fn fromInt(value_int: u8) ?Charset {
-        return inline for (@typeInfo(Charset).Enum.fields) |f| {
-            if (value_int == f.value) break @enumFromInt(f.value);
+        return inline for (@typeInfo(Charset).@"enum".field_values) |value| {
+            if (value_int == value) break @fromBackingInt(@intCast(value));
         } else null;
     }
 
