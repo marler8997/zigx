@@ -214,11 +214,6 @@ fn run(
     }, .{
         .bg_pixel = depth.rgbFrom24(0xbbccdd),
         .bit_gravity = .north_west,
-        .event_mask = .{
-            .KeymapState = 1,
-            .Exposure = 1,
-            .StructureNotify = 1,
-        },
     });
 
     // Set the window name
@@ -418,6 +413,16 @@ fn run(
         if (latest_version.minor < 2) @panic("untested XTEST version");
     }
 
+    // Events are selected after the synchronous requests above, otherwise an event
+    // could arrive while we're waiting for a reply (some servers send ConfigureNotify
+    // as soon as the window is created).
+    try sink.ChangeWindowAttributes(ids.window(), .{
+        .event_mask = .{
+            .KeymapState = 1,
+            .Exposure = 1,
+            .StructureNotify = 1,
+        },
+    });
     try sink.MapWindow(ids.window());
 
     // Send a fake mouse left-click event

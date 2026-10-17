@@ -143,7 +143,6 @@ fn run(
     }, .{
         .bg_pixel = 0x332211,
         .bit_gravity = .north_west,
-        .event_mask = .{ .KeyPress = 1, .Exposure = 1, .StructureNotify = 1 },
     });
 
     try sink.CreateGc(
@@ -162,6 +161,12 @@ fn run(
         break :blk .{ .enabled = .{ .opcode = ext.opcode_base, .back_buffer = ids.backBuffer() } };
     };
 
+    // Events are selected after the synchronous requests above, otherwise an event
+    // could arrive while we're waiting for a reply (some servers send ConfigureNotify
+    // as soon as the window is created).
+    try sink.ChangeWindowAttributes(ids.window(), .{
+        .event_mask = .{ .KeyPress = 1, .Exposure = 1, .StructureNotify = 1 },
+    });
     try sink.MapWindow(ids.window());
 
     var window_width: u16 = initial_window_width;

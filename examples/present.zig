@@ -141,7 +141,6 @@ fn run(
     }, .{
         .bg_pixel = bg_rgb,
         .bit_gravity = .north_west,
-        .event_mask = .{ .KeyPress = 1, .Exposure = 1, .StructureNotify = 1 },
     });
 
     try sink.CreateGc(
@@ -177,6 +176,12 @@ fn run(
     };
     try presenter.init(sink, window_width, window_height);
 
+    // Events are selected after the synchronous requests above, otherwise an event
+    // could arrive while we're waiting for a reply (some servers send ConfigureNotify
+    // as soon as the window is created).
+    try sink.ChangeWindowAttributes(ids.window(), .{
+        .event_mask = .{ .KeyPress = 1, .Exposure = 1, .StructureNotify = 1 },
+    });
     try sink.MapWindow(ids.window());
 
     var frame_time_graph: FrameTimeGraph = .{ .font_dims = font_dims };

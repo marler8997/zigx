@@ -105,13 +105,6 @@ fn run(
         .{
             .bg_pixel = root.depth.rgbFrom24(0),
             .bit_gravity = .north_west,
-            .event_mask = .{
-                .ButtonPress = 1,
-                .ButtonRelease = 1,
-                .PointerMotion = 1,
-                .Exposure = 1,
-                .StructureNotify = 1,
-            },
         },
     );
 
@@ -147,6 +140,18 @@ fn run(
     };
     try presenter.init(sink, window_size.x, window_size.y);
 
+    // Events are selected after the synchronous requests above, otherwise an event
+    // could arrive while we're waiting for a reply (some servers send ConfigureNotify
+    // as soon as the window is created).
+    try sink.ChangeWindowAttributes(ids.window(), .{
+        .event_mask = .{
+            .ButtonPress = 1,
+            .ButtonRelease = 1,
+            .PointerMotion = 1,
+            .Exposure = 1,
+            .StructureNotify = 1,
+        },
+    });
     try sink.MapWindow(ids.window());
 
     var point_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
