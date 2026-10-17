@@ -8,7 +8,7 @@ pub const ListInputDevicesReplyKind = enum(u8) { opcode = 2 };
 
 pub const Opcode = enum(u8) {
     get_extension_version = 1,
-    list_input_devices = @intFromEnum(ListInputDevicesReplyKind.opcode),
+    list_input_devices = @backingInt(ListInputDevicesReplyKind.opcode),
     open_device = 3,
     close_device = 4,
     set_device_mode = 5,
@@ -118,14 +118,14 @@ pub const query_version = struct {
     };
     pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) void {
         buf[0] = ext_opcode;
-        buf[1] = @intFromEnum(Opcode.query_version);
+        buf[1] = @backingInt(Opcode.query_version);
         std.debug.assert(len & 0x3 == 0);
         x11.writeIntNative(u16, buf + 2, len >> 2);
         x11.writeIntNative(u16, buf + 4, args.major_version);
         x11.writeIntNative(u16, buf + 6, args.minor_version);
     }
     pub const Reply = extern struct {
-        kind: enum(u8) { Reply = @intFromEnum(x11.ServerMsgKind.Reply) },
+        kind: enum(u8) { Reply = @backingInt(x11.ServerMsgKind.Reply) },
         unused_pad: u8,
         sequence: u16,
         word_len: u32,
@@ -142,7 +142,7 @@ pub const list_input_devices = struct {
     pub const len = 4;
     pub fn serialize(buf: [*]u8, input_ext_opcode: u8) void {
         buf[0] = input_ext_opcode;
-        buf[1] = @intFromEnum(Opcode.list_input_devices);
+        buf[1] = @backingInt(Opcode.list_input_devices);
         x11.writeIntNative(u16, buf + 2, len >> 2);
     }
 };
@@ -177,12 +177,12 @@ pub const change_property = struct {
             };
             pub fn serialize(buf: [*]u8, input_ext_opcode: u8, args: Args) void {
                 buf[0] = input_ext_opcode;
-                buf[1] = @intFromEnum(Opcode.change_property);
+                buf[1] = @backingInt(Opcode.change_property);
                 const request_len = getLen(args.values.len);
                 std.debug.assert(request_len & 0x3 == 0);
                 x11.writeIntNative(u16, buf + 2, request_len >> 2);
                 x11.writeIntNative(u16, buf + 4, args.device_id);
-                buf[6] = @intFromEnum(args.mode);
+                buf[6] = @backingInt(args.mode);
                 buf[7] = @sizeOf(T) * 8;
                 x11.writeIntNative(u32, buf + 8, args.property);
                 x11.writeIntNative(u32, buf + 12, args.type);
@@ -205,7 +205,7 @@ pub const get_property = struct {
     };
     pub fn serialize(buf: [*]u8, input_ext_opcode: u8, args: Args) void {
         buf[0] = input_ext_opcode;
-        buf[1] = @intFromEnum(Opcode.get_property);
+        buf[1] = @backingInt(Opcode.get_property);
         x11.writeIntNative(u16, buf + 2, len >> 2);
         x11.writeIntNative(u16, buf + 4, args.device_id);
         x11.writeIntNative(u8, buf + 6, @intFromBool(args.delete));
@@ -216,7 +216,7 @@ pub const get_property = struct {
         x11.writeIntNative(u32, buf + 20, args.len);
     }
     pub const Reply = extern struct {
-        kind: enum(u8) { Reply = @intFromEnum(x11.ServerMsgKind.Reply) },
+        kind: enum(u8) { Reply = @backingInt(x11.ServerMsgKind.Reply) },
         unused_pad: u8,
         sequence: u16,
         word_len: u32,
@@ -254,9 +254,9 @@ pub const InputClassIdKeyKind = enum(u8) { id = 0 };
 pub const InputClassIdButtonKind = enum(u8) { id = 1 };
 pub const InputClassIdValuatorKind = enum(u8) { id = 2 };
 pub const InputClassId = enum(u8) {
-    key = @intFromEnum(InputClassIdKeyKind.id),
-    button = @intFromEnum(InputClassIdButtonKind.id),
-    valuator = @intFromEnum(InputClassIdValuatorKind.id),
+    key = @backingInt(InputClassIdKeyKind.id),
+    button = @backingInt(InputClassIdButtonKind.id),
+    valuator = @backingInt(InputClassIdValuatorKind.id),
 };
 
 pub fn Length(comptime T: type, comptime value: T) type {
@@ -334,9 +334,9 @@ pub const InputInfoIterator = struct {
 
     pub fn front(self: InputInfoIterator) TaggedUnion {
         return switch (self.ptr[0]) {
-            @intFromEnum(InputClassId.key) => return TaggedUnion{ .key = @ptrCast(self.ptr) },
-            @intFromEnum(InputClassId.button) => return TaggedUnion{ .button = @ptrCast(self.ptr) },
-            @intFromEnum(InputClassId.valuator) => return TaggedUnion{ .valuator = @ptrCast(self.ptr) },
+            @backingInt(InputClassId.key) => return TaggedUnion{ .key = @ptrCast(self.ptr) },
+            @backingInt(InputClassId.button) => return TaggedUnion{ .button = @ptrCast(self.ptr) },
+            @backingInt(InputClassId.valuator) => return TaggedUnion{ .valuator = @ptrCast(self.ptr) },
             else => return TaggedUnion{ .unknown = @ptrCast(self.ptr) },
         };
     }
@@ -346,7 +346,7 @@ pub const InputInfoIterator = struct {
 };
 
 pub const ListInputDevicesReply = extern struct {
-    kind: enum(u8) { Reply = @intFromEnum(x11.ServerMsgKind.Reply) },
+    kind: enum(u8) { Reply = @backingInt(x11.ServerMsgKind.Reply) },
     opcode: ListInputDevicesReplyKind,
     sequence: u16,
     word_len: u32, // length in 4-byte words
@@ -420,7 +420,7 @@ pub const Device = enum(u16) {
     _,
 
     pub fn fromInt(i: u16) Device {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 
     pub fn format(v: Device, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -455,7 +455,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.get_extension_version),
+            @backingInt(Opcode.get_extension_version),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeInt(sink.writer, &offset, u32, ext_name.len);
@@ -474,7 +474,7 @@ pub fn ListInputDevices(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.list_input_devices),
+        @backingInt(Opcode.list_input_devices),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     std.debug.assert(offset == msg_len);
@@ -490,7 +490,7 @@ pub fn GetProperty(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.get_property),
+        @backingInt(Opcode.get_property),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeInt(sink.writer, &offset, u16, args.device_id);
@@ -517,12 +517,12 @@ pub fn ChangeProperty(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.change_property),
+        @backingInt(Opcode.change_property),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     try x11.writeInt(sink.writer, &offset, u16, args.device_id);
     try x11.writeAll(sink.writer, &offset, &[_]u8{
-        @intFromEnum(args.mode),
+        @backingInt(args.mode),
         @sizeOf(T) * 8,
     });
     try x11.writeInt(sink.writer, &offset, u32, args.property);
@@ -564,15 +564,15 @@ pub fn SelectEvents(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.select_events),
+        @backingInt(Opcode.select_events),
     });
     try x11.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(window));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(window));
     try x11.writeInt(sink.writer, &offset, u16, @intCast(masks.len));
     try x11.writeAll(sink.writer, &offset, &[_]u8{ 0, 0 }); // unused
 
     for (masks) |mask| {
-        try x11.writeInt(sink.writer, &offset, u16, @intFromEnum(mask.device_id));
+        try x11.writeInt(sink.writer, &offset, u16, @backingInt(mask.device_id));
         const mask_len: u16 = @sizeOf(u32) / 4; // Length of mask in 4 byte units
         try x11.writeInt(sink.writer, &offset, u16, mask_len);
         try x11.writeInt(sink.writer, &offset, u32, mask.mask);

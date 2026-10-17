@@ -5,22 +5,22 @@ pub const ConnectError = error{
 
     // Errors resulting from connect
     SystemResources,
-    ConnectionTimedOut,
     AccessDenied,
     PermissionDenied,
     FileNotFound,
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
     ConnectionRefused,
-    AddressNotAvailable,
     UnknownHostName,
+    Canceled,
     Unexpected,
 
     // Error from authenticate error
     AuthRejected,
 };
-pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
-    const display = x11.getDisplay() catch |err| {
+pub fn connect(io: std.Io, environ: std.process.Environ, read_buffer: []u8) ConnectError!x11.Authenticator.Success {
+    var display_buf: [x11.max_display_len]u8 = undefined;
+    const display = x11.getDisplay(environ, &display_buf) catch |err| {
         x11.log.err("failed to get x11 display with {s}", .{@errorName(err)});
         return error.GetDisplay;
     };
@@ -35,9 +35,8 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
             return error.BadDisplay;
         },
     };
-    const address, const initial_stream = x11.connect(&host) catch |err| return switch (err) {
+    const address, const initial_stream = x11.connect(io, &host) catch |err| return switch (err) {
         error.SystemResources,
-        error.ConnectionTimedOut,
         error.AccessDenied,
         error.Unexpected,
         error.PermissionDenied,
@@ -45,16 +44,18 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
         error.ConnectionRefused,
-        error.AddressNotAvailable,
         error.UnknownHostName,
+        error.Canceled,
         => |e| {
             x11.log.err("connect to {f} failed with {s}", .{ host, @errorName(err) });
             return e;
         },
     };
-    errdefer x11.disconnect(initial_stream);
+    errdefer x11.disconnect(io, initial_stream);
     x11.log.info("connected to {f}", .{address});
     return try x11.draft.authenticate(
+        io,
+        environ,
         display,
         &parsed_display,
         &host,
@@ -66,18 +67,22 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
 }
 
 pub fn authenticate(
+    io: std.Io,
+    environ: std.process.Environ,
     display: x11.Display,
     parsed_display: *const x11.ParsedDisplay,
     host: *const x11.Host,
-    address: *const std.net.Address,
-    stream: std.net.Stream,
+    address: *const x11.Address,
+    stream: std.Io.net.Stream,
     stream_read_buffer: []u8,
     opt: struct {
         order: x11.Authenticator.Order = .auth_first,
     },
 ) error{AuthRejected}!x11.Authenticator.Success {
-    var filename_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var filename_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     var authenticator: x11.Authenticator = .{
+        .io = io,
+        .environ = environ,
         .display = display,
         .parsed_display = parsed_display,
         .host = host,

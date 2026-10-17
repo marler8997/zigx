@@ -1,6 +1,8 @@
 const std = @import("std");
 const x11 = @import("x11");
 
+pub const std_options: std.Options = .{ .io_vtable = .threaded };
+
 const window_width = 400;
 const window_height = 400;
 
@@ -46,22 +48,21 @@ const Root = struct {
     depth: x11.Depth,
 };
 
-pub fn main() !void {
-    try x11.wsaStartup();
-
-    const stream: std.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const root: Root = blk: {
+pub fn main(init: std.process.Init.Minimal) !void {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const stream: std.Io.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
-        var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
-        errdefer x11.disconnect(socket_reader.getStream());
+        var socket_reader, const used_auth = try x11.draft.connect(io, init.environ, &read_buffer);
+        errdefer x11.disconnect(io, socket_reader.stream);
         _ = used_auth;
-        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
-            error.ReadFailed => return socket_reader.getError().?,
+        const setup = x11.readSetupSuccess(&socket_reader.interface) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         };
         std.log.info("setup reply {f}", .{setup});
-        var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+        var source: x11.Source = .initFinishSetup(&socket_reader.interface, &setup);
         const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
-            error.ReadFailed => return socket_reader.getError().?,
+            error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         }) orelse {
             std.log.err("no screen?", .{});
@@ -73,7 +74,7 @@ pub fn main() !void {
             std.process.exit(0xff);
         }
         break :blk .{
-            socket_reader.getStream(),
+            socket_reader.stream,
             .{ .range = id_range },
             try .init(setup.min_keycode, setup.max_keycode),
             .{
@@ -86,17 +87,17 @@ pub fn main() !void {
             },
         };
     };
-    defer x11.disconnect(stream);
+    defer x11.disconnect(io, stream);
 
     var write_buffer: [1000]u8 = undefined;
     var read_buffer: [1000]u8 = undefined;
-    var socket_writer = x11.socketWriter(stream, &write_buffer);
-    var socket_reader = x11.socketReader(stream, &read_buffer);
+    var socket_writer = stream.writer(io, &write_buffer);
+    var socket_reader = stream.reader(io, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
-    var source: x11.Source = .initAfterSetup(socket_reader.interface());
+    var source: x11.Source = .initAfterSetup(&socket_reader.interface);
     run(ids, &root, &sink, &source, keyrange) catch |err| switch (err) {
         error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
-        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.err),
         error.UnexpectedMessage => |e| return e,
     };
 }
@@ -108,7 +109,7 @@ fn run(
     source: *x11.Source,
     keyrange: x11.KeycodeRange,
 ) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
-    var keycode_map = [1]?Key{null} ** std.math.maxInt(u8);
+    var keycode_map: [std.math.maxInt(u8)]?Key = @splat(null);
 
     {
         var it = try x11.synchronousGetKeyboardMapping(sink, source, keyrange);
@@ -307,7 +308,7 @@ fn run(
                     "expected opcode {} but got {}",
                     .{ extension.opcode_base, event.ext_opcode_base },
                 );
-                const code: x11.NonExhaustive(x11.input.ExtEventCode) = @enumFromInt(@as(u8, @truncate(event.type)));
+                const code: x11.NonExhaustive(x11.input.ExtEventCode) = @fromBackingInt(@intCast(@as(u8, @truncate(event.type))));
                 try source.discardRemaining();
                 switch (code) {
                     .raw_button_press => {
@@ -386,16 +387,16 @@ fn handleReply(
             return true; // handled
         },
         .get_version => |info| if (reply.sequence == info.sequence) {
-            if (reply.flexible != @intFromEnum(x11.input.Opcode.get_extension_version)) std.debug.panic(
+            if (reply.flexible != @backingInt(x11.input.Opcode.get_extension_version)) std.debug.panic(
                 "expected reply opcode(flexible) {} but got {}",
-                .{ @intFromEnum(x11.input.Opcode.get_extension_version), reply },
+                .{ @backingInt(x11.input.Opcode.get_extension_version), reply },
             );
             if (remaining_size != @sizeOf(x11.input.stage3.GetExtensionVersion)) std.debug.panic(
                 "expected size {} but got {}",
                 .{ @sizeOf(x11.stage3.QueryExtension), remaining_size },
             );
             const version = try x11.input.read3Full(source, .GetExtensionVersion);
-            if (version.present != .yes) std.debug.panic("XInputExtension present={} after it was already present?", .{@intFromEnum(version.present)});
+            if (version.present != .yes) std.debug.panic("XInputExtension present={} after it was already present?", .{@backingInt(version.present)});
             if (version.major != 2) std.debug.panic("expected XInputExtension major version {} but got {}", .{ 2, version.major });
             if (version.minor < 3) std.debug.panic("XInputExtension minor version is {} but require at least 3", .{version.minor});
             state.xinput = .{ .enabled = info.extension };

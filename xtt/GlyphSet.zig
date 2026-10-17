@@ -121,7 +121,7 @@ pub fn uploadIfNeeded(
         sink,
         self.render_ext_opcode,
         self.glyphset,
-        @intFromEnum(glyph_index),
+        @backingInt(glyph_index),
         info,
         alpha_size,
     );

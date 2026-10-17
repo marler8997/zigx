@@ -47,7 +47,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode_base,
-            @intFromEnum(Opcode.get_version),
+            @backingInt(Opcode.get_version),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeAll(sink.writer, &offset, &[_]u8{
@@ -84,13 +84,13 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.fake_input),
+            @backingInt(Opcode.fake_input),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         switch (args) {
             .key_press, .button_press => |args_value| {
                 try x11.writeAll(sink.writer, &offset, &[_]u8{
-                    @intFromEnum(args_value.event_type),
+                    @backingInt(args_value.event_type),
                     args_value.detail,
                     0, 0, // unused
                 });
@@ -107,8 +107,8 @@ pub const request = struct {
             },
             .mouse_notify => |args_value| {
                 try x11.writeAll(sink.writer, &offset, &[_]u8{
-                    @intFromEnum(args_value.event_type),
-                    @intFromEnum(args_value.detail),
+                    @backingInt(args_value.event_type),
+                    @backingInt(args_value.detail),
                     0, 0, // unused
                 });
                 try x11.writeInt(sink.writer, &offset, u32, args_value.delay_ms); // offset 8

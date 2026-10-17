@@ -150,9 +150,9 @@ pub const Keyboard = enum(u8) {
     delete_rubout = 255,
 
     pub fn toCombined(self: Keyboard) Combined {
-        return @enumFromInt((@as(u16, 255) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 255) << 8) | @backingInt(self)));
     }
     pub fn next(self: Keyboard) Keyboard {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

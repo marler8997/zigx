@@ -177,7 +177,7 @@ fn prepareComposite(
         const desired_x = roundClamp(i16, cursor_x.*);
         buf[count] = .{
             .delta_x = desired_x - server_x,
-            .glyph_id = @intFromEnum(glyph_index),
+            .glyph_id = @backingInt(glyph_index),
         };
         count += 1;
 
@@ -205,17 +205,17 @@ fn writeComposite(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         glyph_set.render_ext_opcode,
-        @intFromEnum(x11.render.Opcode.composite_glyphs_16),
+        @backingInt(x11.render.Opcode.composite_glyphs_16),
     });
     try x11.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
     try x11.writeAll(sink.writer, &offset, &[_]u8{
-        @intFromEnum(x11.render.PictureOperation.over),
+        @backingInt(x11.render.PictureOperation.over),
         0, 0, 0, // padding
     });
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(opt.src_picture));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(opt.dst_picture));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(x11.render.PictureFormat.none)); // mask_format
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(glyph_set.glyphset));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(opt.src_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(opt.dst_picture));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(x11.render.PictureFormat.none)); // mask_format
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(glyph_set.glyphset));
     try x11.writeInt(sink.writer, &offset, i16, 0); // src_x
     try x11.writeInt(sink.writer, &offset, i16, 0); // src_y
     std.debug.assert(offset == header_len);

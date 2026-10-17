@@ -37,9 +37,9 @@ pub const Latin4 = enum(u8) {
     u_with_macron = 254,
 
     pub fn toCombined(self: Latin4) Combined {
-        return @enumFromInt((@as(u16, 3) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 3) << 8) | @backingInt(self)));
     }
     pub fn next(self: Latin4) Latin4 {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

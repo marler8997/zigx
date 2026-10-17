@@ -29,7 +29,7 @@ pub const get_version = struct {
     };
     pub fn serialize(buf: [*]u8, args: Args) void {
         buf[0] = args.ext_opcode;
-        buf[1] = @intFromEnum(Opcode.get_version);
+        buf[1] = @backingInt(Opcode.get_version);
         comptime {
             std.debug.assert(len & 0x3 == 0);
         }
@@ -76,13 +76,13 @@ pub fn Allocate(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.allocate),
+        @backingInt(Opcode.allocate),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(window));
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(backbuffer));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(window));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(backbuffer));
     try x11.writeAll(sink.writer, &offset, &[_]u8{
-        @intFromEnum(swapaction),
+        @backingInt(swapaction),
         0, // unused
         0, // unused
         0, // unused
@@ -100,10 +100,10 @@ pub fn Deallocate(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.deallocate),
+        @backingInt(Opcode.deallocate),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-    try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(backbuffer));
+    try x11.writeInt(sink.writer, &offset, u32, @backingInt(backbuffer));
     std.debug.assert(offset == msg_len);
     sink.sequence +%= 1;
 }
@@ -126,14 +126,14 @@ pub fn Swap(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.swap),
+        @backingInt(Opcode.swap),
     });
     try x11.writeInt(sink.writer, &offset, u16, @intCast(msg_len >> 2));
     try x11.writeInt(sink.writer, &offset, u32, swap_infos.len);
     for (swap_infos.nativeSlice()) |info| {
-        try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(info.window));
+        try x11.writeInt(sink.writer, &offset, u32, @backingInt(info.window));
         try x11.writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(info.action),
+            @backingInt(info.action),
             0, // unused
             0, // unused
             0, // unused

@@ -86,9 +86,9 @@ pub const Thai = enum(u8) {
     lekkao = 249,
 
     pub fn toCombined(self: Thai) Combined {
-        return @enumFromInt((@as(u16, 13) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 13) << 8) | @backingInt(self)));
     }
     pub fn next(self: Thai) Thai {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

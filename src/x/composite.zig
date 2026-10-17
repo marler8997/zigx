@@ -41,7 +41,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.QueryVersion),
+            @backingInt(Opcode.QueryVersion),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeInt(sink.writer, &offset, u32, wanted_major_version);
@@ -66,12 +66,12 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.RedirectSubwindows),
+            @backingInt(Opcode.RedirectSubwindows),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeInt(sink.writer, &offset, u32, window_id);
         try x11.writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(update_type),
+            @backingInt(update_type),
             0, // unused pad
             0, // unused pad
             0, // unused pad
@@ -95,7 +95,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.NameWindowPixmap),
+            @backingInt(Opcode.NameWindowPixmap),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeInt(sink.writer, &offset, u32, window_id);
@@ -117,7 +117,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.GetOverlayWindow),
+            @backingInt(Opcode.GetOverlayWindow),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeInt(sink.writer, &offset, u32, window_id);
@@ -138,7 +138,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.ReleaseOverlayWindow),
+            @backingInt(Opcode.ReleaseOverlayWindow),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeInt(sink.writer, &offset, u32, overlay_window_id);

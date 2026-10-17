@@ -1,3 +1,5 @@
+pub const std_options: std.Options = .{ .io_vtable = .threaded };
+
 const Ids = struct {
     range: x11.IdRange,
 
@@ -14,7 +16,7 @@ const Ids = struct {
         };
     }
     pub fn presentEventId(self: Ids) u32 {
-        return @intFromEnum(self.range.addAssumeCapacity(4));
+        return @backingInt(self.range.addAssumeCapacity(4));
     }
     pub fn glyphset(self: Ids) x11.render.GlyphSet {
         return self.range.addAssumeCapacity(5).glyphSet();
@@ -42,45 +44,40 @@ const Options = struct {
     size: f32 = 24.0,
 };
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
+    const io = std.Io.Threaded.global_single_threaded.io();
     var arena_instance: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     // no need to deinit
-    const cmdline = try Cmdline.alloc(arena_instance.allocator());
+    // only allocates on windows
+    var arg_it = try init.args.iterateAllocator(arena_instance.allocator());
 
     var opt: Options = .{};
 
     {
-        var i: usize = 1;
-        while (i < cmdline.len()) : (i += 1) {
-            const arg = cmdline.arg(i);
+        _ = arg_it.skip();
+        while (arg_it.next()) |arg| {
             if (std.mem.eql(u8, arg, "--font")) {
-                i += 1;
-                if (i == cmdline.len()) errExit("--font missing arg", .{});
-                opt.font_file = cmdline.arg(i);
+                opt.font_file = arg_it.next() orelse errExit("--font missing arg", .{});
             } else if (std.mem.eql(u8, arg, "--size")) {
-                i += 1;
-                if (i == cmdline.len()) errExit("--size missing arg", .{});
-                const size_str = cmdline.arg(i);
+                const size_str = arg_it.next() orelse errExit("--size missing arg", .{});
                 opt.size = std.fmt.parseFloat(f32, size_str) catch errExit("invalid --size '{s}'", .{size_str});
             } else errExit("unknown cmdline option '{s}'", .{arg});
         }
     }
 
-    try x11.wsaStartup();
-
-    const stream: std.net.Stream, const ids: Ids, const root: Root = blk: {
+    const stream: std.Io.net.Stream, const ids: Ids, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
-        var socket_reader, const used_auth = try x11.draft.connect(&read_buffer);
-        errdefer x11.disconnect(socket_reader.getStream());
+        var socket_reader, const used_auth = try x11.draft.connect(io, init.environ, &read_buffer);
+        errdefer x11.disconnect(io, socket_reader.stream);
         _ = used_auth;
-        const setup = x11.readSetupSuccess(socket_reader.interface()) catch |err| switch (err) {
-            error.ReadFailed => return socket_reader.getError().?,
+        const setup = x11.readSetupSuccess(&socket_reader.interface) catch |err| switch (err) {
+            error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         };
         std.log.info("setup reply {f}", .{setup});
-        var source: x11.Source = .initFinishSetup(socket_reader.interface(), &setup);
+        var source: x11.Source = .initFinishSetup(&socket_reader.interface, &setup);
         const screen = (x11.draft.readSetupDynamic(&source, &setup, .{}) catch |err| switch (err) {
-            error.ReadFailed => return socket_reader.getError().?,
+            error.ReadFailed => return socket_reader.err.?,
             error.EndOfStream, error.Protocol => |e| return e,
         }) orelse {
             std.log.err("no screen?", .{});
@@ -92,7 +89,8 @@ pub fn main() !void {
             std.process.exit(0xff);
         }
         break :blk .{
-            socket_reader.getStream(), .{ .range = id_range }, .{
+            socket_reader.stream, .{ .range = id_range },
+            .{
                 .window = screen.root,
                 .visual = screen.root_visual,
                 .depth = x11.Depth.init(screen.root_depth) orelse std.debug.panic(
@@ -102,22 +100,23 @@ pub fn main() !void {
             },
         };
     };
-    defer x11.disconnect(stream);
+    defer x11.disconnect(io, stream);
 
     var write_buffer: [1000]u8 = undefined;
     var read_buffer: [1000]u8 = undefined;
-    var socket_writer = x11.socketWriter(stream, &write_buffer);
-    var socket_reader = x11.socketReader(stream, &read_buffer);
+    var socket_writer = stream.writer(io, &write_buffer);
+    var socket_reader = stream.reader(io, &read_buffer);
     var sink: x11.RequestSink = .{ .writer = &socket_writer.interface };
-    var source: x11.Source = .initAfterSetup(socket_reader.interface());
-    run(ids, &root, &sink, &source, &arena_instance, opt) catch |err| switch (err) {
+    var source: x11.Source = .initAfterSetup(&socket_reader.interface);
+    run(io, ids, &root, &sink, &source, &arena_instance, opt) catch |err| switch (err) {
         error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
-        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.getError()),
+        error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.err),
         error.UnexpectedMessage => |e| return e,
     };
 }
 
 fn run(
+    io: std.Io,
     ids: Ids,
     root: *const Root,
     sink: *x11.RequestSink,
@@ -246,10 +245,11 @@ fn run(
 
     const ttf_content = blk: {
         if (opt.font_file) |font_file| {
-            break :blk std.fs.cwd().readFileAlloc(
-                arena_instance.allocator(),
+            break :blk std.Io.Dir.cwd().readFileAlloc(
+                io,
                 font_file,
-                std.math.maxInt(usize),
+                arena_instance.allocator(),
+                .unlimited,
             ) catch |e| errExit(
                 "read '{s}' failed with {s}",
                 .{ font_file, @errorName(e) },
@@ -560,4 +560,3 @@ const xtt = @import("xtt");
 const XY = x11.XY;
 const assert = std.debug.assert;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const Cmdline = @import("Cmdline.zig");

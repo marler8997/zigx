@@ -15,9 +15,9 @@ pub const Currency = enum(u8) {
     euro_sign = 172,
 
     pub fn toCombined(self: Currency) Combined {
-        return @enumFromInt((@as(u16, 32) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 32) << 8) | @backingInt(self)));
     }
     pub fn next(self: Currency) Currency {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

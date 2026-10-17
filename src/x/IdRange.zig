@@ -20,8 +20,8 @@ fn Payload(comptime bit_count: comptime_int) type {
     const remaining_bits = 29 - bit_count;
     const shift_bits = std.math.log2_int_ceil(u32, remaining_bits + 1);
     return packed struct {
-        shift: std.meta.Int(.unsigned, shift_bits),
-        base: std.meta.Int(.unsigned, remaining_bits),
+        shift: @Int(.unsigned, shift_bits),
+        base: @Int(.unsigned, remaining_bits),
     };
 }
 
@@ -44,7 +44,7 @@ payloads: Payloads,
 const is_test = @import("builtin").is_test;
 
 pub fn init(base: x11.ResourceBase, mask: x11.ResourceMask) error{Protocol}!IdRange {
-    const mask_u32: u32 = @intFromEnum(mask);
+    const mask_u32: u32 = @backingInt(mask);
     if (mask_u32 == 0) {
         if (!is_test) std.log.err("X11 server provided zero resource id mask", .{});
         return error.Protocol;
@@ -67,7 +67,7 @@ pub fn init(base: x11.ResourceBase, mask: x11.ResourceMask) error{Protocol}!IdRa
         if (!is_test) std.log.err("X11 server provided resource id mask with only {} bits (need at least 18): 0x{x}", .{ bit_count, mask_u32 });
         return error.Protocol;
     }
-    const base_u32: u32 = @intFromEnum(base);
+    const base_u32: u32 = @backingInt(base);
     // Resource IDs never have the top three bits set.
     if ((base_u32 | mask_u32) & 0xE0000000 != 0) {
         if (!is_test) std.log.err("X11 server provided resource ids with top 3 bits set (base=0x{x}, mask=0x{x})", .{ base_u32, mask_u32 });
@@ -128,7 +128,7 @@ pub const Generic = struct {
 
     pub fn add(g: Generic, off: u29) ?x11.Resource {
         if (off >= g.capacity()) return null;
-        return @enumFromInt(@as(u32, g.base | (off << g.shift)));
+        return @fromBackingInt(@intCast(@as(u32, g.base | (off << g.shift))));
     }
 
     pub fn addAssumeCapacity(g: Generic, off: u29) x11.Resource {
@@ -139,7 +139,7 @@ pub const Generic = struct {
     /// Returns null if the resource doesn't belong to this range (wrong base bits
     /// or offset out of capacity).
     pub fn offset(g: Generic, resource: x11.Resource) ?u29 {
-        const id: u32 = @intFromEnum(resource);
+        const id: u32 = @backingInt(resource);
         const mask: u32 = ((@as(u32, 1) << g.bit_count) - 1) << g.shift;
         if (id & ~mask != g.base) return null;
         const result: u29 = @intCast((id & mask) >> g.shift);
@@ -155,7 +155,7 @@ pub const Generic = struct {
 pub fn generic(r: IdRange) Generic {
     switch (r.payloads) {
         inline else => |payload, tag| {
-            const bit_count: u5 = @as(u5, @intFromEnum(tag)) + 18;
+            const bit_count: u5 = @as(u5, @backingInt(tag)) + 18;
             const shift: u5 = @intCast(payload.shift);
             // Decompress base: unpack the non-mask bits back to their original positions.
             const compressed: u29 = @intCast(payload.base);
@@ -175,7 +175,7 @@ pub fn format(v: IdRange, writer: *std.Io.Writer) error{WriteFailed}!void {
 /// offset() roundtrips back to add_offset.
 fn expectAdd(r: IdRange, expected_id: u32, add_offset: u29) !void {
     const resource = r.add(add_offset) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(expected_id, @intFromEnum(resource));
+    try std.testing.expectEqual(expected_id, @backingInt(resource));
     try std.testing.expectEqual(@as(?u29, add_offset), r.offset(resource));
 }
 
@@ -189,7 +189,7 @@ test "mask in low bits" {
     try expectAdd(r, 0x041FFFFF, 0x1FFFFF);
     try std.testing.expectEqual(@as(?x11.Resource, null), r.add(0x200000));
     // wrong base returns null
-    try std.testing.expectEqual(@as(?u29, null), r.offset(@enumFromInt(0x08000000)));
+    try std.testing.expectEqual(@as(?u29, null), r.offset(@fromBackingInt(@intCast(0x08000000))));
 }
 
 test "mask in high bits" {
@@ -201,7 +201,7 @@ test "mask in high bits" {
     try expectAdd(r, 0x00001003, 2);
     try expectAdd(r, 0x1FFFF803, 0x3FFFF);
     try std.testing.expectEqual(@as(?x11.Resource, null), r.add(0x40000));
-    try std.testing.expectEqual(@as(?u29, null), r.offset(@enumFromInt(0x00000007)));
+    try std.testing.expectEqual(@as(?u29, null), r.offset(@fromBackingInt(@intCast(0x00000007))));
 }
 
 test "mask in middle bits" {
@@ -212,7 +212,7 @@ test "mask in middle bits" {
     try expectAdd(r, 0x10000043, 1);
     try expectAdd(r, 0x10FFFFC3, 0x3FFFF);
     try std.testing.expectEqual(@as(?x11.Resource, null), r.add(0x40000));
-    try std.testing.expectEqual(@as(?u29, null), r.offset(@enumFromInt(0x10000000)));
+    try std.testing.expectEqual(@as(?u29, null), r.offset(@fromBackingInt(@intCast(0x10000000))));
 }
 
 test "zero base" {
@@ -337,19 +337,19 @@ test "offset rejects resources from a different range" {
 test "offset rejects resources with top 3 bits set" {
     const r = try IdRange.init(.fromInt(0x04000000), .fromInt(0x001FFFFF));
     // These can't come from any valid range but could appear as garbage
-    try std.testing.expectEqual(@as(?u29, null), r.offset(@enumFromInt(0x84000000)));
-    try std.testing.expectEqual(@as(?u29, null), r.offset(@enumFromInt(0xFFFFFFFF)));
+    try std.testing.expectEqual(@as(?u29, null), r.offset(@fromBackingInt(@intCast(0x84000000))));
+    try std.testing.expectEqual(@as(?u29, null), r.offset(@fromBackingInt(@intCast(0xFFFFFFFF))));
 }
 
 test "offset with split base rejects partial base match" {
     // base has bits both above and below the mask
     const r = try IdRange.init(.fromInt(0x10000003), .fromInt(0x00FFFFC0));
     // correct low base bits but wrong high base bits
-    try std.testing.expectEqual(@as(?u29, null), r.offset(@enumFromInt(0x00000003)));
+    try std.testing.expectEqual(@as(?u29, null), r.offset(@fromBackingInt(@intCast(0x00000003))));
     // correct high base bits but wrong low base bits
-    try std.testing.expectEqual(@as(?u29, null), r.offset(@enumFromInt(0x10000000)));
+    try std.testing.expectEqual(@as(?u29, null), r.offset(@fromBackingInt(@intCast(0x10000000))));
     // all base bits flipped
-    try std.testing.expectEqual(@as(?u29, null), r.offset(@enumFromInt(0x00FFFFC0)));
+    try std.testing.expectEqual(@as(?u29, null), r.offset(@fromBackingInt(@intCast(0x00FFFFC0))));
 }
 
 test "offset handles every u32 without panicking" {
@@ -371,7 +371,7 @@ test "offset handles every u32 without panicking" {
         0x10000000 | 0xE0000000, // base + top 3 bits
     };
     for (hostile) |id| {
-        const resource: x11.Resource = @enumFromInt(id);
+        const resource: x11.Resource = @fromBackingInt(@intCast(id));
         if (r.offset(resource)) |off| {
             // If offset returned a value, add must roundtrip back
             try std.testing.expectEqual(resource, r.add(off).?);

@@ -6,7 +6,7 @@ pub const Region = enum(u32) {
     _,
 
     pub fn fromInt(i: u32) Region {
-        return @enumFromInt(i);
+        return @fromBackingInt(@intCast(i));
     }
 };
 
@@ -62,7 +62,7 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.QueryVersion),
+            @backingInt(Opcode.QueryVersion),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
         try x11.writeInt(sink.writer, &offset, u32, major_version);
@@ -86,10 +86,10 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.CreateRegion),
+            @backingInt(Opcode.CreateRegion),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(region));
+        try x11.writeInt(sink.writer, &offset, u32, @backingInt(region));
         for (rectangles) |rect| {
             try x11.writeInt(sink.writer, &offset, i16, rect.x);
             try x11.writeInt(sink.writer, &offset, i16, rect.y);
@@ -113,10 +113,10 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.DestroyRegion),
+            @backingInt(Opcode.DestroyRegion),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(region));
+        try x11.writeInt(sink.writer, &offset, u32, @backingInt(region));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }
@@ -150,19 +150,19 @@ pub const request = struct {
         var offset: usize = 0;
         try x11.writeAll(sink.writer, &offset, &[_]u8{
             ext_opcode,
-            @intFromEnum(Opcode.SetWindowShapeRegion),
+            @backingInt(Opcode.SetWindowShapeRegion),
         });
         try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
-        try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(window_id));
+        try x11.writeInt(sink.writer, &offset, u32, @backingInt(window_id));
         try x11.writeAll(sink.writer, &offset, &[_]u8{
-            @intFromEnum(shape_kind),
+            @backingInt(shape_kind),
             0, // padding
             0,
             0,
         });
         try x11.writeInt(sink.writer, &offset, i16, x_offset);
         try x11.writeInt(sink.writer, &offset, i16, y_offset);
-        try x11.writeInt(sink.writer, &offset, u32, @intFromEnum(region));
+        try x11.writeInt(sink.writer, &offset, u32, @backingInt(region));
         std.debug.assert(offset == msg_len);
         sink.sequence +%= 1;
     }

@@ -59,9 +59,9 @@ pub const Latin2 = enum(u8) {
     dot_above = 255,
 
     pub fn toCombined(self: Latin2) Combined {
-        return @enumFromInt((@as(u16, 1) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 1) << 8) | @backingInt(self)));
     }
     pub fn next(self: Latin2) Latin2 {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

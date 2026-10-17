@@ -48,7 +48,7 @@ pub fn QueryVersion(
     var offset: usize = 0;
     try x11.writeAll(sink.writer, &offset, &[_]u8{
         ext_opcode,
-        @intFromEnum(Opcode.query_version),
+        @backingInt(Opcode.query_version),
     });
     try x11.writeInt(sink.writer, &offset, u16, msg_len >> 2);
     std.debug.assert(offset == msg_len);
@@ -81,12 +81,12 @@ pub const rectangles = struct {
     };
     pub fn serialize(buf: [*]u8, ext_opcode: u8, args: Args) void {
         buf[0] = ext_opcode;
-        buf[1] = @intFromEnum(Opcode.rectangles);
+        buf[1] = @backingInt(Opcode.rectangles);
         const len = getLen(@intCast(args.rectangles.len));
         x11.writeIntNative(u16, buf + 2, len >> 2);
-        buf[4] = @intFromEnum(args.operation);
-        buf[5] = @intFromEnum(args.destination_kind);
-        buf[6] = @intFromEnum(args.ordering);
+        buf[4] = @backingInt(args.operation);
+        buf[5] = @backingInt(args.destination_kind);
+        buf[6] = @backingInt(args.ordering);
         buf[7] = 0; // unused
         x11.writeIntNative(u32, buf + 8, args.destination_window_id);
         x11.writeIntNative(i16, buf + 12, args.x_offset);

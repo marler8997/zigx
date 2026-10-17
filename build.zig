@@ -1,8 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-const zig_atleast_16 = @import("builtin").zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
-
 /// Create the xtt (x11 true type) module with a custom TrueType module.
 pub fn createXtt(b: *std.Build, zigx_dep: *std.Build.Dependency, TrueType: *std.Build.Module) *std.Build.Module {
     return b.createModule(.{
@@ -40,17 +38,17 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const zigversion_mod = b.createModule(.{
-        .root_source_file = if (zig_atleast_16) b.path("zigversion/atleast16.zig") else b.path("zigversion/before16.zig"),
-    });
+    // staticio keeps our executables small, see https://github.com/marler8997/zig-staticio
+    const patched_std = b.dependency("patch", .{
+        .std_patches = &[_]std.Build.LazyPath{
+            b.dependency("staticio", .{}).namedLazyPath("std.patch"),
+        },
+    }).module("std");
 
     // In almost all cases, Zig programs should only use this module, not the
     // library defined below, that's for C programs.
     const x_mod = b.addModule("x11", .{
         .root_source_file = b.path("src/x.zig"),
-        .imports = &.{
-            .{ .name = "zigversion", .module = zigversion_mod },
-        },
     });
 
     const true_type_mod = b.dependency("TrueType", .{}).module("TrueType");
@@ -67,8 +65,9 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("examples/runall.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .single_threaded = true,
+            .imports = &.{.{ .name = "std", .module = patched_std }},
         }),
     });
     const run_examples = b.addRunArtifact(examples_exe);
@@ -86,6 +85,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .single_threaded = true,
             .imports = &.{
+                .{ .name = "std", .module = patched_std },
                 .{ .name = "x11", .module = x_mod },
             },
         });
@@ -119,9 +119,7 @@ pub fn build(b: *std.Build) void {
 
         const run = b.addRunArtifact(exe);
         run.step.dependOn(&install.step);
-        if (b.args) |args| {
-            run.addArgs(args);
-        }
+        run.addPassthruArgs();
         b.step(example.name, "").dependOn(&run.step);
     }
 
@@ -174,9 +172,7 @@ pub fn build(b: *std.Build) void {
 
         const run = b.addRunArtifact(exe);
         run.step.dependOn(&install.step);
-        if (b.args) |args| {
-            run.addArgs(args);
-        }
+        run.addPassthruArgs();
         b.step("hellox11", "").dependOn(&run.step);
     }
 
@@ -187,9 +183,6 @@ pub fn build(b: *std.Build) void {
         const x_mod_with_target = b.createModule(.{
             .root_source_file = b.path("src/x.zig"),
             .target = target,
-            .imports = &.{
-                .{ .name = "zigversion", .module = zigversion_mod },
-            },
         });
         const unit_tests = b.addTest(.{
             .root_module = x_mod_with_target,
@@ -207,6 +200,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .single_threaded = true,
                 .imports = &.{
+                    .{ .name = "std", .module = patched_std },
                     .{ .name = "x11", .module = x_mod },
                 },
             }),
@@ -217,7 +211,7 @@ pub fn build(b: *std.Build) void {
 
         const run = b.addRunArtifact(xauth_exe);
         run.step.dependOn(&install.step);
-        if (b.args) |args| run.addArgs(args);
+        run.addPassthruArgs();
         b.step("xauth", "Run the xauth cmdline tool").dependOn(&run.step);
     }
 }

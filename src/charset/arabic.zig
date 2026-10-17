@@ -50,9 +50,9 @@ pub const Arabic = enum(u8) {
     letter_sukun = 242,
 
     pub fn toCombined(self: Arabic) Combined {
-        return @enumFromInt((@as(u16, 5) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, 5) << 8) | @backingInt(self)));
     }
     pub fn next(self: Arabic) Arabic {
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }
 };

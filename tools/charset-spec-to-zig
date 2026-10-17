@@ -177,10 +177,10 @@ with open(os.path.join(repo_dir, "src", "charset.zig"), "w") as zig_charset_file
                 out_file.write("\n")
             out_file.write(f"""
     pub fn toCombined(self: {charset.type_name}) Combined {{
-        return @enumFromInt((@as(u16, {charset.code}) << 8) | @intFromEnum(self));
+        return @fromBackingInt(@intCast((@as(u16, {charset.code}) << 8) | @backingInt(self)));
     }}
     pub fn next(self: {charset.type_name}) {charset.type_name} {{
-        return @enumFromInt(@intFromEnum(self) + 1);
+        return @fromBackingInt(@intCast(@backingInt(self) + 1));
     }}
 """[1:])
             out_file.write("};\n")
@@ -191,8 +191,8 @@ with open(os.path.join(repo_dir, "src", "charset.zig"), "w") as zig_charset_file
         zig_charset_file.write("    {} = {},\n".format(charset.name, charset.code))
     zig_charset_file.write("""
     pub fn fromInt(value_int: u8) ?Charset {
-        return inline for (@typeInfo(Charset).Enum.fields) |f| {
-            if (value_int == f.value) break @enumFromInt(f.value);
+        return inline for (@typeInfo(Charset).@"enum".field_values) |value| {
+            if (value_int == value) break @fromBackingInt(@intCast(value));
         } else null;
     }
 """)
@@ -216,15 +216,15 @@ with open(os.path.join(zig_charset_dir, "combined.zig"), "w") as out_file:
     out_file.write("    void = 0,\n")
     for charset in charsets:
         for keysym in charset.keysyms:
-            out_file.write("    {}_{} = (@as(u16, @intCast(@intFromEnum(Charset.{}))) << 8) | {},\n".format(
+            out_file.write("    {}_{} = (@as(u16, @intCast(@backingInt(Charset.{}))) << 8) | {},\n".format(
                 charset.combined_prefix, keysym.combined_name, charset.name, keysym.code))
     out_file.write("    _,\n")
     out_file.write("""
     pub fn charset(self: Combined) Charset {
-        return @enumFromInt(0xff & (@intFromEnum(self) >> 8));
+        return @fromBackingInt(@intCast(0xff & (@backingInt(self) >> 8)));
     }
     pub fn code(self: Combined) u8 {
-        return @intCast(@intFromEnum(self) & 0xff);
+        return @intCast(@backingInt(self) & 0xff);
     }
 """)
     out_file.write("};\n")

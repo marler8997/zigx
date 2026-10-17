@@ -7,8 +7,8 @@ const highlight_color = 0xcccccc;
 const over_color = 0xcc3333;
 
 font_dims: FontDims,
-previous_time: ?std.time.Instant = null,
-frame_times: [history_len]f32 = [1]f32{0} ** history_len,
+previous_time: ?std.Io.Timestamp = null,
+frame_times: [history_len]f32 = @splat(0),
 cursor: u8 = 0,
 max_ms: f32 = 50,
 
@@ -20,15 +20,16 @@ pub const FontDims = struct {
 
 pub fn writeRender(
     self: *FrameTimeGraph,
+    io: std.Io,
     sink: *x11.RequestSink,
     drawable: x11.Drawable,
     gc_id: x11.GraphicsContext,
     window_width: u16,
     window_height: u16,
 ) error{ WriteFailed, TextTooLong }!void {
-    const now = std.time.Instant.now() catch @panic("time not supported");
+    const now = std.Io.Timestamp.now(io, .awake);
     const elapsed_ms: f32 = if (self.previous_time) |prev|
-        @as(f32, @floatFromInt(now.since(prev))) / std.time.ns_per_ms
+        @as(f32, @floatFromInt(prev.durationTo(now).toNanoseconds())) / std.time.ns_per_ms
     else
         0;
     self.previous_time = now;

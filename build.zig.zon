@@ -2,17 +2,24 @@
     .name = .x11,
     .version = "0.0.0",
     .fingerprint = 0x3220e772e6b06bc9,
-    .zig_version = "0.15.2",
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .TrueType = .{
-            .url = "git+https://codeberg.org/marler/TrueType#1d2012f9b7af8c6bb224017a459b0124fcf004ed",
-            .hash = "TrueType-0.0.0-Ne-mWNVzAQBpo-7-locnCb9lfth2lCeCa2WT6Og7Kbzs",
+            .url = "git+https://codeberg.org/andrewrk/TrueType#46319ef728dca8422dfc512cdc3423fa5649679c",
+            .hash = "TrueType-3.0.0-dev-Ne-mWD14AQB5YZL8AaHgsHhWWHxusJfsQZmzApg-f_QZ",
         },
         // Used by examples
         .inter = .{
             .url = "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
             .hash = "N-V-__8AAAv-sAOXPycbcfSerQ5vsDx3k-PZC5fy2p9ScNi8",
+        },
+        .patch = .{
+            .url = "git+https://github.com/marler8997/zig-patch#c3ad78b305ba03bcd645c0bac004d1719407c6b8",
+            .hash = "patch-0.0.0-WCKjsxixAADfwXQv4Vugyxo6PFbDFuuyM7ly3OiqZRYR",
+        },
+        .staticio = .{
+            .url = "git+https://github.com/marler8997/zig-staticio#757f0f82346dc72821a314716141767f23c93e2d",
+            .hash = "staticio-0.0.0-ypcguFqyAABuHOp5fr9CJs39UchssOB_SEa0TC-p8gwf",
         },
     },
     .paths = .{
@@ -25,6 +32,5 @@
         "tools",
         "xtt",
         "README.md",
-        "zigversion",
     },
 }
