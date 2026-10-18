@@ -181,7 +181,8 @@ fn run(
             .ready => .socket,
             .timeout => if (getTimeout(io, animate.previous_time, animate_frame_ms)) |timeout_ms| switch (pollSocketReader(io, socket_reader, timeout_ms)) {
                 .ready => .socket,
-                .timeout => .timeout,
+                // timeouts are allowed to return early, check if it's time to render
+                .timeout => continue,
             } else .timeout,
         };
 
@@ -304,10 +305,13 @@ fn pollSocketReader(io: std.Io, socket_reader: *std.Io.net.Stream.Reader, timeou
     reader.seek = 0;
     reader.end = 0;
     var data: [1][]u8 = .{reader.buffer};
+    // std rounds the time left down to milliseconds when it polls, add just under
+    // 1ms so we wait at least timeout_ms instead of spinning until it's reached
+    const timeout: std.Io.Duration = .fromNanoseconds(@as(i96, timeout_ms) * std.time.ns_per_ms + std.time.ns_per_ms - 1);
     const result = io.operateTimeout(.{ .net_read = .{
         .socket_handle = socket_reader.stream.socket.handle,
         .data = &data,
-    } }, .{ .duration = .{ .raw = .fromMilliseconds(timeout_ms), .clock = .awake } }) catch |err| switch (err) {
+    } }, .{ .duration = .{ .raw = timeout, .clock = .awake } }) catch |err| switch (err) {
         error.Timeout => return .timeout,
         else => |e| std.debug.panic("poll socket failed with {t}", .{e}),
     };
@@ -357,16 +361,16 @@ fn render(
     window_width: u16,
     window_height: u16,
 ) !void {
-    const elapsed_ms = blk: {
+    const elapsed_ns = blk: {
         const now = std.Io.Timestamp.now(io, .awake);
         const elapsed_ns = animate.previous_time.durationTo(now).toNanoseconds();
         animate.previous_time = now;
         break :blk elapsed_ns;
     };
 
-    const animation_duration_ms: f32 = 2000.0; // 2 seconds for full cycle
-    const elapsed_ms_f32: f32 = @floatFromInt(@divTrunc(elapsed_ms, std.time.ns_per_ms));
-    const progress_increment: f32 = elapsed_ms_f32 / animation_duration_ms;
+    const animation_duration_ns: f32 = 2000.0 * std.time.ns_per_ms; // 2 seconds for full cycle
+    const elapsed_ns_f32: f32 = @floatFromInt(elapsed_ns);
+    const progress_increment: f32 = elapsed_ns_f32 / animation_duration_ns;
     animate.progress = @mod(animate.progress + progress_increment, 1.0);
 
     if (null == dbe.backBuffer()) {
