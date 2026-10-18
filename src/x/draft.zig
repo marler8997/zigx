@@ -219,8 +219,8 @@ pub fn readSetupDynamic(
     return first_screen_header;
 }
 
-/// Sends and receives QueryExtension synchronously.  Synchronous methods must
-/// being called at the start of the connection before any other events would be received.
+/// Sends and receives QueryExtension synchronously when no events are expected, see
+/// Source.readSynchronousReply1.
 pub fn synchronousQueryExtension(
     source: *x11.Source,
     sink: *x11.RequestSink,

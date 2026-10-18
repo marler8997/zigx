@@ -131,6 +131,9 @@ fn run(
         }
     }
 
+    // queried before creating the window so no events can arrive while we wait for the reply
+    const opt_dbe_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.dbe.name);
+
     try sink.CreateWindow(.{
         .window_id = ids.window(),
         .parent_window_id = root.window,
@@ -159,7 +162,7 @@ fn run(
     try sink.writer.flush();
 
     var dbe: Dbe = blk: {
-        const ext = try x11.draft.synchronousQueryExtension(source, sink, x11.dbe.name) orelse break :blk .unsupported;
+        const ext = opt_dbe_ext orelse break :blk .unsupported;
         try x11.dbe.Allocate(sink, ext.opcode_base, ids.window(), ids.backBuffer(), .background);
         break :blk .{ .enabled = .{ .opcode = ext.opcode_base, .back_buffer = ids.backBuffer() } };
     };

@@ -243,7 +243,7 @@ fn run(
     });
     try sink.writer.flush();
     {
-        const prop, const format = try source.readSynchronousReplyHeader(sink.sequence, .GetProperty);
+        const prop, const format = try source.readReplyHeader(try readReply(source, sink.sequence), .GetProperty);
         std.debug.assert(format == 8);
         const value_len = prop.value_size_in_format_units;
         const pad_len = x11.pad4Len(@truncate(value_len));
@@ -259,7 +259,7 @@ fn run(
     try sink.QueryTree(screen.root);
     try sink.writer.flush();
     {
-        const tree, _ = try source.readSynchronousReplyHeader(sink.sequence, .QueryTree);
+        const tree, _ = try source.readReplyHeader(try readReply(source, sink.sequence), .QueryTree);
         std.log.info("root window count={}", .{tree.window_count});
         try source.requireReplyExact(tree.window_count * 4);
         var found_window: bool = false;
@@ -306,7 +306,7 @@ fn run(
     const font_dims: FontDims = blk: {
         try sink.QueryTextExtents(ids.fg_gc().fontable(), .initComptime(&[_]u16{'m'}));
         try sink.writer.flush();
-        const extents, _ = try source.readSynchronousReplyFull(sink.sequence, .QueryTextExtents);
+        const extents, _ = try source.readReplyFull(try readReply(source, sink.sequence), .QueryTextExtents);
         std.log.info("text extents: {}", .{extents});
         break :blk .{
             .width = @intCast(extents.overall_width),
@@ -318,13 +318,13 @@ fn run(
 
     var maybe_picture_format: ?x11.render.PictureFormatInfo = null;
 
-    const opt_composite_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.composite.name);
+    const opt_composite_ext = try queryExtension(source, sink, x11.composite.name);
     if (opt_composite_ext) |composite_ext| {
         const latest_version = try queryExtensionVersions(.composite, sink, source, composite_ext.opcode_base);
         _ = latest_version;
     }
 
-    const opt_render_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.render.name);
+    const opt_render_ext = try queryExtension(source, sink, x11.render.name);
     if (opt_render_ext) |render_ext| {
         const latest_version = try queryExtensionVersions(.render, sink, source, render_ext.opcode_base);
         if (latest_version.major != 0) @panic("untested render extension major version");
@@ -339,7 +339,7 @@ fn run(
         // to find a 24-bit depth format for use with the root and our window.
         try x11.render.QueryPictFormats(sink, render_ext.opcode_base);
         try sink.writer.flush();
-        const result, _ = try source.readSynchronousReplyHeader(sink.sequence, .render_QueryPictFormats);
+        const result, _ = try source.readReplyHeader(try readReply(source, sink.sequence), .render_QueryPictFormats);
         std.log.info(
             "RENDER extension: pict formats num_formats={} num_screens={} num_depths={} num_visuals={}",
             .{
@@ -402,17 +402,17 @@ fn run(
         );
     }
 
-    const opt_shape_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.shape.name);
+    const opt_shape_ext = try queryExtension(source, sink, x11.shape.name);
     if (opt_shape_ext) |shape_ext| {
         try x11.shape.QueryVersion(sink, shape_ext.opcode_base);
         try sink.writer.flush();
         try sink.writer.flush();
-        const version, _ = try source.readSynchronousReplyFull(sink.sequence, .shape_QueryVersion);
+        const version, _ = try source.readReplyFull(try readReply(source, sink.sequence), .shape_QueryVersion);
         std.log.info("SHAPE version {}.{}", .{ version.major, version.minor });
         if (version.major != 1) std.debug.panic("unsupported SHAPE version {}", .{version.major});
     }
 
-    const opt_test_ext = try x11.draft.synchronousQueryExtension(source, sink, x11.tst.name);
+    const opt_test_ext = try queryExtension(source, sink, x11.tst.name);
     if (opt_test_ext) |tst_ext| {
         const latest_version = try queryExtensionVersions(.tst, sink, source, tst_ext.opcode_base);
         if (latest_version.major != 2) @panic("untested XTEST version");
@@ -519,6 +519,40 @@ fn run(
     }
 }
 
+/// Reads the reply to a synchronous request. Some servers send ConfigureNotify as soon
+/// as the window is created, we log it like the main loop does.
+fn readReply(
+    source: *x11.Source,
+    sequence: u16,
+) error{ ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!x11.servermsg.Reply {
+    while (true) switch (try source.readSynchronousReplyOrEvent(sequence)) {
+        .reply => |reply| return reply,
+        .event => |kind| switch (kind) {
+            .ConfigureNotify => {
+                var maybe_read_error: ?x11.ReadError = null;
+                std.log.info("X11 {f}", .{source.readFmt(&maybe_read_error)});
+                if (maybe_read_error) |e| return e;
+                // ensures we still discard the rest of the message if logging is disabled
+                try source.discardRemaining();
+            },
+            else => try source.rejectEvent(kind),
+        },
+    };
+}
+
+fn queryExtension(
+    source: *x11.Source,
+    sink: *x11.RequestSink,
+    name: x11.Slice(u16, [*]const u8),
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!?x11.Extension {
+    try sink.QueryExtension(name);
+    try sink.writer.flush();
+    const extension, _ = try source.readReplyFull(try readReply(source, sink.sequence), .QueryExtension);
+    const result: ?x11.Extension = try .init(extension);
+    std.log.info("extension '{s}': {?}", .{ name.nativeSlice(), result });
+    return result;
+}
+
 fn queryExtensionVersions(
     comptime extension: enum { render, composite, tst },
     sink: *x11.RequestSink,
@@ -538,7 +572,7 @@ fn queryExtensionVersions(
             );
 
             try sink.writer.flush();
-            const version, const flexible = try source.readSynchronousReplyFull(sink.sequence, switch (extension) {
+            const version, const flexible = try source.readReplyFull(try readReply(source, sink.sequence), switch (extension) {
                 .composite => .composite_QueryVersion,
                 .render => .render_QueryVersion,
                 .tst => .tst_GetVersion,
