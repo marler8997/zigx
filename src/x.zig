@@ -36,10 +36,7 @@ pub const draft = @import("x/draft.zig");
 // ================================================================================
 pub const input = @import("x/input.zig");
 pub const render = @import("x/render.zig");
-/// Double Buffer Extension. Consider using the Present extension instead,
-/// which supersedes DBE by providing both off-screen rendering (via Pixmaps)
-/// and frame synchronization (via CompleteNotify events).
-pub const dbe = @import("x/dbe.zig");
+pub const dbe = @compileError("the DBE (Double Buffer Extension) has been removed, use the Present extension instead, see examples/present.zig");
 pub const shape = @import("x/shape.zig");
 pub const tst = @import("x/tst.zig");
 pub const composite = @import("x/composite.zig");
