@@ -4309,11 +4309,14 @@ pub const Source = struct {
         }
     };
 
-    pub fn readSynchronousReply1(
+    /// Reads the reply to the request with the given sequence, or an event that arrived
+    /// before it. For an event only its kind has been read, the caller must read the
+    /// rest of it (i.e. read2 or discardRemaining) before calling this again.
+    pub fn readSynchronousReplyOrEvent(
         source: *Source,
         sequence: u16,
-    ) error{ ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!servermsg.Reply {
-        while (true) switch (try source.readKind()) {
+    ) error{ ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!ReplyOrEvent {
+        switch (try source.readKind()) {
             .Reply => {
                 const reply = try source.read2(.Reply);
                 if (reply.sequence != sequence) {
@@ -4322,10 +4325,30 @@ pub const Source = struct {
                     if (maybe_read_error) |e| return e;
                     return error.UnexpectedMessage;
                 }
-                return reply;
+                return .{ .reply = reply };
             },
-            // MappingNotify is delivered to all clients regardless of event masks
-            // and can arrive at any time, including during synchronous init.
+            .Error => {
+                var maybe_read_error: ?ReadError = null;
+                log.err("expected Reply but got {f}", .{source.readFmt(&maybe_read_error)});
+                if (maybe_read_error) |e| return e;
+                return error.UnexpectedMessage;
+            },
+            else => |kind| return .{ .event = kind },
+        }
+    }
+    pub const ReplyOrEvent = union(enum) {
+        reply: servermsg.Reply,
+        event: ServerMsgKind,
+    };
+
+    /// Handles an event returned by readSynchronousReplyOrEvent that wasn't expected.
+    /// MappingNotify is skipped since it's delivered to all clients regardless of event
+    /// masks, any other event is logged and fails with error.UnexpectedMessage.
+    pub fn rejectEvent(
+        source: *Source,
+        kind: ServerMsgKind,
+    ) error{ ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!void {
+        switch (kind) {
             .MappingNotify => {
                 log.debug("skipping MappingNotify during synchronous read", .{});
                 try source.discardRemaining();
@@ -4336,6 +4359,18 @@ pub const Source = struct {
                 if (maybe_read_error) |e| return e;
                 return error.UnexpectedMessage;
             },
+        }
+    }
+
+    /// Reads the reply to the request with the given sequence when no events are
+    /// expected, see readSynchronousReplyOrEvent and rejectEvent.
+    pub fn readSynchronousReply1(
+        source: *Source,
+        sequence: u16,
+    ) error{ ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!servermsg.Reply {
+        while (true) switch (try source.readSynchronousReplyOrEvent(sequence)) {
+            .reply => |reply| return reply,
+            .event => |kind| try source.rejectEvent(kind),
         };
     }
 
@@ -4356,26 +4391,42 @@ pub const Source = struct {
         return result;
     }
 
-    /// A convenience function to read a synchronous reply. Synchronous replys must
-    /// being read at the start of the connection before any other events would be received.
+    /// A convenience function to read a synchronous reply when no events are expected,
+    /// see readSynchronousReply1.
     pub fn readSynchronousReplyFull(
         source: *Source,
         sequence: u16,
         comptime read3_kind: Read3Full,
     ) error{ ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!WithFlexible(read3_kind.Type()) {
-        const reply = try source.readSynchronousReply1(sequence);
-        try source.requireReplyExact(@sizeOf(read3_kind.Type()));
-        return .{ try source.read3Full(read3_kind), reply.flexible };
+        return source.readReplyFull(try source.readSynchronousReply1(sequence), read3_kind);
     }
 
-    /// A convenience function to read a synchronous reply header. Synchronous replys must
-    /// being read at the start of the connection before any other events would be received.
+    /// A convenience function to read a synchronous reply header when no events are
+    /// expected, see readSynchronousReply1.
     pub fn readSynchronousReplyHeader(
         source: *Source,
         sequence: u16,
         comptime read3_kind: Read3Header,
     ) error{ ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!WithFlexible(read3_kind.Type()) {
-        const reply = try source.readSynchronousReply1(sequence);
+        return source.readReplyHeader(try source.readSynchronousReply1(sequence), read3_kind);
+    }
+
+    /// Reads the rest of a reply returned by readSynchronousReplyOrEvent.
+    pub fn readReplyFull(
+        source: *Source,
+        reply: servermsg.Reply,
+        comptime read3_kind: Read3Full,
+    ) error{ ReadFailed, EndOfStream, Protocol }!WithFlexible(read3_kind.Type()) {
+        try source.requireReplyExact(@sizeOf(read3_kind.Type()));
+        return .{ try source.read3Full(read3_kind), reply.flexible };
+    }
+
+    /// Reads the header of a reply returned by readSynchronousReplyOrEvent.
+    pub fn readReplyHeader(
+        source: *Source,
+        reply: servermsg.Reply,
+        comptime read3_kind: Read3Header,
+    ) error{ ReadFailed, EndOfStream, Protocol }!WithFlexible(read3_kind.Type()) {
         try source.requireReplyAtLeast(@sizeOf(read3_kind.Type()));
         return .{ try source.read3Header(read3_kind), reply.flexible };
     }

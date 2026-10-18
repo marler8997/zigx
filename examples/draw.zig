@@ -130,7 +130,18 @@ fn run(
     const font_dims: FontDims = blk: {
         try sink.QueryTextExtents(ids.gc().fontable(), .initComptime(&[_]u16{'m'}));
         try sink.writer.flush();
-        const extents, _ = try source.readSynchronousReplyFull(sink.sequence, .QueryTextExtents);
+        const reply = while (true) switch (try source.readSynchronousReplyOrEvent(sink.sequence)) {
+            .reply => |reply| break reply,
+            .event => |kind| switch (kind) {
+                // some servers send ConfigureNotify as soon as the window is created
+                .ConfigureNotify => {
+                    const msg = try source.read2(.ConfigureNotify);
+                    window_size = .{ .x = msg.width, .y = msg.height };
+                },
+                else => try source.rejectEvent(kind),
+            },
+        };
+        const extents, _ = try source.readReplyFull(reply, .QueryTextExtents);
         std.log.info("text extents: {}", .{extents});
         break :blk .{
             .width = @intCast(extents.overall_width),

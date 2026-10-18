@@ -130,6 +130,9 @@ fn run(
         std.process.exit(0xff);
     };
 
+    var window_width: u16 = initial_window_width;
+    var window_height: u16 = initial_window_height;
+
     try sink.CreateWindow(.{
         .window_id = ids.window(),
         .parent_window_id = root.window,
@@ -159,7 +162,19 @@ fn run(
     const font_dims: FrameTimeGraph.FontDims = blk: {
         try sink.QueryTextExtents(ids.gc().fontable(), .initComptime(&[_]u16{'m'}));
         try sink.writer.flush();
-        const extents, _ = try source.readSynchronousReplyFull(sink.sequence, .QueryTextExtents);
+        const reply = while (true) switch (try source.readSynchronousReplyOrEvent(sink.sequence)) {
+            .reply => |reply| break reply,
+            .event => |kind| switch (kind) {
+                // some servers send ConfigureNotify as soon as the window is created
+                .ConfigureNotify => {
+                    const event = try source.read2(.ConfigureNotify);
+                    window_width = event.width;
+                    window_height = event.height;
+                },
+                else => try source.rejectEvent(kind),
+            },
+        };
+        const extents, _ = try source.readReplyFull(reply, .QueryTextExtents);
         std.log.info("text extents: {}", .{extents});
         break :blk .{
             .width = @intCast(extents.overall_width),
@@ -167,9 +182,6 @@ fn run(
             .font_descent = @intCast(extents.font_descent),
         };
     };
-
-    var window_width: u16 = initial_window_width;
-    var window_height: u16 = initial_window_height;
 
     var presenter: x11.Presenter = .{
         .opcode_base = present_ext.opcode_base,
