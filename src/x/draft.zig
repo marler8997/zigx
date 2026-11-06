@@ -52,9 +52,9 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
             return e;
         },
     };
-    errdefer x11.disconnect(initial_stream);
+    // no defer cleanup, we're immediately passing ownership of stream to authenticate
     x11.log.info("connected to {f}", .{address});
-    return try x11.draft.authenticate(
+    return x11.draft.authenticate(
         display,
         &parsed_display,
         &host,
@@ -65,12 +65,13 @@ pub fn connect(read_buffer: []u8) ConnectError!x11.Authenticator.Success {
     );
 }
 
+/// Takes ownership of `initial_stream`.
 pub fn authenticate(
     display: x11.Display,
     parsed_display: *const x11.ParsedDisplay,
     host: *const x11.Host,
     address: *const std.net.Address,
-    stream: std.net.Stream,
+    initial_stream: std.net.Stream,
     stream_read_buffer: []u8,
     opt: struct {
         order: x11.Authenticator.Order = .auth_first,
@@ -82,7 +83,7 @@ pub fn authenticate(
         .parsed_display = parsed_display,
         .host = host,
         .address = address,
-        .stream = stream,
+        .stream = initial_stream,
         .stream_read_buffer = stream_read_buffer,
         .filename_buffer = &filename_buffer,
         .order = opt.order,
