@@ -449,7 +449,8 @@ pub const Authenticator = struct {
     parsed_display: *const ParsedDisplay,
     host: *const Host,
     address: *const Address,
-    stream: std.Io.net.Stream,
+    /// Replaced on reconnect. null once a success reply hands it to the caller, otherwise deinit disconnects it.
+    stream: ?std.Io.net.Stream,
     stream_read_buffer: []u8,
     filename_buffer: []u8,
     order: Order,
@@ -460,6 +461,7 @@ pub const Authenticator = struct {
     need_reconnect: bool = false,
 
     pub fn deinit(authenticator: *Authenticator) void {
+        if (authenticator.stream) |stream| disconnect(authenticator.io, stream);
         authenticator.state.deinit();
         authenticator.* = undefined;
     }
@@ -572,7 +574,7 @@ pub const Authenticator = struct {
                     authenticator.state.update(index.nextAuthState());
                     authenticator.need_reconnect = true;
                     log.info("sending setup with no auth...", .{});
-                    writeSetupNoAuth(authenticator.io, authenticator.stream) catch |err| return .{
+                    writeSetupNoAuth(authenticator.io, authenticator.stream.?) catch |err| return .{
                         .io_error = .{ .write_error = err },
                     };
                     return authenticator.readSetupReply(.{ .used_auth = false });
@@ -653,7 +655,7 @@ pub const Authenticator = struct {
                 var write_error: ?std.Io.net.Stream.Writer.Error = null;
                 writeSetupWithAuth(
                     authenticator.io,
-                    authenticator.stream,
+                    authenticator.stream.?,
                     &r.reader,
                     match.name,
                     match.data_len,
@@ -684,14 +686,14 @@ pub const Authenticator = struct {
                 return e;
             };
             log.info("reconnected", .{});
-            std.debug.assert(authenticator.stream.socket.handle != new_stream.socket.handle);
-            disconnect(authenticator.io, authenticator.stream);
+            std.debug.assert(authenticator.stream.?.socket.handle != new_stream.socket.handle);
+            disconnect(authenticator.io, authenticator.stream.?);
             authenticator.stream = new_stream;
             authenticator.need_reconnect = false;
         }
     }
     fn readSetupReply(authenticator: *Authenticator, named: struct { used_auth: bool }) Event {
-        var socket_reader = authenticator.stream.reader(authenticator.io, authenticator.stream_read_buffer);
+        var socket_reader = authenticator.stream.?.reader(authenticator.io, authenticator.stream_read_buffer);
         return switch (readSetupReply1(&socket_reader.interface) catch |err| return switch (err) {
             error.ReadFailed => .{ .io_error = .{
                 .read_error = socket_reader.err orelse error.Unexpected,
@@ -701,9 +703,13 @@ pub const Authenticator = struct {
             } },
             error.Protocol => .{ .io_error = .protocol },
         }) {
-            .success => .{ .reply = .{
-                .success = .{ socket_reader, named.used_auth },
-            } },
+            .success => blk: {
+                // the returned reader owns the stream now
+                authenticator.stream = null;
+                break :blk .{ .reply = .{
+                    .success = .{ socket_reader, named.used_auth },
+                } };
+            },
             .failed => |failed| .{ .reply = .{ .failed = failed } },
             .authenticate => {
                 // I'd like to implement this flow, maybe it would allow us to try

@@ -51,9 +51,9 @@ pub fn connect(io: std.Io, environ: std.process.Environ, read_buffer: []u8) Conn
             return e;
         },
     };
-    errdefer x11.disconnect(io, initial_stream);
+    // no defer cleanup, we're immediately passing ownership of stream to authenticate
     x11.log.info("connected to {f}", .{address});
-    return try x11.draft.authenticate(
+    return x11.draft.authenticate(
         io,
         environ,
         display,
@@ -66,6 +66,7 @@ pub fn connect(io: std.Io, environ: std.process.Environ, read_buffer: []u8) Conn
     );
 }
 
+/// Takes ownership of `initial_stream`.
 pub fn authenticate(
     io: std.Io,
     environ: std.process.Environ,
@@ -73,7 +74,7 @@ pub fn authenticate(
     parsed_display: *const x11.ParsedDisplay,
     host: *const x11.Host,
     address: *const x11.Address,
-    stream: std.Io.net.Stream,
+    initial_stream: std.Io.net.Stream,
     stream_read_buffer: []u8,
     opt: struct {
         order: x11.Authenticator.Order = .auth_first,
@@ -87,7 +88,7 @@ pub fn authenticate(
         .parsed_display = parsed_display,
         .host = host,
         .address = address,
-        .stream = stream,
+        .stream = initial_stream,
         .stream_read_buffer = stream_read_buffer,
         .filename_buffer = &filename_buffer,
         .order = opt.order,
