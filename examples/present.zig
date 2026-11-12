@@ -55,7 +55,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const io = std.Io.Threaded.global_single_threaded.io();
     const stream: std.Io.net.Stream, const ids: Ids, const keyrange: x11.KeycodeRange, const root: Root = blk: {
         var read_buffer: [1000]u8 = undefined;
-        var socket_reader, const used_auth = try x11.draft.connect(io, init.environ, &read_buffer);
+        var socket_reader, const used_auth = try x11.draft.connect(io, .init(init.environ), .init(init.environ), &read_buffer);
         errdefer x11.disconnect(io, socket_reader.stream);
         _ = used_auth;
         const setup = x11.readSetupSuccess(&socket_reader.interface) catch |err| switch (err) {

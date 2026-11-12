@@ -566,6 +566,64 @@ test "max calcScanline" {
     }
 }
 
+test "DisplayEnv.init and getDisplay" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const block = [_:null]?[*:0]const u8{ "HOME=/h", "DISPLAY=:1" };
+    var buf: [0]u8 = undefined;
+    try testing.expectEqualStrings(":1", (try x11.getDisplay(.init(.{ .block = .{ .slice = &block } }), &buf)).string.?);
+    try testing.expectEqual(null, (try x11.getDisplay(.init(.{ .block = .empty }), &buf)).string);
+}
+
+test "AuthEnv.init" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const both = [_:null]?[*:0]const u8{ "HOME=/h", "XAUTHORITY=/x" };
+    try testing.expectEqualStrings("/x", x11.AuthEnv.init(.{ .block = .{ .slice = &both } }).data.XAUTHORITY);
+    const empty_xauthority = [_:null]?[*:0]const u8{ "HOME=/h", "XAUTHORITY=" };
+    try testing.expectEqualStrings("", x11.AuthEnv.init(.{ .block = .{ .slice = &empty_xauthority } }).data.XAUTHORITY);
+    const home_only = [_:null]?[*:0]const u8{"HOME=/h"};
+    try testing.expectEqualStrings("/h", x11.AuthEnv.init(.{ .block = .{ .slice = &home_only } }).data.HOME.?);
+    try testing.expectEqual(null, x11.AuthEnv.init(.{ .block = .empty }).data.HOME);
+}
+
+test "windows DisplayEnv/AuthEnv see environment changes made after init" {
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    @setEvalBranchQuota(10_000);
+    const W = std.unicode.wtf8ToWtf16LeStringLiteral;
+    const kernel32 = struct {
+        extern "kernel32" fn SetEnvironmentVariableW(name: [*:0]const u16, value: ?[*:0]const u16) callconv(.winapi) std.os.windows.BOOL;
+    };
+    try testing.expect(kernel32.SetEnvironmentVariableW(W("DISPLAY"), W("before:0")).toBool());
+    defer _ = kernel32.SetEnvironmentVariableW(W("DISPLAY"), null);
+    try testing.expect(kernel32.SetEnvironmentVariableW(W("XAUTHORITY"), W("C:\\before")).toBool());
+    defer _ = kernel32.SetEnvironmentVariableW(W("XAUTHORITY"), null);
+
+    const display_env: x11.DisplayEnv = .init(.{ .block = .global });
+    const auth_env: x11.AuthEnv = .init(.{ .block = .global });
+
+    // large enough to make the process environment block move
+    const big: [8000:0]u16 = @splat('a');
+    try testing.expect(kernel32.SetEnvironmentVariableW(W("ZIGX_TEST_BIG"), &big).toBool());
+    defer _ = kernel32.SetEnvironmentVariableW(W("ZIGX_TEST_BIG"), null);
+    try testing.expect(kernel32.SetEnvironmentVariableW(W("DISPLAY"), W("after:0")).toBool());
+    try testing.expect(kernel32.SetEnvironmentVariableW(W("XAUTHORITY"), W("C:\\after")).toBool());
+
+    var display_buf: [x11.max_display_len]u8 = undefined;
+    try testing.expectEqualStrings("after:0", (try x11.getDisplay(display_env, &display_buf)).string.?);
+    var filename_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    try testing.expectEqualStrings("C:\\after", (try x11.getAuthFilename(auth_env, &filename_buf)).?);
+}
+
+test "getAuthFilename" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var buf: [100]u8 = undefined;
+    try testing.expectEqualStrings("/x", (try x11.getAuthFilename(.{ .data = .{ .XAUTHORITY = "/x" } }, &buf)).?);
+    try testing.expectEqual(null, try x11.getAuthFilename(.{ .data = .{ .HOME = null } }, &buf));
+    const home_file = "/h/.Xauthority";
+    try testing.expectError(error.HomeTooLong, x11.getAuthFilename(.{ .data = .{ .HOME = "/h" } }, buf[0..home_file.len]));
+    try testing.expectEqualStrings(home_file, (try x11.getAuthFilename(.{ .data = .{ .HOME = "/h" } }, buf[0 .. home_file.len + 1])).?);
+    try testing.expectEqual(0, buf[home_file.len]);
+}
+
 const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;
