@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const x11 = @import("x11");
 
@@ -55,42 +56,36 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (std.mem.eql(u8, cmd, "help")) {
         usage();
     } else if (std.mem.eql(u8, cmd, "list")) {
-        try list(io, init.environ, opt, cmd_arg_count);
+        try list(io, .init(init.environ), opt, cmd_arg_count);
     } else {
         std.log.err("invalid command \"{s}\"", .{cmd});
         std.process.exit(1);
     }
 }
 
-fn list(io: std.Io, environ: std.process.Environ, opt: Opt, cmd_arg_count: usize) !void {
+fn list(io: std.Io, auth_env: x11.AuthEnv, opt: Opt, cmd_arg_count: usize) !void {
     if (cmd_arg_count != 0) {
         std.log.err("list command doesn't accept any arguments", .{});
         std.process.exit(1);
     }
 
-    if (opt.auth_filename) |filename| {
-        const file = std.Io.Dir.cwd().openFile(io, filename, .{}) catch |err| {
-            std.log.err("open '{s}' failed with {s}", .{ filename, @errorName(err) });
-            std.process.exit(1);
-        };
-        defer file.close(io);
-        try list2(io, file);
-    } else {
-        var filename_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        for (std.meta.tags(x11.AuthFileKind)) |kind| {
-            if (x11.getAuthFilename(environ, kind, &filename_buf) catch |err| {
-                std.log.err("get auth filename ({s}) failed with {s}", .{ kind.context(), @errorName(err) });
-                continue;
-            }) |filename| {
-                if (std.Io.Dir.cwd().openFile(io, filename, .{})) |file| {
-                    defer file.close(io);
-                    try list2(io, file);
-                } else |err| {
-                    std.log.info("open '{s}' failed with {s}", .{ filename, @errorName(err) });
-                }
-            }
-        }
-    }
+    var filename_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const filename = opt.auth_filename orelse (x11.getAuthFilename(auth_env, &filename_buf) catch |err| {
+        std.log.err("get auth filename ({s}) failed with {s}", .{ auth_env.context(), @errorName(err) });
+        std.process.exit(1);
+    }) orelse {
+        std.log.err("{s}, use -f to specify the auth file", .{switch (builtin.os.tag) {
+            .windows => "XAUTHORITY is not set",
+            else => "neither XAUTHORITY nor HOME is set",
+        }});
+        std.process.exit(1);
+    };
+    const file = std.Io.Dir.cwd().openFile(io, filename, .{}) catch |err| {
+        std.log.err("open '{s}' failed with {s}", .{ filename, @errorName(err) });
+        std.process.exit(1);
+    };
+    defer file.close(io);
+    try list2(io, file);
 }
 
 fn list2(io: std.Io, file: std.Io.File) !void {

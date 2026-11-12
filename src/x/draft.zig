@@ -1,6 +1,5 @@
 //! This file contains apis that I'm unsure whether to include as they are.
 pub const ConnectError = error{
-    GetDisplay,
     BadDisplay,
 
     // Errors resulting from connect
@@ -18,11 +17,15 @@ pub const ConnectError = error{
     // Error from authenticate error
     AuthRejected,
 };
-pub fn connect(io: std.Io, environ: std.process.Environ, read_buffer: []u8) ConnectError!x11.Authenticator.Success {
-    var display_buf: [x11.max_display_len]u8 = undefined;
-    const display = x11.getDisplay(environ, &display_buf) catch |err| {
-        x11.log.err("failed to get x11 display with {s}", .{@errorName(err)});
-        return error.GetDisplay;
+pub fn connect(
+    io: std.Io,
+    display_env: x11.DisplayEnv,
+    auth_env: x11.AuthEnv,
+    read_buffer: []u8,
+) ConnectError!x11.Authenticator.Success {
+    var display_buf: [if (builtin.os.tag == .windows) x11.max_display_len else 0]u8 = undefined;
+    const display = x11.getDisplay(display_env, &display_buf) catch |e| return switch (e) {
+        error.DisplayTooLong => error.BadDisplay,
     };
     x11.log.info("DISPLAY {f}", .{display});
     const parsed_display = x11.parseDisplay(display) catch |err| {
@@ -55,7 +58,7 @@ pub fn connect(io: std.Io, environ: std.process.Environ, read_buffer: []u8) Conn
     x11.log.info("connected to {f}", .{address});
     return x11.draft.authenticate(
         io,
-        environ,
+        auth_env,
         display,
         &parsed_display,
         &host,
@@ -69,7 +72,7 @@ pub fn connect(io: std.Io, environ: std.process.Environ, read_buffer: []u8) Conn
 /// Takes ownership of `initial_stream`.
 pub fn authenticate(
     io: std.Io,
-    environ: std.process.Environ,
+    auth_env: x11.AuthEnv,
     display: x11.Display,
     parsed_display: *const x11.ParsedDisplay,
     host: *const x11.Host,
@@ -83,7 +86,7 @@ pub fn authenticate(
     var filename_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     var authenticator: x11.Authenticator = .{
         .io = io,
-        .environ = environ,
+        .auth_env = auth_env,
         .display = display,
         .parsed_display = parsed_display,
         .host = host,
@@ -119,14 +122,14 @@ pub fn authenticate(
             }
             return error.AuthRejected;
         },
-        .get_auth_filename_error => |e| {
-            x11.log.err("get auth filename ({s}) failed with {s}", .{ e.kind.context(), @errorName(e.err) });
+        .get_auth_filename_error => |err| {
+            x11.log.err("get auth filename ({s}) failed with {s}", .{ auth_env.context(), @errorName(err) });
         },
         .open_auth_file_error => |e| {
-            x11.log.err("open auth file '{s}' ({s}) failed with {s}", .{ e.filename, e.kind.context(), @errorName(e.err) });
+            x11.log.err("open auth file '{s}' ({s}) failed with {s}", .{ e.filename, auth_env.context(), @errorName(e.err) });
         },
         .auth_file_opened => |f| {
-            x11.log.info("opened auth file '{s}' ({s})", .{ f.filename, f.kind.context() });
+            x11.log.info("opened auth file '{s}' ({s})", .{ f.filename, auth_env.context() });
         },
         .io_error => |e| switch (e) {
             .write_error => |err| {
@@ -235,5 +238,6 @@ pub fn synchronousQueryExtension(
     return result;
 }
 
+const builtin = @import("builtin");
 const std = @import("std");
 const x11 = @import("../x.zig");

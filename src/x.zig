@@ -179,18 +179,32 @@ pub const Display = struct {
     }
 };
 
-pub const GetDisplayError = error{
-    DisplayTooLong,
-};
-
 /// Large enough for any reasonable DISPLAY, see getDisplay.
 pub const max_display_len = 512;
 
-/// Returns the DISPLAY environment variable for any platform. On windows the
-/// value is converted to WTF-8 into `buf` (see max_display_len), it's unused on
-/// other platforms. Use getDisplayPosix which has no possible error for non-windows systems.
-pub fn getDisplay(environ: std.process.Environ, buf: []u8) GetDisplayError!Display {
+/// The DISPLAY environment variable.
+pub const DisplayEnv = struct {
+    /// void on windows so we never cache a pointer to the variable: values point
+    /// into the process environment block, which moves or is freed when any
+    /// variable is modified. getDisplay reads DISPLAY when called instead.
+    DISPLAY: switch (builtin.os.tag) {
+        .windows => void,
+        else => ?[]const u8,
+    },
+
+    pub fn init(environ: std.process.Environ) DisplayEnv {
+        if (builtin.os.tag == .windows) return .{ .DISPLAY = {} };
+        return .{ .DISPLAY = environ.getPosix("DISPLAY") };
+    }
+};
+
+/// Returns the Display for any platform. On windows DISPLAY is read from the
+/// process environment and converted to WTF-8 into `buf` (see max_display_len),
+/// it's unused on other platforms. Use getDisplayPosix which has no possible
+/// error for non-windows systems.
+pub fn getDisplay(display_env: DisplayEnv, buf: []u8) error{DisplayTooLong}!Display {
     if (builtin.os.tag == .windows) {
+        const environ: std.process.Environ = .{ .block = .global };
         const value = environ.getWindows(std.unicode.wtf8ToWtf16LeStringLiteral("DISPLAY")) orelse return .{ .string = null };
         const len = std.unicode.calcWtf8Len(value);
         if (len > buf.len) {
@@ -201,12 +215,12 @@ pub fn getDisplay(environ: std.process.Environ, buf: []u8) GetDisplayError!Displ
         std.debug.assert(written == len);
         return .{ .string = buf[0..len] };
     }
-    return getDisplayPosix(environ);
+    return getDisplayPosix(display_env);
 }
 
-/// Posix-specific function to get DISPLAY which cannot fail.
-pub fn getDisplayPosix(environ: std.process.Environ) Display {
-    return .{ .string = environ.getPosix("DISPLAY") };
+/// Posix-specific function to get the Display which cannot fail.
+pub fn getDisplayPosix(display_env: DisplayEnv) Display {
+    return .{ .string = display_env.DISPLAY };
 }
 
 pub const Protocol = enum {
@@ -425,26 +439,12 @@ pub fn getHost(display: Display, parsed: *const ParsedDisplay) error{X11BadDispl
     }
 }
 
-pub const AuthFileKind = enum {
-    env,
-    home,
-
-    pub const first: AuthFileKind = .env;
-
-    pub fn context(self: AuthFileKind) []const u8 {
-        return switch (self) {
-            .env => "from XAUTHORITY environment variable",
-            .home => "default HOME path",
-        };
-    }
-};
-
 /// Takes an X11 display/address and IO and attempts to authenticate.
 /// Note that if an authentication fails, it will reconnect and reset
 /// the given IO.
 pub const Authenticator = struct {
     io: std.Io,
-    environ: std.process.Environ,
+    auth_env: AuthEnv,
     display: Display,
     parsed_display: *const ParsedDisplay,
     host: *const Host,
@@ -470,29 +470,22 @@ pub const Authenticator = struct {
     const AuthIndex = enum {
         @"0",
         @"1",
-        @"2",
         pub fn nextAuthState(index: AuthIndex) State {
             return switch (index) {
                 .@"0" => .{ .connect = .@"1" },
-                .@"1" => .{ .connect = .@"2" },
-                .@"2" => .{ .done = .no_more_auth },
+                .@"1" => .{ .done = .no_more_auth },
             };
         }
     };
-    fn authFromIndex(order: Order, index: AuthIndex) union(enum) {
-        no_auth,
-        auth: AuthFileKind,
-    } {
+    fn authFromIndex(order: Order, index: AuthIndex) enum { no_auth, auth } {
         return switch (order) {
             .auth_first => switch (index) {
-                .@"0" => .{ .auth = .env },
-                .@"1" => .{ .auth = .home },
-                .@"2" => .no_auth,
+                .@"0" => .auth,
+                .@"1" => .no_auth,
             },
             .no_auth_first => switch (index) {
                 .@"0" => .no_auth,
-                .@"1" => .{ .auth = .env },
-                .@"2" => .{ .auth = .home },
+                .@"1" => .auth,
             },
         };
     }
@@ -530,17 +523,12 @@ pub const Authenticator = struct {
             skip_count: u32,
             reason: DoneReason,
         },
-        get_auth_filename_error: struct {
-            kind: AuthFileKind,
-            err: GetAuthFilenameError,
-        },
+        get_auth_filename_error: GetAuthFilenameError,
         open_auth_file_error: struct {
-            kind: AuthFileKind,
             filename: []const u8,
             err: std.Io.File.OpenError,
         },
         auth_file_opened: struct {
-            kind: AuthFileKind,
             filename: []const u8,
         },
         io_error: union(enum) {
@@ -552,7 +540,6 @@ pub const Authenticator = struct {
 
     const ReadFile = struct {
         auth_index: AuthIndex,
-        auth_file_kind: AuthFileKind,
         filename: []const u8,
         file: std.Io.File,
         read_buf: [400]u8 = undefined,
@@ -579,17 +566,13 @@ pub const Authenticator = struct {
                     };
                     return authenticator.readSetupReply(.{ .used_auth = false });
                 },
-                .auth => |auth_file_kind| {
+                .auth => {
                     const maybe_auth_filename = getAuthFilename(
-                        authenticator.environ,
-                        auth_file_kind,
+                        authenticator.auth_env,
                         authenticator.filename_buffer,
                     ) catch |err| {
                         authenticator.state.update(index.nextAuthState());
-                        return .{ .get_auth_filename_error = .{
-                            .kind = auth_file_kind,
-                            .err = err,
-                        } };
+                        return .{ .get_auth_filename_error = err };
                     };
                     const auth_filename = maybe_auth_filename orelse {
                         authenticator.state.update(index.nextAuthState());
@@ -598,13 +581,11 @@ pub const Authenticator = struct {
                     const file = std.Io.Dir.cwd().openFile(authenticator.io, auth_filename, .{}) catch |err| {
                         authenticator.state.update(index.nextAuthState());
                         return .{ .open_auth_file_error = .{
-                            .kind = auth_file_kind,
                             .filename = auth_filename,
                             .err = err,
                         } };
                     };
                     authenticator.state.update(.{ .read_file = .{
-                        .auth_file_kind = auth_file_kind,
                         .auth_index = index,
                         .filename = auth_filename,
                         .file = file,
@@ -650,7 +631,7 @@ pub const Authenticator = struct {
                 authenticator.need_reconnect = true;
                 log.info(
                     "sending setup with auth {} from '{s}' ({s}) ({s})",
-                    .{ auth_index, r.filename, r.auth_file_kind.context(), match.name.nativeSlice() },
+                    .{ auth_index, r.filename, authenticator.auth_env.context(), match.name.nativeSlice() },
                 );
                 var write_error: ?std.Io.net.Stream.Writer.Error = null;
                 writeSetupWithAuth(
@@ -1123,34 +1104,62 @@ pub fn slice(comptime LenType: type, s: anytype) Slice(LenType, ArrayPointer(@Ty
     }
 }
 
+/// The environment variable that locates the X authority file: XAUTHORITY if
+/// set, otherwise HOME.
+pub const AuthEnv = struct {
+    /// void on windows so we never cache a pointer to the variable: values point
+    /// into the process environment block, which moves or is freed when any
+    /// variable is modified. getAuthFilename reads XAUTHORITY when called instead.
+    data: switch (builtin.os.tag) {
+        .windows => void,
+        else => union(enum) {
+            XAUTHORITY: []const u8,
+            HOME: ?[]const u8,
+        },
+    },
+
+    pub fn init(environ: std.process.Environ) AuthEnv {
+        return .{ .data = if (builtin.os.tag == .windows) {} else if (environ.getPosix("XAUTHORITY")) |x|
+            .{ .XAUTHORITY = x }
+        else
+            .{ .HOME = environ.getPosix("HOME") } };
+    }
+
+    /// Describes where the auth file returned by getAuthFilename comes from.
+    pub fn context(auth_env: AuthEnv) []const u8 {
+        if (builtin.os.tag == .windows) return "from XAUTHORITY environment variable";
+        return switch (auth_env.data) {
+            .XAUTHORITY => "from XAUTHORITY environment variable",
+            .HOME => "default HOME path",
+        };
+    }
+};
+
 pub const GetAuthFilenameError = error{
     XauthorityEnvTooBig,
     HomeTooLong,
 };
 
-pub fn getAuthFilename(environ: std.process.Environ, kind: AuthFileKind, filename_buf: []u8) GetAuthFilenameError!?[]const u8 {
-    switch (kind) {
-        .env => {
-            if (builtin.os.tag == .windows) {
-                const xauth = environ.getWindows(std.unicode.wtf8ToWtf16LeStringLiteral("XAUTHORITY")) orelse return null;
-                if (std.unicode.calcWtf8Len(xauth) > filename_buf.len) return error.XauthorityEnvTooBig;
-                return filename_buf[0..std.unicode.wtf16LeToWtf8(filename_buf, xauth)];
-            }
-            return environ.getPosix("XAUTHORITY");
-        },
-        .home => {
-            if (builtin.os.tag == .windows) return null;
-            const home = environ.getPosix("HOME") orelse return null;
-            const basename = ".Xauthority";
-            const len = home.len + 1 + basename.len;
-            if (len + 1 > filename_buf.len) return error.HomeTooLong;
-            @memcpy(filename_buf[0..home.len], home);
-            filename_buf[home.len] = '/';
-            @memcpy(filename_buf[home.len + 1 ..][0..basename.len], basename);
-            filename_buf[len] = 0;
-            return filename_buf[0..len :0];
-        },
+/// Returns null if `auth_env` has neither XAUTHORITY nor HOME.
+pub fn getAuthFilename(auth_env: AuthEnv, filename_buf: []u8) GetAuthFilenameError!?[]const u8 {
+    if (builtin.os.tag == .windows) {
+        const environ: std.process.Environ = .{ .block = .global };
+        const xauth = environ.getWindows(std.unicode.wtf8ToWtf16LeStringLiteral("XAUTHORITY")) orelse return null;
+        if (std.unicode.calcWtf8Len(xauth) > filename_buf.len) return error.XauthorityEnvTooBig;
+        return filename_buf[0..std.unicode.wtf16LeToWtf8(filename_buf, xauth)];
     }
+    const home = switch (auth_env.data) {
+        .XAUTHORITY => |xauthority| return xauthority,
+        .HOME => |maybe_home| maybe_home orelse return null,
+    };
+    const basename = ".Xauthority";
+    const len = home.len + 1 + basename.len;
+    if (len + 1 > filename_buf.len) return error.HomeTooLong;
+    @memcpy(filename_buf[0..home.len], home);
+    filename_buf[home.len] = '/';
+    @memcpy(filename_buf[home.len + 1 ..][0..basename.len], basename);
+    filename_buf[len] = 0;
+    return filename_buf[0..len :0];
 }
 
 pub fn fmtMaybeString(s: ?[]const u8) FmtMaybeString {
