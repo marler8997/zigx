@@ -1,6 +1,7 @@
 pub const std_options: std.Options = .{ .io_vtable = .threaded };
 
 // A working example to test various parts of the API
+const builtin = @import("builtin");
 const std = @import("std");
 const x11 = @import("x11");
 
@@ -36,7 +37,11 @@ pub const Ids = struct {
     pub fn solid_blue(self: Ids) x11.render.Picture {
         return self.range.addAssumeCapacity(6).picture();
     }
-    const needed_capacity = 7;
+    // For the MIT-SHM extension part of this example
+    pub fn shm_seg(self: Ids) x11.shm.Seg {
+        return self.range.addAssumeCapacity(7).shmSeg();
+    }
+    const needed_capacity = 8;
 };
 
 // ZFormat
@@ -186,7 +191,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         "unsupported depth {}",
         .{screen.root_depth},
     );
-    run(&sink, &source, ids, depth, image_format, screen) catch |err| switch (err) {
+    run(&sink, &source, socket_reader.stream.socket.handle, ids, depth, image_format, screen) catch |err| switch (err) {
         error.WriteFailed => |e| return x11.onWriteError(e, socket_writer.err.?),
         error.ReadFailed, error.EndOfStream, error.Protocol => |e| return source.onReadError(e, socket_reader.err),
         error.UnexpectedMessage => |e| return e,
@@ -196,6 +201,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 fn run(
     sink: *x11.RequestSink,
     source: *x11.Source,
+    socket: std.posix.fd_t,
     ids: Ids,
     depth: x11.Depth,
     image_format: ImageFormat,
@@ -419,6 +425,8 @@ fn run(
         if (latest_version.minor < 2) @panic("untested XTEST version");
     }
 
+    const opt_shm = try setupShm(sink, source, socket, ids, image_format);
+
     try sink.MapWindow(ids.window());
 
     // Send a fake mouse left-click event
@@ -451,6 +459,8 @@ fn run(
     });
 
     var maybe_get_img_sequence: ?u16 = null;
+    var maybe_get_shm_img_sequence: ?u16 = null;
+    var shm_completion_count: u32 = 0;
 
     while (true) {
         try sink.writer.flush();
@@ -462,6 +472,15 @@ fn run(
                     if (s == reply.sequence) {
                         try checkTestImageIsDrawnToWindow(source, reply, image_format);
                         maybe_get_img_sequence = null;
+                    }
+                }
+                if (maybe_get_shm_img_sequence) |s| {
+                    if (s == reply.sequence) {
+                        // the server finished the ShmPutImage before it read the window
+                        if (shm_completion_count == 0) @panic("got GetImage reply before the MIT-SHM Completion event");
+                        try checkTestImageIsDrawnToWindow(source, reply, image_format);
+                        std.log.info("MIT-SHM test image verified", .{});
+                        maybe_get_shm_img_sequence = null;
                     }
                 }
                 const remaining = source.replyRemainingSize();
@@ -483,6 +502,7 @@ fn run(
                     ids,
                     font_dims,
                     opt_render_ext,
+                    opt_shm,
                 );
                 if (maybe_get_img_sequence == null) {
                     try sink.GetImage(.{
@@ -496,6 +516,19 @@ fn run(
                         .plane_mask = 0xffffffff,
                     });
                     maybe_get_img_sequence = sink.sequence;
+                }
+                if (opt_shm != null and maybe_get_shm_img_sequence == null) {
+                    try sink.GetImage(.{
+                        .format = .z_pixmap,
+                        .drawable = ids.window().drawable(),
+                        // Coords match where we drew the MIT-SHM test image
+                        .x = shm_test_image_pos.x,
+                        .y = shm_test_image_pos.y,
+                        .width = test_image.width,
+                        .height = test_image.height,
+                        .plane_mask = 0xffffffff,
+                    });
+                    maybe_get_shm_img_sequence = sink.sequence;
                 }
             },
             .DestroyNotify,
@@ -512,7 +545,15 @@ fn run(
                 try source.discardRemaining();
             },
             .ExtensionEvent => {
-                std.debug.panic("TODO: handle a generic extension event {}", .{msg_kind});
+                const event = try source.read2(.ExtensionEvent);
+                const shm = opt_shm orelse std.debug.panic("unexpected extension event {}", .{event});
+                const completion = x11.shm.Completion.fromEvent(&event, shm.event_base) orelse
+                    std.debug.panic("unexpected extension event {}", .{event});
+                std.debug.assert(completion.seg == ids.shm_seg());
+                std.debug.assert(completion.drawable == ids.window().drawable());
+                std.debug.assert(completion.offset == 0);
+                std.log.info("MIT-SHM PutImage completed", .{});
+                shm_completion_count += 1;
             },
             else => std.debug.panic("unexpected X11 {f}", .{source.readFmtDropError()}),
         }
@@ -622,6 +663,7 @@ fn render(
     ids: Ids,
     font_dims: FontDims,
     opt_render_ext: ?x11.Extension,
+    opt_shm: ?Shm,
 ) !void {
     try sink.PolyFillRectangle(
         ids.window().drawable(),
@@ -820,6 +862,88 @@ fn render(
         });
         try x11.render.FreePicture(sink, render_ext.opcode_base, solid_blue);
     }
+
+    if (opt_shm) |shm| {
+        // The same test image, but the server reads it from the shared memory
+        // segment we wrote it to in setupShm instead of from the socket.
+        try x11.shm.request.PutImage(sink, shm.opcode, .{
+            .drawable = ids.window().drawable(),
+            .gc_id = ids.fg_gc(),
+            .total_width = test_image.width,
+            .total_height = test_image.height,
+            .src_width = test_image.width,
+            .src_height = test_image.height,
+            .dst_x = shm_test_image_pos.x,
+            .dst_y = shm_test_image_pos.y,
+            .depth = image_format.depth,
+            .format = .z_pixmap,
+            .send_event = true,
+            .seg = ids.shm_seg(),
+            .offset = 0,
+        });
+    }
+}
+
+const shm_test_image_pos: struct { x: i16, y: i16 } = .{ .x = 140, .y = 20 };
+
+const Shm = struct {
+    opcode: u8,
+    event_base: u8,
+};
+
+/// Attaches a memfd holding the test image as an MIT-SHM segment. Returns null if
+/// MIT-SHM can't be used: not on Linux, a TCP connection or the server lacks it.
+fn setupShm(
+    sink: *x11.RequestSink,
+    source: *x11.Source,
+    socket: std.posix.fd_t,
+    ids: Ids,
+    image_format: ImageFormat,
+) error{ WriteFailed, ReadFailed, EndOfStream, Protocol, UnexpectedMessage }!?Shm {
+    if (builtin.os.tag != .linux) return null;
+    const linux = std.os.linux;
+    {
+        var addr: linux.sockaddr = undefined;
+        var len: linux.socklen_t = @sizeOf(linux.sockaddr);
+        if (linux.errno(linux.getsockname(socket, &addr, &len)) != .SUCCESS or addr.family != linux.AF.UNIX) {
+            std.log.info("MIT-SHM: skipped, not a unix socket", .{});
+            return null;
+        }
+    }
+    const ext = try x11.draft.synchronousQueryExtension(source, sink, x11.shm.name) orelse return null;
+    try x11.shm.request.QueryVersion(sink, ext.opcode_base);
+    try sink.writer.flush();
+    const version, const shared_pixmaps = try source.readSynchronousReplyFull(sink.sequence, .shm_QueryVersion);
+    std.log.info("MIT-SHM version {}.{} shared_pixmaps={} pixmap_format={}", .{
+        version.major, version.minor, shared_pixmaps, version.pixmap_format,
+    });
+    const v: x11.shm.Version = .{ .major = version.major, .minor = version.minor };
+    if (!v.atLeast(x11.shm.attach_fd_version)) {
+        std.log.info("MIT-SHM: skipped, version has no AttachFd", .{});
+        return null;
+    }
+
+    const scanline = x11.calcScanline(image_format.scanline_pad, image_format.depth.byte(), test_image.width, .z_pixmap);
+    const size: usize = @as(usize, scanline) * test_image.height;
+    const fd: std.posix.fd_t = blk: {
+        const rc = linux.memfd_create("zigx-testexample", linux.MFD.CLOEXEC);
+        if (linux.errno(rc) != .SUCCESS) std.debug.panic("memfd_create failed with {t}", .{linux.errno(rc)});
+        break :blk @intCast(rc);
+    };
+    defer _ = linux.close(fd);
+    if (linux.errno(linux.ftruncate(fd, @intCast(size))) != .SUCCESS) @panic("ftruncate failed");
+    // never unmapped, the server reads it every time we render
+    const mem = std.posix.mmap(null, size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0) catch |err|
+        std.debug.panic("mmap failed with {t}", .{err});
+    var writer: std.Io.Writer = .fixed(mem);
+    writeTestImage(image_format, test_image.width, test_image.height, &writer) catch unreachable;
+    std.debug.assert(writer.end == size);
+
+    x11.shm.request.AttachFd(sink, socket, ext.opcode_base, ids.shm_seg(), fd, true) catch |err| switch (err) {
+        error.WriteFailed => |e| return e,
+        else => |e| std.debug.panic("MIT-SHM AttachFd failed with {t}", .{e}),
+    };
+    return .{ .opcode = ext.opcode_base, .event_base = ext.event_base };
 }
 
 fn getTestImagePixel(row: usize) u24 {

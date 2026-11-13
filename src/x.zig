@@ -43,7 +43,7 @@ pub const composite = @import("x/composite.zig");
 pub const randr = @compileError("todo");
 pub const fixes = @import("x/fixes.zig");
 pub const damage = @compileError("todo");
-pub const shm = @compileError("todo");
+pub const shm = @import("x/shm.zig");
 pub const sync = @compileError("todo");
 pub const video = @compileError("todo");
 pub const vmc = @compileError("todo");
@@ -2445,6 +2445,10 @@ pub const Resource = enum(u32) {
     }
 
     pub fn fixesRegion(r: Resource) fixes.Region {
+        return @fromBackingInt(@intCast(@backingInt(r)));
+    }
+
+    pub fn shmSeg(r: Resource) shm.Seg {
         return @fromBackingInt(@intCast(@backingInt(r)));
     }
 
@@ -5535,6 +5539,18 @@ pub const stage3 = struct {
         unused: [16]u8,
     };
     comptime {
+        std.debug.assert(@sizeOf(shm_QueryVersion) == 24);
+    }
+    /// The reply's flexible byte is the shared_pixmaps bool.
+    pub const shm_QueryVersion = extern struct {
+        major: u16,
+        minor: u16,
+        uid: u16,
+        gid: u16,
+        pixmap_format: u8,
+        unused: [15]u8,
+    };
+    comptime {
         std.debug.assert(@sizeOf(present_CompleteNotify) == 28);
     }
     pub const present_CompleteNotify = extern struct {
@@ -5585,6 +5601,7 @@ const Read3Full = enum {
     shape_QueryVersion,
     composite_QueryVersion,
     fixes_QueryVersion,
+    shm_QueryVersion,
     present_CompleteNotify,
     present_IdleNotify,
     pub fn Type(self: Read3Full) type {
