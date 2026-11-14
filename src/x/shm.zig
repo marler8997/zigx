@@ -127,9 +127,6 @@ pub const request = struct {
         /// The process already has RLIMIT_NOFILE fds in flight over unix
         /// sockets (ETOOMANYREFS).
         ProcessFdQuotaExceeded,
-        /// An errno that means a bad `socket` or `fd`, or one not listed here.
-        /// It's logged.
-        Unexpected,
     };
 
     /// Attaches the memory referred to by `fd` (e.g. a memfd) as `seg`.
@@ -139,6 +136,11 @@ pub const request = struct {
     /// This flushes `sink.writer` first so the request stays in order. The caller
     /// keeps ownership of `fd`, the server holds its own reference so it can be
     /// closed after this returns. Only implemented on Linux.
+    ///
+    /// An invalid `socket` or `fd`, or a `socket` that isn't a connected unix
+    /// socket, is a bug in the caller: it panics in safe builds and is
+    /// unreachable in unsafe ones. An errno sendmsg isn't documented to return
+    /// panics in every build mode.
     pub fn AttachFd(
         sink: *x11.RequestSink,
         socket: std.posix.fd_t,
@@ -201,16 +203,14 @@ pub const request = struct {
                 .TOOMANYREFS => return error.ProcessFdQuotaExceeded,
                 // `socket` or `fd` isn't valid, or `socket` isn't a connected unix socket
                 .BADF, .NOTSOCK, .INVAL, .OPNOTSUPP, .DESTADDRREQ, .ISCONN, .FAULT => |e| {
-                    (if (builtin.mode == .debug) std.debug.panic else x11.log.err)(
+                    if (std.debug.runtime_safety) std.debug.panic(
                         "MIT-SHM AttachFd: sendmsg misuse, errno={d}",
                         .{@backingInt(e)},
                     );
-                    return error.Unexpected;
+                    unreachable;
                 },
-                else => |e| {
-                    x11.log.err("MIT-SHM AttachFd: sendmsg failed with unexpected errno={d}", .{@backingInt(e)});
-                    return error.Unexpected;
-                },
+                // the list above is wrong, the kernel is newer, or it has a bug
+                else => |e| std.debug.panic("MIT-SHM AttachFd: sendmsg returned unexpected errno={d}", .{@backingInt(e)}),
             }
         };
         // the fd went with the first byte, any remainder is ordinary request data
