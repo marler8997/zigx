@@ -121,6 +121,14 @@ pub const request = struct {
         BrokenPipe,
         ConnectionResetByPeer,
         SystemResources,
+        /// A security module (e.g. AppArmor or SELinux) doesn't let the fd be
+        /// passed to the server.
+        AccessDenied,
+        /// The process already has RLIMIT_NOFILE fds in flight over unix
+        /// sockets (ETOOMANYREFS).
+        ProcessFdQuotaExceeded,
+        /// An errno that means a bad `socket` or `fd`, or one not listed here.
+        /// It's logged.
         Unexpected,
     };
 
@@ -186,10 +194,23 @@ pub const request = struct {
                 .SUCCESS => break rc,
                 .INTR => continue,
                 .AGAIN => return error.WouldBlock,
-                .PIPE => return error.BrokenPipe,
+                .PIPE, .NOTCONN => return error.BrokenPipe,
                 .CONNRESET => return error.ConnectionResetByPeer,
                 .NOBUFS, .NOMEM => return error.SystemResources,
-                else => |e| return std.posix.unexpectedErrno(e),
+                .ACCES, .PERM => return error.AccessDenied,
+                .TOOMANYREFS => return error.ProcessFdQuotaExceeded,
+                // `socket` or `fd` isn't valid, or `socket` isn't a connected unix socket
+                .BADF, .NOTSOCK, .INVAL, .OPNOTSUPP, .DESTADDRREQ, .ISCONN, .FAULT => |e| {
+                    (if (builtin.mode == .debug) std.debug.panic else x11.log.err)(
+                        "MIT-SHM AttachFd: sendmsg misuse, errno={d}",
+                        .{@backingInt(e)},
+                    );
+                    return error.Unexpected;
+                },
+                else => |e| {
+                    x11.log.err("MIT-SHM AttachFd: sendmsg failed with unexpected errno={d}", .{@backingInt(e)});
+                    return error.Unexpected;
+                },
             }
         };
         // the fd went with the first byte, any remainder is ordinary request data
