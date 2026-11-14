@@ -643,7 +643,7 @@ pub const Authenticator = struct {
                     &write_error,
                 ) catch |err| switch (err) {
                     error.WriteFailed => return .{ .io_error = .{
-                        .write_error = write_error orelse error.Unexpected,
+                        .write_error = write_error.?,
                     } },
                     error.ReadFailed, error.EndOfStream => |e| {
                         reportAuthReadError(r.filename, e, r.file_reader.err);
@@ -677,7 +677,7 @@ pub const Authenticator = struct {
         var socket_reader = authenticator.stream.?.reader(authenticator.io, authenticator.stream_read_buffer);
         return switch (readSetupReply1(&socket_reader.interface) catch |err| return switch (err) {
             error.ReadFailed => .{ .io_error = .{
-                .read_error = socket_reader.err orelse error.Unexpected,
+                .read_error = socket_reader.err.?,
             } },
             error.EndOfStream => |e| .{ .io_error = .{
                 .read_error = e,
@@ -728,7 +728,7 @@ fn writeSetupNoAuth(io: std.Io, stream: std.Io.net.Stream) std.Io.net.Stream.Wri
     writeSetupHeader(w, .empty, 0) catch unreachable;
     writeSetupData(w, .empty) catch unreachable;
     std.debug.assert(w.end == write_setup_no_auth_len);
-    w.flush() catch return socket_writer.err orelse error.Unexpected;
+    w.flush() catch return socket_writer.err.?;
 }
 // name is assumed to be taken from the AuthReader buffer, so, it becomes invalidated
 // as soon as any more data is read from AuthReader.

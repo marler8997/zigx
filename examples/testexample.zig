@@ -905,7 +905,11 @@ fn setupShm(
     {
         var addr: linux.sockaddr = undefined;
         var len: linux.socklen_t = @sizeOf(linux.sockaddr);
-        if (linux.errno(linux.getsockname(socket, &addr, &len)) != .SUCCESS or addr.family != linux.AF.UNIX) {
+        switch (linux.errno(linux.getsockname(socket, &addr, &len))) {
+            .SUCCESS => {},
+            else => |e| std.debug.panic("getsockname failed, errno={d}", .{@backingInt(e)}),
+        }
+        if (addr.family != linux.AF.UNIX) {
             std.log.info("MIT-SHM: skipped, not a unix socket", .{});
             return null;
         }
@@ -927,11 +931,20 @@ fn setupShm(
     const size: usize = @as(usize, scanline) * test_image.height;
     const fd: std.posix.fd_t = blk: {
         const rc = linux.memfd_create("zigx-testexample", linux.MFD.CLOEXEC);
-        if (linux.errno(rc) != .SUCCESS) std.debug.panic("memfd_create failed with {t}", .{linux.errno(rc)});
+        switch (linux.errno(rc)) {
+            .SUCCESS => {},
+            else => |e| std.debug.panic("memfd_create failed, errno={d}", .{@backingInt(e)}),
+        }
         break :blk @intCast(rc);
     };
-    defer _ = linux.close(fd);
-    if (linux.errno(linux.ftruncate(fd, @intCast(size))) != .SUCCESS) @panic("ftruncate failed");
+    defer switch (linux.errno(linux.close(fd))) {
+        .SUCCESS => {},
+        else => |e| std.debug.panic("close memfd failed, errno={d}", .{@backingInt(e)}),
+    };
+    switch (linux.errno(linux.ftruncate(fd, @intCast(size)))) {
+        .SUCCESS => {},
+        else => |e| std.debug.panic("ftruncate failed, errno={d}", .{@backingInt(e)}),
+    }
     // never unmapped, the server reads it every time we render
     const mem = std.posix.mmap(null, size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0) catch |err|
         std.debug.panic("mmap failed with {t}", .{err});
