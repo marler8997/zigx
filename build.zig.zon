@@ -3,6 +3,7 @@
     .version = "0.0.0",
     .fingerprint = 0x3220e772e6b06bc9,
     .minimum_zig_version = "0.17.0",
+    .zig_version = "0.17.1",
     .dependencies = .{
         .TrueType = .{
             .url = "git+https://codeberg.org/andrewrk/TrueType#46319ef728dca8422dfc512cdc3423fa5649679c",
@@ -18,8 +19,8 @@
             .hash = "patch-0.0.0-WCKjsxixAADfwXQv4Vugyxo6PFbDFuuyM7ly3OiqZRYR",
         },
         .staticio = .{
-            .url = "git+https://github.com/marler8997/zig-staticio#757f0f82346dc72821a314716141767f23c93e2d",
-            .hash = "staticio-0.0.0-ypcguFqyAABuHOp5fr9CJs39UchssOB_SEa0TC-p8gwf",
+            .url = "git+https://github.com/marler8997/zig-staticio#1ef1b4374703b72beb44e494cc9d03d7944567e3",
+            .hash = "staticio-0.0.0-ypcguAK1AADvFgpnMy2lYwxPrSFYq-Z4rw11Spk142R7",
         },
     },
     .paths = .{
