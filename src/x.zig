@@ -5855,6 +5855,7 @@ pub const Presenter = struct {
     window_id: Window,
     event_id: u32,
     pixmaps: [2]Pixmap,
+    options: present.Options = .{},
 
     serial: u32 = 0,
     back_buf: u1 = 0,
@@ -5913,6 +5914,7 @@ pub const Presenter = struct {
             p.window_id,
             p.pixmaps[p.back_buf],
             p.serial,
+            p.options,
             0,
             0,
             0,

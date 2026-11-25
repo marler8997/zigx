@@ -24,6 +24,15 @@ pub const EventMask = packed struct(u32) {
     _padding: u29 = 0,
 };
 
+pub const Options = packed struct(u32) {
+    @"async": bool = false,
+    copy: bool = false,
+    ust: bool = false,
+    suboptimal: bool = false,
+    async_may_tear: bool = false,
+    _padding: u27 = 0,
+};
+
 pub const CompleteKind = enum(u8) {
     pixmap = 0,
     notify_msc = 1,
@@ -93,6 +102,7 @@ pub fn presentPixmap(
     window: x11.Window,
     pixmap: x11.Pixmap,
     serial: u32,
+    options: Options,
     target_msc: u64,
     divisor: u64,
     remainder: u64,
@@ -132,7 +142,7 @@ pub fn presentPixmap(
     try x11.writeInt(sink.writer, &offset, u32, 0); // target_crtc = None
     try x11.writeInt(sink.writer, &offset, u32, 0); // wait_fence = None
     try x11.writeInt(sink.writer, &offset, u32, 0); // idle_fence = None
-    try x11.writeInt(sink.writer, &offset, u32, 0); // options
+    try x11.writeInt(sink.writer, &offset, u32, @bitCast(options));
     try x11.writeInt(sink.writer, &offset, u32, 0); // pad
     try x11.writeInt(sink.writer, &offset, u64, target_msc);
     try x11.writeInt(sink.writer, &offset, u64, divisor);
